@@ -23,11 +23,11 @@ export const WEBGPU_ALL_LAYERS = 99999;
  *
  * A page keeps two requests in flight (`TRANSLATION_CONCURRENCY`), so the pair is not a burst
  * before an idle model — it is the steady state. Run that way over 12 paragraphs, the shared
- * cache never settles: 36.2 s against 8.1 s on one slot and 6.4 s with a cache per sequence,
- * and its individual requests stay at 5–17 s throughout instead of the ~0.6–1.5 s of the
- * other two. With a cache per sequence the pair stays ahead of one-at-a-time and nothing
- * after it pays. `runtime.ts` therefore turns `kv_unified` off whenever `nParallel` is above
- * one.
+ * cache never settles: 36.2 s against 8.1 s on one slot and 6.3 s with a cache per sequence
+ * and continuous batching, and eight of its twelve requests land between 5 s and 17.6 s
+ * where the other two arms stay near 0.5–1.5 s. With a cache per sequence the pair stays
+ * ahead of one-at-a-time and nothing after it pays. `runtime.ts` therefore turns
+ * `kv_unified` off whenever `nParallel` is above one.
  */
 const WEBGPU_SLOTS = 2;
 // llama.cpp divides n_ctx across parallel slots, so the GPU tier sizes it for two.
