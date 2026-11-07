@@ -125,7 +125,15 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
       n_threads: selection.nThreads,
       n_gpu_layers: selection.nGpuLayers,
       n_parallel: selection.nParallel,
-      ...(selection.nParallel > 1 ? { cont_batching: true } : {}),
+      ...(selection.nParallel > 1
+        ? {
+            cont_batching: true,
+            // wllama defaults to one shared KV cache for every sequence. Sharing it is what
+            // made a two-slot pair 4.3x slower than the same two requests one after the
+            // other, and the request that followed the pair took 4.2 s instead of 0.65 s.
+            kv_unified: false,
+          }
+        : {}),
       ctx_shift: false,
       log_level: LOG_LEVEL_INFO,
     });

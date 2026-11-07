@@ -56,16 +56,37 @@ describe('wllama runtime load', () => {
     const runtime = await createWllamaRuntime(new Blob(), gpu);
 
     expect(runtime.backend).toBe('webgpu');
-    expect(runtime.parallel).toBe(1);
+    expect(runtime.parallel).toBe(2);
     expect(native.loadModel).toHaveBeenCalledWith(
       [expect.any(Blob)],
       expect.objectContaining({
-        n_ctx: 2048,
-        n_parallel: 1,
+        n_ctx: 4096,
+        n_parallel: 2,
         ctx_shift: false,
         log_level: 2,
       }),
     );
+  });
+
+  it('gives each WebGPU sequence its own KV cache', async () => {
+    native.log = ['load_tensors: offloaded 29/29 layers to GPU'];
+    await createWllamaRuntime(new Blob(), gpu);
+
+    // wllama defaults kv_unified to true. Sharing one cache across two sequences made a
+    // pair 4.3x slower than the same two requests one after the other.
+    expect(native.loadModel).toHaveBeenCalledWith(
+      [expect.any(Blob)],
+      expect.objectContaining({ cont_batching: true, kv_unified: false }),
+    );
+  });
+
+  it('leaves the single CPU sequence on one shared KV cache', async () => {
+    native.log = ['load_tensors: offloaded 0/29 layers to GPU'];
+    await createWllamaRuntime(new Blob(), cpu);
+
+    const params = native.loadModel.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(params).not.toHaveProperty('kv_unified');
+    expect(params).not.toHaveProperty('cont_batching');
   });
 
   it('rejects a WebGPU load that llama.cpp quietly ran on the CPU', async () => {

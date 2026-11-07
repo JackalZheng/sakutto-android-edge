@@ -7,12 +7,17 @@ export const CONTEXT_TOKENS = 2048;
 export const WEBGPU_ALL_LAYERS = 99999;
 
 /**
- * One sequence on WebGPU as well. With two slots decoding at once, ggml-webgpu ran a pair of
- * paragraphs in 9–14 s that it finishes one after the other in under 3 s (RTX 4070 Ti SUPER,
- * pinned wasm), so the second slot only produced long stretches with nothing painted.
+ * Two sequences on WebGPU.
+ *
+ * Two slots used to look slower than one, but the cost was wllama's `kv_unified: true`
+ * default, not the second slot: with one shared KV cache, the second sequence made the
+ * first take 4.3× as long, and the request after a pair was poisoned as well (a pair that
+ * took 1.2 s was followed by a 4.2 s request). With a per-sequence KV cache the same pair
+ * finishes in 0.92 s against 1.6 s one after the other, and the next request stays at
+ * 0.65 s. `runtime.ts` therefore turns `kv_unified` off whenever `nParallel` is above one.
  */
-const WEBGPU_SLOTS = 1;
-// llama.cpp divides n_ctx across parallel slots.
+const WEBGPU_SLOTS = 2;
+// llama.cpp divides n_ctx across parallel slots, so the GPU tier sizes it for two.
 const WEBGPU_CONTEXT_TOKENS = CONTEXT_TOKENS * WEBGPU_SLOTS;
 
 export interface BackendProbe {
@@ -35,8 +40,9 @@ function clampThreads(requested: number, hardwareConcurrency: number): number {
 }
 
 /**
- * Every tier keeps one sequence, so the paragraph on screen gets the whole model instead
- * of sharing each decode step with the next one.
+ * Every CPU tier keeps one sequence, so the paragraph on screen gets the whole model instead
+ * of sharing each decode step with the next one. WebGPU takes two, which only pays off with a
+ * per-sequence KV cache; see `WEBGPU_SLOTS`.
  */
 export function selectBackend(probe: BackendProbe): BackendSelection {
   if (probe.webgpu) {
