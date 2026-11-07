@@ -72,8 +72,9 @@ describe('wllama runtime load', () => {
     native.log = ['load_tensors: offloaded 29/29 layers to GPU'];
     await createWllamaRuntime(new Blob(), gpu);
 
-    // wllama defaults kv_unified to true. Sharing one cache keeps a pair of paragraphs
-    // quick but multiplies every later request by about 6.4x.
+    // wllama defaults kv_unified to true. With one shared cache the request right after a
+    // pair takes 4222 ms instead of 661 ms, and a page keeping two requests in flight never
+    // settles; see `backend.ts`.
     expect(native.loadModel).toHaveBeenCalledWith(
       [expect.any(Blob)],
       expect.objectContaining({ cont_batching: true, kv_unified: false }),

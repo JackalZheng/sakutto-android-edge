@@ -128,11 +128,12 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
       ...(selection.nParallel > 1
         ? {
             cont_batching: true,
-            // wllama defaults to one KV cache for every sequence. Sharing it keeps a pair of
-            // paragraphs quick but multiplies the request after it by about 6.4x (4222 ms
-            // against 661 ms on one slot), so a page with two requests in flight never
-            // catches up. A cache per sequence costs the pair nothing measurable and leaves
-            // the next request alone; numbers are in `backend.ts`.
+            // wllama defaults to one KV cache for every sequence. Sharing it keeps a single
+            // pair of paragraphs quick (844 ms against 1299 ms) but the request right after
+            // that pair takes 4222 ms instead of 661 ms, and with the page's usual two
+            // requests in flight it never settles: 36.2 s over 12 paragraphs against 8.1 s
+            // on one slot. A cache per sequence keeps the pair's advantage and leaves
+            // nothing behind it; the numbers are in `backend.ts`.
             kv_unified: false,
           }
         : {}),

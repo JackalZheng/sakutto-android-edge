@@ -14,17 +14,20 @@ export const WEBGPU_ALL_LAYERS = 99999;
  * the second sequence is not what cost that: the damage was wllama's `kv_unified: true`
  * default, one KV cache shared by every sequence.
  *
- * Medians of 6 interleaved rounds, RTX 4070 Ti SUPER, 8 threads, a pair of paragraphs and
- * then one more request (the request a page sends straight afterwards):
+ * Medians of 6 interleaved rounds (RTX 4070 Ti SUPER, 8 threads), a pair of paragraphs and
+ * then one more request — the request a page sends straight afterwards:
  *
  *   1 slot, one after the other      pair 1299 ms   next request  661 ms
  *   2 slots, shared KV cache         pair  844 ms   next request 4222 ms
  *   2 slots, a cache per sequence    pair  909 ms   next request  650 ms
  *
- * Sharing the cache leaves the pair itself quick and multiplies every later request by
- * about 6.4×, so a page that keeps two requests in flight never recovers. With a cache per
- * sequence the pair stays ahead of one-at-a-time and the next request is unaffected.
- * `runtime.ts` therefore turns `kv_unified` off whenever `nParallel` is above one.
+ * A page keeps two requests in flight (`TRANSLATION_CONCURRENCY`), so the pair is not a burst
+ * before an idle model — it is the steady state. Run that way over 12 paragraphs, the shared
+ * cache never settles: 36.2 s against 8.1 s on one slot and 6.4 s with a cache per sequence,
+ * and its individual requests stay at 5–17 s throughout instead of the ~0.6–1.5 s of the
+ * other two. With a cache per sequence the pair stays ahead of one-at-a-time and nothing
+ * after it pays. `runtime.ts` therefore turns `kv_unified` off whenever `nParallel` is above
+ * one.
  */
 const WEBGPU_SLOTS = 2;
 // llama.cpp divides n_ctx across parallel slots, so the GPU tier sizes it for two.
