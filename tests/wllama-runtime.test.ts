@@ -72,12 +72,22 @@ describe('wllama runtime load', () => {
     native.log = ['load_tensors: offloaded 29/29 layers to GPU'];
     await createWllamaRuntime(new Blob(), gpu);
 
-    // wllama defaults kv_unified to true. Sharing one cache across two sequences made a
-    // pair 4.3x slower than the same two requests one after the other.
+    // wllama defaults kv_unified to true. Sharing one cache keeps a pair of paragraphs
+    // quick but multiplies every later request by about 6.4x.
     expect(native.loadModel).toHaveBeenCalledWith(
       [expect.any(Blob)],
       expect.objectContaining({ cont_batching: true, kv_unified: false }),
     );
+  });
+
+  it('gates as many completions as llama.cpp has sequences', async () => {
+    native.log = ['load_tensors: offloaded 29/29 layers to GPU'];
+    const runtime = await createWllamaRuntime(new Blob(), gpu);
+
+    // The gate width, the scheduler width and n_parallel all come from the same number;
+    // loading two sequences while gating one would waste the second.
+    const params = native.loadModel.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(runtime.parallel).toBe(params['n_parallel']);
   });
 
   it('leaves the single CPU sequence on one shared KV cache', async () => {

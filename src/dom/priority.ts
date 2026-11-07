@@ -137,9 +137,12 @@ export function lookaheadScreens(
 }
 
 /**
- * Page requests kept in flight: one for the model's single slot, plus one waiting in the
- * engine's own queue. Without the extra request the model sat idle for the whole round trip
- * between one request finishing and the page sending the next. The waiting request has not
- * reached the model, so it can still be cancelled or overtaken by a selection.
+ * Page requests kept in flight: one per model sequence, plus one waiting in the engine's own
+ * queue. Without the extra request the model sat idle for the whole round trip between one
+ * request finishing and the page sending the next. The waiting request has not reached the
+ * model, so it can still be cancelled or overtaken by a selection.
+ *
+ * The GPU tier runs two sequences and every CPU tier one, so this is the CPU width and is
+ * also the GPU width: a third GPU request would only queue behind the same two sequences.
  */
 export const TRANSLATION_CONCURRENCY = 2;
