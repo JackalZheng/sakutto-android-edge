@@ -86,6 +86,20 @@ pnpm test:e2e       # local fixtures; does not download the model
 
 Optional host permissions (`https://*/*` and `http://*/*`) are requested only when you turn on automatic translation for a site. Nothing is requested for every site at install time.
 
+## Support
+
+There is no monetisation point in Sakutto. It is completely free, with no ads and no paid features.
+
+I started it because I wanted a translation extension like this myself, and I published it because it turned out to be needed by more people than I expected. I have no plans to charge for it or to add ads.
+
+Continuing development still takes time and money, so I opened GitHub Sponsors. If you like Sakutto, I would be glad of your support.
+
+- **$5 a month (Supporter)**: a plan for cheering on Sakutto's ongoing development.
+- **$10 a month (Backer)**: for anyone who wants to back it further. The amount changes nothing about the software.
+- **One-time**: any amount, once, if a subscription is more than you need.
+
+Neither tier adds limited features or priority support. The money goes towards new features, translation quality and speed, and ongoing maintenance. Whether you sponsor or not, Sakutto stays completely free and open source. https://github.com/sponsors/jammaru
+
 ## Licenses
 
 - Project code: MIT. See [LICENSE](LICENSE). Copyright 2026 jammaru.
