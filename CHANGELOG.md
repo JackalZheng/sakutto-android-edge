@@ -6,9 +6,13 @@ Release sections are added by `pnpm release`. Each section lists commit subjects
 
 ### Features
 
-- Faster GPU page translation — the first translated paragraph appears sooner, and long pages finish faster. On the project's long-article WebGPU benchmark (a long, text-heavy web page), the first paragraph appeared in about 0.3 seconds instead of 0.5 (38% sooner), and the full page finished in about 4.0 seconds instead of 14.6 (73% sooner). These numbers are for GPU/WebGPU translation; they do not describe CPU translation. Times vary by page and by computer. (#27)
+- Faster GPU page translation — on a long, text-heavy web page translated with the GPU (WebGPU), the whole page finished about 3.7 times faster (14.6 seconds → 4.0 seconds), and the first translated paragraph appeared about 1.6 times sooner (0.5 seconds → 0.3 seconds). These numbers are from the project's long-article benchmark. They do not describe CPU translation. Times vary by page and by computer. (#27)
 - The extension's screens are now available in 14 languages: English, Japanese, Korean, Simplified Chinese, Traditional Chinese, Spanish, Brazilian Portuguese, French, German, Italian, Russian, Vietnamese, Thai, and Indonesian. Anyone can contribute translations. (#30)
 - Keyboard shortcuts can now be changed from Sakutto's own screens. (#32)
+
+### Contributors
+
+- Thanks to @sabopura for making GPU page translation faster. (#27)
 
 ## [1.0.2] - 2026-11-08
 
