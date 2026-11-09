@@ -36,6 +36,7 @@
     DEFAULT_SHORTCUTS,
     SHORTCUT_COMMANDS,
     ariaShortcut,
+    boundShortcut,
     displayShortcut,
     type ShortcutCommand,
     type ShortcutSnapshot,
@@ -46,11 +47,12 @@
 
   type SettingsError = 'load' | 'save' | null;
 
-  /** The three hints under the button, each naming the key bound right now. */
+  /** The hints under the button, each naming the key bound right now. */
   const SHORTCUT_HINTS: readonly { label: MessageKey; command: ShortcutCommand }[] = [
     { label: 'shortcutTranslate', command: 'translate-page' },
     { label: 'shortcutBilingual', command: 'toggle-bilingual' },
     { label: 'shortcutSelection', command: 'translate-selection' },
+    { label: 'shortcutCompose', command: 'translate-compose' },
   ];
 
   let settings = $state<Settings | null>(null);
@@ -73,15 +75,19 @@
   let shortcutError = $state(false);
 
   /**
-   * The key Chrome currently has bound to each command. A binding the user removed stays as
-   * `''` so a hint can say it is unset rather than name a key that no longer works.
+   * The key each command actually uses on a page. Chrome leaving a command unbound is not
+   * an off switch — the manifest default stays until Sakutto's own setting turns it off.
    */
   let bound = $derived.by((): Record<ShortcutCommand, string> => {
+    const enabled = settings?.shortcutsEnabled;
     const next: Record<ShortcutCommand, string> = { ...DEFAULT_SHORTCUTS };
-    if (!shortcuts) return next;
     for (const command of SHORTCUT_COMMANDS) {
-      const shortcut = shortcuts[command];
-      if (shortcut !== null) next[command] = shortcut;
+      next[command] = boundShortcut(
+        shortcuts,
+        command,
+        DEFAULT_SHORTCUTS[command],
+        enabled?.[command] !== false,
+      );
     }
     return next;
   });

@@ -372,13 +372,22 @@
     "message": "Atajos de teclado"
   },
   "shortcutHelp": {
-    "message": "Chrome guarda estas teclas. Con «Cambiar atajos» las editas en los ajustes de Chrome."
+    "message": "Si Chrome deja un comando sin tecla, en las páginas sigue valiendo la tecla predeterminada. Desmarque un comando para desactivarlo. Use Cambiar atajos para editar las teclas en Chrome."
   },
   "shortcutChange": {
     "message": "Cambiar atajos"
   },
   "shortcutUnset": {
     "message": "Sin asignar"
+  },
+  "shortcutUse": {
+    "message": "Usar este atajo"
+  },
+  "shortcutOff": {
+    "message": "Desactivado"
+  },
+  "shortcutFallbackNote": {
+    "message": "Chrome no tiene tecla para este comando, así que en las páginas se usa la predeterminada."
   },
   "shortcutTranslate": {
     "message": "$KEY$ traduce la página o restaura la original.",
@@ -824,5 +833,173 @@
         "content": "$1"
       }
     }
+  },
+  "commandCompose": {
+    "message": "Traducir el texto que estás escribiendo"
+  },
+  "contextTranslateCompose": {
+    "message": "Traducir lo que estás escribiendo"
+  },
+  "shortcutCompose": {
+    "message": "$KEY$ traduce el texto del campo en el que escribes.",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      }
+    }
+  },
+  "onboardingReadyCompose": {
+    "message": "Pulsa $KEY$ mientras escribes en un cuadro de mensaje para ver una traducción que puedes aplicar.",
+    "placeholders": {
+      "key": {
+        "content": "$1"
+      }
+    }
+  },
+  "composeHelp": {
+    "message": "Cuando un cuadro de mensaje tiene el foco, el botón あA (o el atajo) muestra una vista previa de la traducción. Los borradores en japonés van al inglés (o al idioma de destino de arriba); los demás usan ese destino. Nada se reemplaza hasta que elijas Reemplazar."
+  },
+  "composeTitle": {
+    "message": "Traducción del borrador"
+  },
+  "composeIcon": {
+    "message": "Traducir lo que estás escribiendo"
+  },
+  "composeReplace": {
+    "message": "Reemplazar"
+  },
+  "composeUndo": {
+    "message": "Restaurar el original"
+  },
+  "composePending": {
+    "message": "Traduciendo…"
+  },
+  "composeFailed": {
+    "message": "No se pudo traducir este borrador."
+  },
+  "composeEmpty": {
+    "message": "Empieza a escribir para ver una traducción."
+  },
+  "composeTooLong": {
+    "message": "Este borrador es demasiado largo para traducirlo."
+  },
+  "composeSwap": {
+    "message": "Cambiar la dirección de la traducción"
+  },
+  "composeReplaced": {
+    "message": "Reemplazado. Puedes restaurar el original."
+  },
+  "composeInto": {
+    "message": "Al $LANGUAGE$",
+    "placeholders": {
+      "language": {
+        "content": "$1"
+      }
+    }
+  },
+  "composeChromeOnly": {
+    "message": "La traducción del borrador usa solo PLaMo, y PLaMo no traduce al $LANGUAGE$.",
+    "placeholders": {
+      "language": {
+        "content": "$1"
+      }
+    }
+  },
+  "composeIconSetting": {
+    "message": "Mostrar el botón あA en los cuadros de mensaje"
+  },
+  "composeIconSettingHelp": {
+    "message": "El atajo y el menú contextual siguen funcionando si el botón está oculto."
+  },
+  "composeTargetSetting": {
+    "message": "Idioma de destino al redactar"
+  },
+  "composeTargetAuto": {
+    "message": "Automático (los borradores en japonés van al otro idioma del par; el resto, al idioma de la página)"
+  },
+  "composeTargetSettingHelp": {
+    "message": "El idioma que elija en la vista previa se recuerda aquí."
+  },
+  "composeTargetLabel": {
+    "message": "Destino"
+  },
+  "composeInstantSetting": {
+    "message": "Traducir y reemplazar con un solo atajo"
+  },
+  "composeInstantSettingHelp": {
+    "message": "Sin vista previa: un atajo traduce el borrador y lo reemplaza. Deshacer sigue disponible."
+  },
+  "composeNeedSetup": {
+    "message": "PLaMo aún no está listo. Abre la configuración para aceptar la licencia y descargar el modelo."
+  },
+  "composeLoading": {
+    "message": "El modelo PLaMo se está cargando. La vista previa aparecerá cuando esté listo."
+  },
+  "composeIneligible": {
+    "message": "Este campo no se puede traducir."
+  },
+  "composeOpenSetup": {
+    "message": "Abrir configuración"
+  },
+  "composeStale": {
+    "message": "El borrador cambió. Reemplazar se pausa hasta que la vista previa se actualice."
+  },
+  "composeReplaceHint": {
+    "message": "$COMPOSE$ / $ENTER$ para reemplazar",
+    "placeholders": {
+      "compose": {
+        "content": "$1"
+      },
+      "enter": {
+        "content": "$2"
+      }
+    }
+  },
+  "composeLangPair": {
+    "message": "$SOURCE$ → $TARGET$",
+    "placeholders": {
+      "source": {
+        "content": "$1"
+      },
+      "target": {
+        "content": "$2"
+      }
+    }
+  },
+  "composeAutoSource": {
+    "message": "Auto"
+  },
+  "composePlacementSetting": {
+    "message": "Posición de la barra de traducción al escribir"
+  },
+  "composePlacementSettingHelp": {
+    "message": "El valor predeterminado para todos los sitios. Arrastra el asa ⋮⋮ de la barra para dejarla donde quieras en esta página. El menú ⋯ también puede anularlo solo para este sitio."
+  },
+  "composePlacementAbove": {
+    "message": "Encima del cuadro de mensaje"
+  },
+  "composePlacementBelow": {
+    "message": "Debajo del cuadro de mensaje"
+  },
+  "composePlacementCorner": {
+    "message": "Esquina inferior derecha de la ventana"
+  },
+  "composePlacementFree": {
+    "message": "Mover libremente"
+  },
+  "composePlacementMenu": {
+    "message": "Posición de la barra"
+  },
+  "composePlacementSite": {
+    "message": "Este sitio"
+  },
+  "composePlacementFollowSettings": {
+    "message": "Usar el ajuste para todos los sitios"
+  },
+  "composePlacementReset": {
+    "message": "Volver a la posición original"
+  },
+  "composePlacementHandle": {
+    "message": "Arrastra para mover la barra a cualquier sitio"
   }
 }

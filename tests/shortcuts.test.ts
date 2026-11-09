@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_COMPOSE_SHORTCUT,
   DEFAULT_SELECTION_SHORTCUT,
   DEFAULT_SHORTCUTS,
   ariaShortcut,
+  boundShortcut,
+  chromeLeftShortcutUnset,
   displayShortcut,
   isPlainAltS,
   matchesShortcut,
@@ -39,6 +42,7 @@ describe('selection shortcut', () => {
       'translate-page': 'Alt+A',
       'toggle-bilingual': 'Alt+B',
       'translate-selection': 'Alt+S',
+      'translate-compose': 'Alt+T',
     });
     expect(DEFAULT_SELECTION_SHORTCUT).toBe('Alt+S');
   });
@@ -71,6 +75,13 @@ describe('matchesShortcut', () => {
     expect(matchesShortcut(key(), 'S')).toBe(false);
     expect(matchesShortcut(key({ altKey: true }), '')).toBe(false);
   });
+
+  it('matches Alt+T from the physical key even when the layout reports a dagger', () => {
+    const dagger = key({ altKey: true, code: 'KeyT', key: '†' });
+    expect(matchesShortcut(dagger, 'Alt+T')).toBe(true);
+    expect(matchesShortcut(dagger, DEFAULT_COMPOSE_SHORTCUT)).toBe(true);
+    expect(matchesShortcut(key({ altKey: true, code: 'KeyY', key: '†' }), 'Alt+T')).toBe(false);
+  });
 });
 
 describe('parseShortcut', () => {
@@ -100,12 +111,51 @@ describe('readShortcutSnapshot', () => {
         { name: 'translate-page', shortcut: 'Alt+A' },
         { name: 'toggle-bilingual', shortcut: '' },
         { name: 'translate-selection', shortcut: '⌥⇧S' },
+        { name: 'translate-compose', shortcut: 'Alt+T' },
       ]),
     ).toEqual({
       'translate-page': 'Alt+A',
       'toggle-bilingual': '',
       'translate-selection': '⌥⇧S',
+      'translate-compose': 'Alt+T',
     });
+  });
+
+  it('uses the default key when Chrome listed a command but left it unbound', () => {
+    const snapshot = readShortcutSnapshot([
+      { name: 'translate-page', shortcut: 'Alt+A' },
+      { name: 'toggle-bilingual', shortcut: 'Alt+B' },
+      { name: 'translate-selection', shortcut: 'Alt+S' },
+      { name: 'translate-compose', shortcut: '' },
+    ]);
+    expect(boundShortcut(snapshot, 'translate-compose', DEFAULT_COMPOSE_SHORTCUT)).toBe('Alt+T');
+    expect(boundShortcut(snapshot, 'translate-compose', DEFAULT_COMPOSE_SHORTCUT, false)).toBe('');
+    expect(chromeLeftShortcutUnset(snapshot, 'translate-compose')).toBe(true);
+    expect(chromeLeftShortcutUnset(snapshot, 'translate-page')).toBe(false);
+    expect(boundShortcut(null, 'translate-compose', DEFAULT_COMPOSE_SHORTCUT)).toBe('Alt+T');
+    expect(
+      boundShortcut(
+        {
+          'translate-page': null,
+          'toggle-bilingual': null,
+          'translate-selection': null,
+          'translate-compose': null,
+        },
+        'translate-compose',
+        DEFAULT_COMPOSE_SHORTCUT,
+      ),
+    ).toBe('Alt+T');
+    expect(
+      boundShortcut(
+        {
+          'translate-page': 'Alt+Q',
+          'toggle-bilingual': '',
+          'translate-selection': '',
+          'translate-compose': '',
+        },
+        'translate-page',
+      ),
+    ).toBe('Alt+Q');
   });
 
   it('keeps a command Chrome did not list apart from an unbound one', () => {
@@ -113,6 +163,7 @@ describe('readShortcutSnapshot', () => {
       'translate-page': '',
       'toggle-bilingual': null,
       'translate-selection': null,
+      'translate-compose': null,
     });
   });
 });

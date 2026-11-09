@@ -17,6 +17,7 @@
   import {
     DEFAULT_SHORTCUTS,
     SHORTCUT_COMMANDS,
+    boundShortcut,
     displayShortcut,
     type ShortcutCommand,
   } from '@/shared/shortcuts';
@@ -87,6 +88,7 @@
 
   let readyPage = $derived(t('onboardingReadyPage', [keyText('translate-page')]));
   let readySelection = $derived(t('onboardingReadySelection', [keyText('translate-selection')]));
+  let readyCompose = $derived(t('onboardingReadyCompose', [keyText('translate-compose')]));
 
   let percent = $derived(Math.max(0, Math.min(100, Math.round(progress * 100))));
   let etaLabel = $derived.by(() => {
@@ -260,8 +262,7 @@
       if (!snapshot) return;
       const next = { ...bound };
       for (const command of SHORTCUT_COMMANDS) {
-        const shortcut = snapshot[command];
-        if (shortcut !== null) next[command] = shortcut;
+        next[command] = boundShortcut(snapshot, command);
       }
       bound = next;
     });
@@ -301,6 +302,7 @@
         <li>{t('onboardingReadyToolbar')}</li>
         <li>{readyPage}</li>
         <li>{readySelection}</li>
+        <li>{readyCompose}</li>
         <li>{t('onboardingReadyContext')}</li>
       </ul>
     </section>

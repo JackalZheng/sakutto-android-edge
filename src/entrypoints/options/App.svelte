@@ -237,7 +237,13 @@
   <section class="panel">
     <h2>{t('shortcutHeading')}</h2>
     <p class="muted help">{t('shortcutHelp')}</p>
-    <ShortcutSettings />
+    <p class="muted help">{t('composeHelp')}</p>
+    <ShortcutSettings
+      enabled={settings?.shortcutsEnabled}
+      onToggle={(command, on) => {
+        void updateSettings({ shortcutsEnabled: { [command]: on } });
+      }}
+    />
   </section>
 
   <section class="panel">

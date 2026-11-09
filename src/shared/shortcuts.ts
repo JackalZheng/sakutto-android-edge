@@ -1,4 +1,5 @@
 import type { PageCommandName, ShortcutSnapshot } from './messages';
+import { isRecord } from './object';
 
 export type { ShortcutSnapshot };
 
@@ -7,6 +8,7 @@ export const SHORTCUT_COMMANDS = [
   'translate-page',
   'toggle-bilingual',
   'translate-selection',
+  'translate-compose',
 ] as const;
 
 export type ShortcutCommand = (typeof SHORTCUT_COMMANDS)[number];
@@ -16,6 +18,7 @@ export const SHORTCUT_PAGE_COMMANDS: Readonly<Record<ShortcutCommand, PageComman
   'translate-page': 'toggle',
   'toggle-bilingual': 'bilingual',
   'translate-selection': 'selection',
+  'translate-compose': 'compose',
 };
 
 /**
@@ -27,10 +30,65 @@ export const DEFAULT_SHORTCUTS: Readonly<Record<ShortcutCommand, string>> = {
   'translate-page': 'Alt+A',
   'toggle-bilingual': 'Alt+B',
   'translate-selection': 'Alt+S',
+  'translate-compose': 'Alt+T',
 };
 
 /** The key the selection command has until Chrome answers. */
 export const DEFAULT_SELECTION_SHORTCUT = DEFAULT_SHORTCUTS['translate-selection'];
+
+/** The key the compose command has until Chrome answers. */
+export const DEFAULT_COMPOSE_SHORTCUT = DEFAULT_SHORTCUTS['translate-compose'];
+
+export type ShortcutEnabled = Record<ShortcutCommand, boolean>;
+
+/** Every command is on until the user turns it off in Sakutto's own settings. */
+export function defaultShortcutEnabled(): ShortcutEnabled {
+  return {
+    'translate-page': true,
+    'toggle-bilingual': true,
+    'translate-selection': true,
+    'translate-compose': true,
+  };
+}
+
+export function normalizeShortcutEnabled(value: unknown): ShortcutEnabled {
+  const next = defaultShortcutEnabled();
+  if (!isRecord(value)) return next;
+  for (const command of SHORTCUT_COMMANDS) {
+    if (value[command] === false) next[command] = false;
+  }
+  return next;
+}
+
+/**
+ * The key a page should listen for. Chrome may report `''` when it skipped `suggested_key`
+ * (another extension already holds Alt+B, a command added in an update, a second copy of
+ * this extension). That is not treated as "the user turned it off": the manifest default
+ * stays active until Sakutto's own setting disables the command. A key the user set in
+ * Chrome wins. `null` (Chrome did not list the command) also keeps the default.
+ */
+export function boundShortcut(
+  snapshot: ShortcutSnapshot | null,
+  command: ShortcutCommand,
+  fallback: string = DEFAULT_SHORTCUTS[command],
+  enabled = true,
+): string {
+  if (!enabled) return '';
+  if (!snapshot) return fallback;
+  const binding = snapshot[command];
+  if (binding === null || binding.length === 0) return fallback;
+  return binding;
+}
+
+/** True when Chrome listed the command with no key, so the in-page default is filling in. */
+export function chromeLeftShortcutUnset(
+  snapshot: ShortcutSnapshot | null,
+  command: ShortcutCommand,
+): boolean {
+  if (!snapshot) return false;
+  const binding = snapshot[command];
+  return binding === '' || binding === null;
+}
 
 /** The shape `browser.commands.getAll()` returns, without depending on its declared type. */
 export interface CommandBinding {
@@ -53,6 +111,7 @@ export function readShortcutSnapshot(commands: readonly CommandBinding[]): Short
     'translate-page': shortcutOf('translate-page'),
     'toggle-bilingual': shortcutOf('toggle-bilingual'),
     'translate-selection': shortcutOf('translate-selection'),
+    'translate-compose': shortcutOf('translate-compose'),
   };
 }
 
