@@ -30,6 +30,7 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'scripts/docker-compose.yml',
     'emcmake cmake .. -DEMSCRIPTEN_SYSTEM_PROCESSOR=wasm32 -DWLLAMA_COMPAT=ON',
   ],
+  ['scripts/docker-compose.yml', 'head -c 2 emdawn.zip'],
   [
     'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
     'std::unordered_map<std::string, wgpu::BindGroup> bind_group_cache;',

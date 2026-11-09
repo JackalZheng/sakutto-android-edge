@@ -1,7 +1,7 @@
 # Page bench — pr27-webgpu-review
 
 - Mode: live
-- Commit: `ce2a05f6b093a268e7ec4ece9e52b6ae687b4d6a`
+- Commit: `972ff46e4a51ac4533ec4d9e0ecd8b54e9065f14`
 - Started: 2026-11-09T07:19:51.739Z
 - Fixtures: 2, samples per fixture: 3
 
@@ -53,7 +53,7 @@ v1.0.2 run for the same reason, and none of their numbers should be read as a ba
 
 ## Headline numbers (long-article)
 
-Engine: **WebGPU** (8 threads) · mode `live` · commit `ce2a05f`
+Engine: **WebGPU** (8 threads) · mode `live` · commit `972ff46`
 
 | Metric                                     | Value |
 | ------------------------------------------ | ----: |
