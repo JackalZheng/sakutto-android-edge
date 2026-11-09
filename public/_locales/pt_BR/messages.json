@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Traduz os parágrafos logo antes de entrarem na tela. «Antecipar mais» prepara mais conteúdo abaixo da dobra, para que o texto esteja pronto ao rolar. Nos idiomas que o PLaMo suporta, cada linha vem do PLaMo; o rascunho do Chrome nunca é usado."
   },
+  "paceHelpFirefox": {
+    "message": "Traduz os parágrafos logo antes de entrarem na tela. «Antecipar mais» prepara mais conteúdo abaixo da dobra, para que o texto esteja pronto ao rolar. Nos idiomas que o PLaMo suporta, cada linha vem do PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "A única requisição da própria extensão é o download do modelo. Ela começa em huggingface.co e segue o redirecionamento do Hugging Face para o CDN dele. O texto das páginas não vai junto. O Chrome baixa os pacotes de idioma por conta própria."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "A única requisição da própria extensão é o download do modelo. Ela começa em huggingface.co e segue o redirecionamento do Hugging Face para o CDN dele. O texto das páginas não vai junto."
   },
   "privacyPolicyLink": {
     "message": "Política de privacidade"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "A página mantém o texto original até o modelo ficar pronto; depois o PLaMo traduz. A Google descreve a tradução do Chrome como local."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "A página mantém o texto original até o modelo ficar pronto; depois o PLaMo traduz."
   },
   "onboardingPrivacyNote": {
     "message": "Esta extensão não envia o texto das páginas a nenhum servidor."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Desmarque um comando para desligá-lo no Sakutto. Alterar atalhos abre o editor do Chrome. Limpar uma tecla lá faz o Sakutto parar de usá-la. A tecla padrão vale nas páginas só se o Chrome nunca atribuiu uma na instalação, por exemplo por um conflito."
   },
+  "shortcutHelpFirefox": {
+    "message": "Desmarque um comando para desligá-lo no Sakutto. Alterar atalhos abre o editor do Firefox. Limpar uma tecla lá faz o Sakutto parar de usá-la. A tecla padrão vale nas páginas só se o Firefox nunca atribuiu uma na instalação, por exemplo por um conflito."
+  },
   "shortcutChange": {
     "message": "Alterar atalhos"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "O Chrome não atribuiu uma tecla a este comando na instalação, então nas páginas vale a tecla padrão."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "O Firefox não atribuiu uma tecla a este comando na instalação, então nas páginas vale a tecla padrão."
   },
   "shortcutTranslate": {
     "message": "$KEY$ traduz a página ou restaura o original.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Arraste para mover a barra para qualquer lugar"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

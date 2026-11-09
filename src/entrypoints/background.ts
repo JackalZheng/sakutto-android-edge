@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { EngineClient } from '@/background/engine-client';
-import { OffscreenController } from '@/background/offscreen-lifecycle';
+import { createEngineHostController } from '@/background/engine-host-document';
 import { installPageActions } from '@/background/page-actions';
 import { broadcastModelProgress, shouldWarmDownloadedModel } from '@/background/progress-broadcast';
 import { measureQuality } from '@/background/quality';
@@ -34,45 +34,14 @@ import { resolveShortcutQuery } from '@/shared/shortcut-assignment';
 import {
   WEBGPU_DEBUG_STORAGE_KEY,
   isWebGpuDebugProfile,
-  offscreenDocumentMatches,
-  offscreenDocumentUrl,
   type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 import { ensureSettings } from '@/shared/storage';
 
-const OFFSCREEN_PAGE = 'offscreen.html';
 const CAPABILITIES_CACHE_KEY = 'engineCapabilities';
 
-function createOffscreenController(): OffscreenController {
-  return new OffscreenController({
-    hasDocument: async () => {
-      const pageUrl = browser.runtime.getURL(`/${OFFSCREEN_PAGE}`);
-      const contexts = await browser.runtime.getContexts({
-        contextTypes: ['OFFSCREEN_DOCUMENT'],
-      });
-      return contexts.some((context) => {
-        const url = 'documentUrl' in context ? String(context.documentUrl ?? '') : '';
-        return offscreenDocumentMatches(url, pageUrl);
-      });
-    },
-    createDocument: async () => {
-      const stored = await browser.storage.local.get(WEBGPU_DEBUG_STORAGE_KEY);
-      const profile = stored[WEBGPU_DEBUG_STORAGE_KEY];
-      await browser.offscreen.createDocument({
-        url: offscreenDocumentUrl(OFFSCREEN_PAGE, isWebGpuDebugProfile(profile) ? profile : 'off'),
-        reasons: [browser.offscreen.Reason.WORKERS],
-        justification:
-          'Runs the translation runtime in a document whose workers stay alive independently of the toolbar UI.',
-      });
-    },
-    closeDocument: async () => {
-      await browser.offscreen.closeDocument();
-    },
-  });
-}
-
 export default defineBackground(() => {
-  const client = new EngineClient(createOffscreenController());
+  const client = new EngineClient(createEngineHostController());
   const broker = new TranslationBroker(client);
   const downloads = new Map<ModelId, AbortController>();
   let capabilitiesCache: EngineCapabilities | null = null;
@@ -204,6 +173,8 @@ export default defineBackground(() => {
       }
     })().catch(() => undefined);
   });
+
+  void recordCommandAssignments();
 
   let warmStarted = false;
 

@@ -34,7 +34,7 @@ export const PLAMO_NOTICE_VERSION = '2026-11-06';
 
 export type Formality = 'polite' | 'plain';
 export type DisplayMode = 'replace' | 'bilingual';
-export type TierPreference = 'auto' | 'g' | 'c8' | 'c4';
+export type TierPreference = 'auto' | 'g' | 'c8' | 'c4' | 'c1';
 export type TranslationPace = 'fast' | 'quality';
 export type IdleMinutes = 0 | 1 | 5 | 15;
 export const COMPOSE_PLACEMENTS = ['above', 'below', 'corner', 'free'] as const;
@@ -140,7 +140,7 @@ export function isTranslationPace(value: unknown): value is TranslationPace {
 }
 
 export function isTierPreference(value: unknown): value is TierPreference {
-  return value === 'auto' || value === 'g' || value === 'c8' || value === 'c4';
+  return value === 'auto' || value === 'g' || value === 'c8' || value === 'c4' || value === 'c1';
 }
 
 export function isIdleMinutes(value: unknown): value is IdleMinutes {

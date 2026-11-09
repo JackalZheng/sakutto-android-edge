@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Menerjemahkan paragraf tepat sebelum muncul di layar. \"Look ahead further\" meng-prefetch lebih banyak teks di bawah lipatan, sehingga teksnya sudah siap saat Anda menggulir. Untuk bahasa yang didukung PLaMo, setiap baris berasal dari PLaMo; draf Chrome tidak pernah digunakan."
   },
+  "paceHelpFirefox": {
+    "message": "Menerjemahkan paragraf tepat sebelum muncul di layar. \"Look ahead further\" meng-prefetch lebih banyak teks di bawah lipatan, sehingga teksnya sudah siap saat Anda menggulir. Untuk bahasa yang didukung PLaMo, setiap baris berasal dari PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "Permintaan dari ekstensi itu sendiri adalah pengunduhan model. Model tersebut dimulai dari huggingface.co dan mengikuti pengalihan Hugging Face ke CDN-nya. Teks halaman tidak disertakan. Chrome mengunduh paket bahasanya sendiri."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "Permintaan dari ekstensi itu sendiri adalah pengunduhan model. Model tersebut dimulai dari huggingface.co dan mengikuti pengalihan Hugging Face ke CDN-nya. Teks halaman tidak disertakan."
   },
   "privacyPolicyLink": {
     "message": "Kebijakan privasi"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "Halaman tersebut tetap mempertahankan teks aslinya sampai model siap, kemudian PLaMo menerjemahkannya. Google Docs menerjemahkan Chrome ke dalam perangkat."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "Halaman tersebut tetap mempertahankan teks aslinya sampai model siap, kemudian PLaMo menerjemahkannya."
   },
   "onboardingPrivacyNote": {
     "message": "Ekstensi ini tidak mengirimkan teks halaman ke server."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Hapus centang perintah untuk mematikannya di Sakutto. Ubah pintasan membuka editor Chrome. Menghapus tombol di sana membuat Sakutto berhenti menggunakannya. Tombol bawaan dipakai di halaman hanya jika Chrome tidak pernah menetapkannya saat pemasangan, misalnya karena konflik."
   },
+  "shortcutHelpFirefox": {
+    "message": "Hapus centang perintah untuk mematikannya di Sakutto. Ubah pintasan membuka editor Firefox. Menghapus tombol di sana membuat Sakutto berhenti menggunakannya. Tombol bawaan dipakai di halaman hanya jika Firefox tidak pernah menetapkannya saat pemasangan, misalnya karena konflik."
+  },
   "shortcutChange": {
     "message": "Ubah pintasan"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "Chrome tidak menetapkan tombol untuk perintah ini saat pemasangan, jadi tombol bawaan dipakai di halaman."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "Firefox tidak menetapkan tombol untuk perintah ini saat pemasangan, jadi tombol bawaan dipakai di halaman."
   },
   "shortcutTranslate": {
     "message": "$KEY$ menerjemahkan halaman atau mengembalikan versi aslinya.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Seret untuk memindahkan bilah ke mana saja"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

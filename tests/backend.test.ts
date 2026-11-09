@@ -3,6 +3,7 @@ import {
   CONTEXT_TOKENS,
   cpuFallback,
   GPU_LOSS_WINDOW_MS,
+  isGpuLoadFallback,
   lighterSelection,
   selectionAfterGpuLoss,
   selectBackend,
@@ -62,6 +63,24 @@ describe('backend selection', () => {
     expect(selectBackend({ webgpu: true, hardwareConcurrency: 32 }).nThreads).toBe(8);
   });
 
+  it('uses one CPU thread when the page is not cross-origin isolated', () => {
+    expect(selectBackend({ webgpu: false, hardwareConcurrency: 32, sharedMemory: false })).toEqual({
+      tier: 'c1',
+      backend: 'cpu-wasm',
+      nGpuLayers: 0,
+      nThreads: 1,
+      nParallel: 1,
+      nCtx: CONTEXT_TOKENS,
+      sharedMemory: false,
+    });
+    expect(
+      selectBackend({ webgpu: true, hardwareConcurrency: 16, sharedMemory: false }).nThreads,
+    ).toBe(1);
+    expect(
+      selectionForTier('c8', { webgpu: true, hardwareConcurrency: 32, sharedMemory: false }),
+    ).toMatchObject({ tier: 'c1', nThreads: 1 });
+  });
+
   it('caps a small CPU at four threads', () => {
     expect(selectBackend({ webgpu: false, hardwareConcurrency: 4 })).toMatchObject({
       tier: 'c4',
@@ -88,6 +107,12 @@ describe('backend selection', () => {
       nThreads: 4,
     });
     expect(cpuFallback(selectBackend({ webgpu: false, hardwareConcurrency: 8 }))).toBeNull();
+    expect(
+      cpuFallback(selectBackend({ webgpu: true, hardwareConcurrency: 12, sharedMemory: false })),
+    ).toMatchObject({
+      tier: 'c1',
+      nThreads: 1,
+    });
   });
 
   it('lets a saved preference force the CPU tier on a GPU machine', () => {
@@ -158,5 +183,11 @@ describe('stepping down after a GPU failure', () => {
   it('steps down when the GPU is lost again soon after', () => {
     expect(selectionAfterGpuLoss(wide, GPU_LOSS_WINDOW_MS - 1)).toEqual(plain);
     expect(selectionAfterGpuLoss(plain, 1000)).toMatchObject({ backend: 'webgpu', nParallel: 1 });
+  });
+
+  it('does not treat a manual CPU choice as a GPU failure', () => {
+    expect(isGpuLoadFallback(wide, cpu)).toBe(true);
+    expect(isGpuLoadFallback(cpu, cpu)).toBe(false);
+    expect(isGpuLoadFallback(wide, plain)).toBe(false);
   });
 });

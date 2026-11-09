@@ -15,6 +15,7 @@ import { ChromeTranslatorEngine } from '../chrome/translator';
 import { isAbortError, isEngineError } from '../errors';
 import {
   cpuFallback,
+  isGpuLoadFallback,
   lighterSelection,
   selectionAfterGpuLoss,
   selectionForTier,
@@ -223,6 +224,7 @@ export class EngineHost {
       webgpu: capabilities.webgpu === 'ready',
       hardwareConcurrency: capabilities.hardwareConcurrency,
       fastBatches: capabilities.gpuFastBatches === true,
+      sharedMemory: capabilities.crossOriginIsolated,
     };
     const stored = browser.storage?.local ? await loadSettings().catch(() => null) : null;
     const selection = selectionForTier(stored?.tier ?? 'auto', probe);
@@ -244,10 +246,10 @@ export class EngineHost {
         selectionState.current,
         signal,
       );
-      if (result.selection !== selectionState.current) {
-        selectionState.current = result.selection;
+      if (isGpuLoadFallback(selectionState.current, result.selection)) {
         this.gpuFallback = true;
       }
+      selectionState.current = result.selection;
       this.gpuDiagnostic = mergeGpuDiagnostic(
         lastGpuDiagnostic(),
         this.gpuDiagnostic?.error,
@@ -263,8 +265,10 @@ export class EngineHost {
       const next = selectionAfterGpuLoss(selectionState.current, now - lastGpuLossAt);
       lastGpuLossAt = now;
       if (next !== selectionState.current) {
+        if (isGpuLoadFallback(selectionState.current, next)) {
+          this.gpuFallback = true;
+        }
         selectionState.current = next;
-        this.gpuFallback = true;
       }
       this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), this.gpuDiagnostic?.error);
       await manager.unload();

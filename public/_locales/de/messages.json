@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Übersetzt Absätze unmittelbar bevor sie sich anzeigen. „Look ahead further“ fährt weitere Texte unter der Folie vor, sodass der Text bereits beim Scrollen fertig ist. Für die von PLaMo unterstützten Sprachen stammt jede Zeile aus PLaMo; der Entwurf von Chrome wird nie verwendet."
   },
+  "paceHelpFirefox": {
+    "message": "Übersetzt Absätze unmittelbar bevor sie sich anzeigen. „Look ahead further“ fährt weitere Texte unter der Folie vor, sodass der Text bereits beim Scrollen fertig ist. Für die von PLaMo unterstützten Sprachen stammt jede Zeile aus PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "Die eigene Anfrage der Erweiterung ist der Modell-Download. Dieser startet bei huggingface.co und folgt dem Weiterleiten von Hugging Face zu seiner CDN. Seitentext ist nicht enthalten. Chrome lädt seine Sprachpakete selbst herunter."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "Die eigene Anfrage der Erweiterung ist der Modell-Download. Dieser startet bei huggingface.co und folgt dem Weiterleiten von Hugging Face zu seiner CDN. Seitentext ist nicht enthalten."
   },
   "privacyPolicyLink": {
     "message": "Datenschutzerklärung"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "Die Seite behält ihren Originaltext, bis das Modell fertig ist, woraufhin PLaMo dieses übersetzt. Google Docs übersetzt Chrome-Texte auf dem Gerät."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "Die Seite behält ihren Originaltext, bis das Modell fertig ist, woraufhin PLaMo dieses übersetzt."
   },
   "onboardingPrivacyNote": {
     "message": "Diese Erweiterung sendet keine Seitentexte an einen Server."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Entfernen Sie das Häkchen, um einen Befehl in Sakutto auszuschalten. „Tastenkürzel ändern“ öffnet den Editor von Chrome. Eine dort gelöschte Taste verwendet Sakutto nicht mehr. Die Standardtaste gilt auf Seiten nur, wenn Chrome sie bei der Installation nie zugewiesen hat, etwa wegen eines Konflikts."
   },
+  "shortcutHelpFirefox": {
+    "message": "Entfernen Sie das Häkchen, um einen Befehl in Sakutto auszuschalten. „Tastenkürzel ändern“ öffnet den Editor von Firefox. Eine dort gelöschte Taste verwendet Sakutto nicht mehr. Die Standardtaste gilt auf Seiten nur, wenn Firefox sie bei der Installation nie zugewiesen hat, etwa wegen eines Konflikts."
+  },
   "shortcutChange": {
     "message": "Tastenkürzel ändern"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "Chrome hat diesem Befehl bei der Installation keine Taste zugewiesen. Auf Seiten gilt die Standardtaste."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "Firefox hat diesem Befehl bei der Installation keine Taste zugewiesen. Auf Seiten gilt die Standardtaste."
   },
   "shortcutTranslate": {
     "message": "$KEY$ übersetzt die Seite oder stellt das Original wieder her.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Ziehen, um die Leiste beliebig zu verschieben"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "在段落滚动显示之前直接翻译。“Look ahead further”会在折叠线以下预加载更多内容，因此在滚动时文本就已准备就绪。对于 PLaMo 支持的语言，每一行均来自 PLaMo；Chrome 的草案绝不会被使用。"
   },
+  "paceHelpFirefox": {
+    "message": "在段落滚动显示之前直接翻译。“Look ahead further”会在折叠线以下预加载更多内容，因此在滚动时文本就已准备就绪。对于 PLaMo 支持的语言，每一行均来自 PLaMo。"
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "该扩展本身的请求是模型下载。它从 huggingface.co 开始，随后跟随 Hugging Face 重定向至其 CDN。页面文本不包含在内。Chrome 自行下载其语言包。"
+  },
+  "privacyDestinationsFirefox": {
+    "message": "该扩展本身的请求是模型下载。它从 huggingface.co 开始，随后跟随 Hugging Face 重定向至其 CDN。页面文本不包含在内。"
   },
   "privacyPolicyLink": {
     "message": "隐私政策"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "页面会保留原文本直到模型准备就绪，随后由 PLaMo 进行翻译。Google 文档将 Chrome 的翻译按设备进行。"
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "页面会保留原文本直到模型准备就绪，随后由 PLaMo 进行翻译。"
   },
   "onboardingPrivacyNote": {
     "message": "此扩展不会将页面文本发送至服务器。"
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "取消勾选即可在 Sakutto 中关闭该命令。“更改快捷键”会打开 Chrome 自己的编辑器。在那里清除按键后，Sakutto 也不再使用它。仅当安装时 Chrome 从未指定快捷键（例如冲突）时，页面上才使用默认键。"
   },
+  "shortcutHelpFirefox": {
+    "message": "取消勾选即可在 Sakutto 中关闭该命令。“更改快捷键”会打开 Firefox 自己的编辑器。在那里清除按键后，Sakutto 也不再使用它。仅当安装时 Firefox 从未指定快捷键（例如冲突）时，页面上才使用默认键。"
+  },
   "shortcutChange": {
     "message": "更改快捷键"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "安装时 Chrome 未为此命令指定快捷键，因此页面上使用默认键。"
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "安装时 Firefox 未为此命令指定快捷键，因此页面上使用默认键。"
   },
   "shortcutTranslate": {
     "message": "$KEY$ 可转换页面或还原原件。",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "拖动即可把栏放到任意位置"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

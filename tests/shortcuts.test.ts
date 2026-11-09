@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHROME_DEFAULT_SHORTCUTS,
   DEFAULT_COMPOSE_SHORTCUT,
   DEFAULT_SELECTION_SHORTCUT,
   DEFAULT_SHORTCUTS,
+  FIREFOX_DEFAULT_SHORTCUTS,
   SHORTCUT_COMMANDS,
   ariaShortcut,
   boundShortcut,
+  defaultShortcutsFor,
   displayShortcut,
   isPlainAltS,
   markCommandAssigned,
@@ -51,6 +54,24 @@ describe('selection shortcut', () => {
       'translate-compose': 'Alt+T',
     });
     expect(DEFAULT_SELECTION_SHORTCUT).toBe('Alt+S');
+    expect(DEFAULT_COMPOSE_SHORTCUT).toBe('Alt+T');
+    expect(CHROME_DEFAULT_SHORTCUTS).toEqual(DEFAULT_SHORTCUTS);
+    expect(defaultShortcutsFor('firefox')).toEqual(FIREFOX_DEFAULT_SHORTCUTS);
+    expect(FIREFOX_DEFAULT_SHORTCUTS).toEqual({
+      'translate-page': 'Alt+Shift+A',
+      'toggle-bilingual': 'Alt+Shift+B',
+      'translate-selection': 'Alt+Shift+S',
+      'translate-compose': 'Alt+Shift+T',
+    });
+    expect(
+      matchesShortcut(
+        key({ altKey: true, shiftKey: true }),
+        FIREFOX_DEFAULT_SHORTCUTS['translate-selection'],
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(key({ altKey: true }), FIREFOX_DEFAULT_SHORTCUTS['translate-selection']),
+    ).toBe(false);
   });
 });
 
@@ -87,6 +108,17 @@ describe('matchesShortcut', () => {
     expect(matchesShortcut(dagger, 'Alt+T')).toBe(true);
     expect(matchesShortcut(dagger, DEFAULT_COMPOSE_SHORTCUT)).toBe(true);
     expect(matchesShortcut(key({ altKey: true, code: 'KeyY', key: '†' }), 'Alt+T')).toBe(false);
+  });
+
+  it('matches Firefox compose Alt+Shift+T and not Alt+T', () => {
+    const shifted = key({ altKey: true, shiftKey: true, code: 'KeyT', key: 't' });
+    expect(matchesShortcut(shifted, FIREFOX_DEFAULT_SHORTCUTS['translate-compose'])).toBe(true);
+    expect(
+      matchesShortcut(
+        key({ altKey: true, code: 'KeyT', key: 't' }),
+        FIREFOX_DEFAULT_SHORTCUTS['translate-compose'],
+      ),
+    ).toBe(false);
   });
 });
 

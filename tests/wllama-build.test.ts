@@ -26,6 +26,8 @@ describe('wllama artifact rendering', () => {
     expect(source).toContain("searchParams.get('options')");
     expect(source).toContain('importScripts(RUN_OPTIONS.moduleUrl)');
     expect(source).toContain('RUN_OPTIONS.noWebGPU');
+    expect(source).toContain('sakuttoInstallFirefoxWebGpuKick');
+    expect(source).toContain('var enabled = true');
     expect(source).toContain('RUN_OPTIONS.webgpuDebug');
     expect(source).toContain('__SAKUTTO_WEBGPU_DEBUG__');
     expect(source.replace(/\r\n/g, '\n').trimEnd().endsWith(WORKER_CODE.trimEnd())).toBe(true);

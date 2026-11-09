@@ -7,7 +7,8 @@
   import { loadSiteRules, pageHost, saveSiteRule, subscribeSiteRules } from '@/dom/sites';
   import type { EngineCapabilities } from '@/shared/capabilities';
   import type { EngineStatus } from '@/shared/engine-status';
-  import { currentUiLanguage, t } from '@/shared/i18n';
+  import { hasBuiltInTranslatorUi, isFirefoxBuild } from '@/shared/browser';
+  import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
   import {
     requestCacheClear,
     requestEngineCapabilities,
@@ -67,7 +68,8 @@
       : (rules[glossaryScope]?.glossary ?? []),
   );
   let showSlow = $derived(
-    shouldHintBuiltInFallback(engine?.tier ?? null, quality?.milliseconds ?? null),
+    hasBuiltInTranslatorUi() &&
+      shouldHintBuiltInFallback(engine?.tier ?? null, quality?.milliseconds ?? null),
   );
   let engineLine = $derived.by(() => {
     const label = runtimeLabel({
@@ -237,7 +239,7 @@
 
   <section class="panel">
     <h2>{t('shortcutHeading')}</h2>
-    <p class="muted help">{t('shortcutHelp')}</p>
+    <p class="muted help">{t(isFirefoxBuild() ? 'shortcutHelpFirefox' : 'shortcutHelp')}</p>
     <p class="muted help">{t('composeHelp')}</p>
     <ShortcutSettings
       enabled={settings?.shortcutsEnabled}
@@ -365,8 +367,12 @@
         <select value={settings.tier} onchange={changeTier}>
           <option value="auto">{t('tierAuto')}</option>
           <option value="g">{t('tierGpu')}</option>
-          <option value="c8">{t('tierCpu8')}</option>
-          <option value="c4">{t('tierCpu4')}</option>
+          {#if isFirefoxBuild()}
+            <option value="c1">{t('tierCpu1')}</option>
+          {:else}
+            <option value="c8">{t('tierCpu8')}</option>
+            <option value="c4">{t('tierCpu4')}</option>
+          {/if}
         </select>
       </label>
       <p class="muted help">{t('tierHelp')}</p>
@@ -410,7 +416,7 @@
   <section class="panel">
     <h2>{t('privacyHeading')}</h2>
     <p>{t('privacyBody')}</p>
-    <p class="muted">{t('privacyDestinations')}</p>
+    <p class="muted">{tForBrowser('privacyDestinations', 'privacyDestinationsFirefox')}</p>
     <ul class="links">
       <li>
         <a href={projectLinks.privacy} target="_blank" rel="noreferrer">{t('privacyPolicyLink')}</a>

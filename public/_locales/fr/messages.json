@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Traduit les paragraphes juste avant qu'ils ne s'affichent. « Look ahead further » précharge davantage en dessous du pli, si bien que le texte est prêt dès le défilement. Pour les langues supportées par PLaMo, chaque ligne provient de PLaMo ; le brouillon de Chrome n'est jamais utilisé."
   },
+  "paceHelpFirefox": {
+    "message": "Traduit les paragraphes juste avant qu'ils ne s'affichent. « Look ahead further » précharge davantage en dessous du pli, si bien que le texte est prêt dès le défilement. Pour les langues supportées par PLaMo, chaque ligne provient de PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "La requête propre à l'extension est le téléchargement du modèle. Il part de huggingface.co et suit la redirection de Hugging Face vers sa CDN. Le texte de la page n'est pas inclus. Chrome télécharge ses packs de langues automatiquement."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "La requête propre à l'extension est le téléchargement du modèle. Il part de huggingface.co et suit la redirection de Hugging Face vers sa CDN. Le texte de la page n'est pas inclus."
   },
   "privacyPolicyLink": {
     "message": "Politique de confidentialité"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "La page conserve son texte d'origine jusqu'à ce que le modèle soit prêt, puis PLaMo le traduit. Google Docs traduit Chrome tel quel sur l'appareil."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "La page conserve son texte d'origine jusqu'à ce que le modèle soit prêt, puis PLaMo le traduit."
   },
   "onboardingPrivacyNote": {
     "message": "Cette extension ne transmet pas de texte de page à un serveur."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Décochez une commande pour la désactiver dans Sakutto. Modifier les raccourcis ouvre l’éditeur de Chrome. Si vous y effacez une touche, Sakutto cesse de l’utiliser. La touche par défaut s’applique sur les pages seulement si Chrome n’en a jamais assigné une à l’installation, par exemple à cause d’un conflit."
   },
+  "shortcutHelpFirefox": {
+    "message": "Décochez une commande pour la désactiver dans Sakutto. Modifier les raccourcis ouvre l’éditeur de Firefox. Si vous y effacez une touche, Sakutto cesse de l’utiliser. La touche par défaut s’applique sur les pages seulement si Firefox n’en a jamais assigné une à l’installation, par exemple à cause d’un conflit."
+  },
   "shortcutChange": {
     "message": "Modifier les raccourcis"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "Chrome n’a pas assigné de touche à cette commande à l’installation ; la touche par défaut s’applique sur les pages."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "Firefox n’a pas assigné de touche à cette commande à l’installation ; la touche par défaut s’applique sur les pages."
   },
   "shortcutTranslate": {
     "message": "$KEY$ traduit la page ou rétablit l’original.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Faites glisser pour déplacer la barre n’importe où"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { t, type MessageKey } from '@/shared/i18n';
+  import { t, tForBrowser, type MessageKey } from '@/shared/i18n';
   import { requestShortcutSnapshot, type ShortcutQueryResult } from '@/shared/messages';
   import { openShortcutEditor } from '@/shared/shortcut-editor';
   import {
@@ -110,7 +110,7 @@
       </dd>
     </div>
     {#if showsFallback(command)}
-      <p class="fallback">{t('shortcutFallbackNote')}</p>
+      <p class="fallback">{tForBrowser('shortcutFallbackNote', 'shortcutFallbackNoteFirefox')}</p>
     {/if}
   {/each}
 </dl>

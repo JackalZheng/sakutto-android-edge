@@ -4,7 +4,8 @@
   import { DEFAULT_MODEL_ID, getModel } from '@/engine/model/catalog';
   import type { ModelStatus } from '@/shared/engine-status';
   import { agreementFromStorage } from '@/shared/agreement';
-  import { currentUiLanguage, t } from '@/shared/i18n';
+  import { hasBuiltInTranslatorUi } from '@/shared/browser';
+  import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
   import { resolveTargetLanguage, type TargetLanguage } from '@/shared/languages';
   import {
     isModelProgressMessage,
@@ -289,8 +290,10 @@
       <h2>{t('onboardingSetupHeading')}</h2>
       <ul>
         <li>{t('onboardingModelNote')}</li>
-        <li>{t('onboardingBridgeNote')}</li>
-        <li>{t('onboardingUseNow')}</li>
+        <li>{tForBrowser('onboardingBridgeNote', 'onboardingBridgeNoteFirefox')}</li>
+        {#if hasBuiltInTranslatorUi()}
+          <li>{t('onboardingUseNow')}</li>
+        {/if}
         <li>{t('onboardingPrivacyNote')}</li>
       </ul>
     </section>

@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Traduce los párrafos justo antes de que se desplacen al desfile. \"Look ahead further\" precarga más por debajo del pliegue, por lo que el texto está listo cuando desplazas. Para los idiomas que soporta PLaMo, cada línea proviene de PLaMo; el borrador de Chrome nunca se utiliza."
   },
+  "paceHelpFirefox": {
+    "message": "Traduce los párrafos justo antes de que se desplacen al desfile. \"Look ahead further\" precarga más por debajo del pliegue, por lo que el texto está listo cuando desplazas. Para los idiomas que soporta PLaMo, cada línea proviene de PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "La solicitud propia de la extensión es la descarga del modelo. Comienza en huggingface.co y sigue el redireccionamiento de Hugging Face a su CDN. El texto de la página no se incluye. Chrome descarga sus paquetes de idiomas por sí mismo."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "La solicitud propia de la extensión es la descarga del modelo. Comienza en huggingface.co y sigue el redireccionamiento de Hugging Face a su CDN. El texto de la página no se incluye."
   },
   "privacyPolicyLink": {
     "message": "Política de privacidad"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "La página mantiene su texto original hasta que el modelo esté listo, y luego PLaMo lo traduce. Google Docs traduce Chrome tal como está en el dispositivo."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "La página mantiene su texto original hasta que el modelo esté listo, y luego PLaMo lo traduce."
   },
   "onboardingPrivacyNote": {
     "message": "Esta extensión no envía texto de página a un servidor."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Desmarque un comando para desactivarlo en Sakutto. Cambiar atajos abre el editor de Chrome. Si borra una tecla ahí, Sakutto deja de usarla. La tecla predeterminada se usa en las páginas solo si Chrome no asignó ninguna al instalar, por ejemplo por un conflicto."
   },
+  "shortcutHelpFirefox": {
+    "message": "Desmarque un comando para desactivarlo en Sakutto. Cambiar atajos abre el editor de Firefox. Si borra una tecla ahí, Sakutto deja de usarla. La tecla predeterminada se usa en las páginas solo si Firefox no asignó ninguna al instalar, por ejemplo por un conflicto."
+  },
   "shortcutChange": {
     "message": "Cambiar atajos"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "Chrome no asignó una tecla a este comando al instalar, así que en las páginas se usa la predeterminada."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "Firefox no asignó una tecla a este comando al instalar, así que en las páginas se usa la predeterminada."
   },
   "shortcutTranslate": {
     "message": "$KEY$ traduce la página o restaura la original.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Arrastra para mover la barra a cualquier sitio"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }

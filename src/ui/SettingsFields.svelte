@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { t } from '@/shared/i18n';
+  import { t, tForBrowser } from '@/shared/i18n';
   import {
     displayLanguage,
     isTargetLanguage,
@@ -93,7 +93,7 @@
       <option value="fast">{t('paceFast')}</option>
     </select>
   </label>
-  <p class="muted help">{t('paceHelp')}</p>
+  <p class="muted help">{tForBrowser('paceHelp', 'paceHelpFirefox')}</p>
 
   <label class="check">
     <input

@@ -148,6 +148,9 @@
   "paceHelp": {
     "message": "Traduisce i paragrafi appena prima di apparire. \"Look ahead further\" prefetcha ulteriori testi sotto il fold, così il testo è pronto al momento dello scorrimento. Per le lingue supportate da PLaMo, ogni riga proviene da PLaMo; la bozza di Chrome non viene mai utilizzata."
   },
+  "paceHelpFirefox": {
+    "message": "Traduisce i paragrafi appena prima di apparire. \"Look ahead further\" prefetcha ulteriori testi sotto il fold, così il testo è pronto al momento dello scorrimento. Per le lingue supportate da PLaMo, ogni riga proviene da PLaMo."
+  },
   "pageRate": {
     "message": "$TOKENS$ tok/s · $SEGMENTS$ seg/s",
     "placeholders": {
@@ -179,6 +182,9 @@
   },
   "privacyDestinations": {
     "message": "La richiesta dell'estensione è il download del modello. Inizia su huggingface.co e segue il reindirizzo di Hugging Face verso la propria CDN. Il testo della pagina non è incluso. Chrome scarica i propri language pack autonomamente."
+  },
+  "privacyDestinationsFirefox": {
+    "message": "La richiesta dell'estensione è il download del modello. Inizia su huggingface.co e segue il reindirizzo di Hugging Face verso la propria CDN. Il testo della pagina non è incluso."
   },
   "privacyPolicyLink": {
     "message": "Informativa sulla privacy"
@@ -227,6 +233,9 @@
   },
   "onboardingBridgeNote": {
     "message": "La pagina mantiene il testo originale finché il modello non è pronto, poi PLaMo lo traduce. Google Docs traduce Chrome in modo on-device."
+  },
+  "onboardingBridgeNoteFirefox": {
+    "message": "La pagina mantiene il testo originale finché il modello non è pronto, poi PLaMo lo traduce."
   },
   "onboardingPrivacyNote": {
     "message": "Questa estensione non invia il testo della pagina a un server."
@@ -392,6 +401,9 @@
   "shortcutHelp": {
     "message": "Togli il segno di spunta per disattivare un comando in Sakutto. Modifica scorciatoie apre l’editor di Chrome. Se cancelli un tasto lì, Sakutto smette di usarlo. Il tasto predefinito vale sulle pagine solo se Chrome non ne ha assegnato uno all’installazione, per esempio per un conflitto."
   },
+  "shortcutHelpFirefox": {
+    "message": "Togli il segno di spunta per disattivare un comando in Sakutto. Modifica scorciatoie apre l’editor di Firefox. Se cancelli un tasto lì, Sakutto smette di usarlo. Il tasto predefinito vale sulle pagine solo se Firefox non ne ha assegnato uno all’installazione, per esempio per un conflitto."
+  },
   "shortcutChange": {
     "message": "Modifica le scorciatoie"
   },
@@ -406,6 +418,9 @@
   },
   "shortcutFallbackNote": {
     "message": "Chrome non ha assegnato un tasto a questo comando all’installazione, quindi sulle pagine vale quello predefinito."
+  },
+  "shortcutFallbackNoteFirefox": {
+    "message": "Firefox non ha assegnato un tasto a questo comando all’installazione, quindi sulle pagine vale quello predefinito."
   },
   "shortcutTranslate": {
     "message": "$KEY$ converte la pagina o ripristina l’originale.",
@@ -1019,5 +1034,11 @@
   },
   "composePlacementHandle": {
     "message": "Trascina per spostare la barra ovunque"
+  },
+  "engineFirefoxSingleThread": {
+    "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
+  },
+  "tierCpu1": {
+    "message": "CPU (1 thread)"
   }
 }
