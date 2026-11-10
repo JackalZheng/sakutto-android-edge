@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      wllama: ${{ steps.scope.outputs.wllama }}
+      bundle: ${{ steps.scope.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "wllama=false" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "bundle=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "wllama=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "bundle=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$BASE_SHA"
+          fi
+          git diff --name-only "$BASE_SHA" HEAD | node scripts/ci-changed.ts --stdin | tee -a "$GITHUB_OUTPUT"
+
+  checks:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # A full clone: `tests/bench-fixtures.test.ts` reads `bench/history/pages.jsonl` and
+      # asks git for the commit each checked-in run names. A depth-1 checkout has no such
+      # object, so that test would fail on every pull request for a reason that is not
+      # about the change.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - id: playwright
+        shell: bash
+        run: echo "key=playwright-chromium-${RUNNER_OS}-$(sha256sum pnpm-lock.yaml | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright.outputs.key }}
+
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          PLAYWRIGHT_SKIP_INSTALL: '1'
+
+  pinned-wllama:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check the pinned source and the MV3 patches
+        run: node scripts/wllama/build.ts --check
+
+  package:
+    needs: changes
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.bundle == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.code == 'true') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [chrome, firefox]
+    name: Package ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/package-extension
+        with:
+          target: ${{ matrix.target }}
