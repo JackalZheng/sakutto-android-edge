@@ -1,5 +1,7 @@
 # Sakutto
 
+> **非公式の移植版:** このリポジトリは、jammaru による [Sakutto](https://github.com/jammaru/sakutto) を **Android 版 Microsoft Edge** に移植した非公式版「Sakutto for Android Edge（非公式移植版）」です。原作者 jammaru とも Preferred Networks, Inc. とも関係ありません。この移植版の問題は原作者ではなく [JackalZheng/sakutto-android-edge/issues](https://github.com/JackalZheng/sakutto-android-edge/issues) へ。上流: <https://github.com/jammaru/sakutto>。移植の詳細: [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md)。この移植版のプライバシーポリシー: <https://jackalzheng.github.io/sakutto-android-edge/privacy/>。以下は上流の README です。
+
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/mhlbjjijfkoghmcjndgdimhdlfkhadfl?logo=googlechrome&logoColor=white&label=Chrome%20Web%20Store)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/mhlbjjijfkoghmcjndgdimhdlfkhadfl?label=users)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)
 [![GitHub stars](https://img.shields.io/github/stars/jammaru/sakutto?style=flat&logo=github)](https://github.com/jammaru/sakutto/stargazers)

@@ -1,3 +1,13 @@
+Sakutto for Android Edge (unofficial port) / Sakutto for Android Edge（非官方移植）
+This is an unofficial port of Sakutto to Microsoft Edge for Android,
+maintained at https://github.com/JackalZheng/sakutto-android-edge.
+Upstream project: Sakutto by jammaru, https://github.com/jammaru/sakutto (MIT License).
+This port is not affiliated with or endorsed by jammaru, and is not affiliated with
+Preferred Networks, Inc. The copyright notices of jammaru and of all third-party
+components below are retained unchanged. Changes for the port are also under the MIT License.
+
+----- Upstream NOTICE -----
+
 Sakutto
 非公式の Chrome 拡張です。Preferred Networks, Inc. とは無関係です。Built with PLaMo.
 

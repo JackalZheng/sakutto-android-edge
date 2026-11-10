@@ -1,6 +1,8 @@
 # Sakutto
 
-> **Note:** This is the **Microsoft Edge for Android** port of Sakutto. See [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) for port-specific details and build instructions. Upstream: [jammaru/sakutto](https://github.com/jammaru/sakutto)
+> **Unofficial port / 非官方移植:** This repository is **Sakutto for Android Edge (unofficial port)**, an unofficial port of [Sakutto](https://github.com/jammaru/sakutto) by jammaru to **Microsoft Edge for Android**. It is not affiliated with or endorsed by jammaru, and not affiliated with Preferred Networks, Inc. Please report problems with this port at [JackalZheng/sakutto-android-edge/issues](https://github.com/JackalZheng/sakutto-android-edge/issues), not upstream. Upstream: <https://github.com/jammaru/sakutto>. Port details and build instructions: [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md). Edge Add-ons listing: [docs/EDGE_ADDONS_LISTING.md](docs/EDGE_ADDONS_LISTING.md). Privacy policy for this port: [site/privacy/index.html](site/privacy/index.html) (published at <https://jackalzheng.github.io/sakutto-android-edge/privacy/>).
+>
+> 本 repo 是 jammaru 的 [Sakutto](https://github.com/jammaru/sakutto) 移植到 Android 版 Microsoft Edge 的**非官方版本**，與原作者 jammaru 及 Preferred Networks, Inc. 無關。The rest of this README is the upstream README.
 
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/mhlbjjijfkoghmcjndgdimhdlfkhadfl?logo=googlechrome&logoColor=white&label=Chrome%20Web%20Store)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/mhlbjjijfkoghmcjndgdimhdlfkhadfl?label=users)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)
