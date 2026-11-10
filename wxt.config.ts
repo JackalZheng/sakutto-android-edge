@@ -1,9 +1,11 @@
 import { defineConfig } from 'wxt';
 import {
   CHROME_PERMISSIONS,
+  EDGE_PERMISSIONS,
   FIREFOX_PERMISSIONS,
   OPTIONAL_HOST_PERMISSIONS,
   commandSuggestions,
+  edgeCommands,
   firefoxGeckoSettings,
 } from './src/shared/manifest';
 
@@ -24,18 +26,24 @@ export default defineConfig({
   }),
   manifest: ({ browser }) => {
     const firefox = browser === 'firefox';
+    const edge = browser === 'edge';
+    // WXT passes `edge` through as the browser name; the build is
+    // Chromium MV3, the same as Chrome, with Edge-specific manifest
+    // differences below (no Translator API, no keyboard shortcuts).
     return {
       name: '__MSG_extensionName__',
       short_name: '__MSG_extensionShortName__',
       description: '__MSG_extensionDescription__',
       default_locale: 'en',
-      ...(firefox ? {} : { minimum_chrome_version: '116' }),
-      permissions: [...(firefox ? FIREFOX_PERMISSIONS : CHROME_PERMISSIONS)],
+      ...(firefox || edge ? {} : { minimum_chrome_version: '116' }),
+      permissions: [
+        ...(firefox ? FIREFOX_PERMISSIONS : edge ? EDGE_PERMISSIONS : CHROME_PERMISSIONS),
+      ],
       optional_host_permissions: [...OPTIONAL_HOST_PERMISSIONS],
       // Release builds ask for site access only when auto-translate is turned on.
       // The e2e build may script the local fixtures directly.
       ...(fixtureHostPermissions ? { host_permissions: fixtureHostPermissions } : {}),
-      commands: commandSuggestions(firefox ? 'firefox' : 'chrome'),
+      commands: edge ? edgeCommands() : commandSuggestions(firefox ? 'firefox' : 'chrome'),
       ...(firefox
         ? {
             browser_specific_settings: {
