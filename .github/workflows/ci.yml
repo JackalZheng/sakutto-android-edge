@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [chrome, firefox]
+        target: [chrome, firefox, edge]
     name: Package ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
