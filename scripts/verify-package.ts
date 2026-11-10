@@ -2,11 +2,15 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FIREFOX_EXTENSION_ID, FIREFOX_STRICT_MIN_VERSION } from '../src/shared/browser.ts';
-import { CHROME_PERMISSIONS, FIREFOX_PERMISSIONS } from '../src/shared/manifest.ts';
+import {
+  CHROME_PERMISSIONS,
+  EDGE_PERMISSIONS,
+  FIREFOX_PERMISSIONS,
+} from '../src/shared/manifest.ts';
 import { UI_LOCALES } from '../src/shared/locales.ts';
 import { readZip } from './zip-archive.ts';
 
-export type PackageBrowser = 'chrome' | 'firefox';
+export type PackageBrowser = 'chrome' | 'firefox' | 'edge';
 
 export interface PackagedManifest {
   permissions?: readonly string[];
@@ -28,6 +32,7 @@ export interface PackagedManifest {
 
 export const REQUIRED_PERMISSIONS = [...CHROME_PERMISSIONS];
 export const FIREFOX_REQUIRED_PERMISSIONS = [...FIREFOX_PERMISSIONS];
+export const EDGE_REQUIRED_PERMISSIONS = [...EDGE_PERMISSIONS];
 
 export const REQUIRED_HOST_PATTERNS = ['http://*/*', 'https://*/*'] as const;
 
@@ -134,7 +139,11 @@ export function auditPackage(
   }
   const permissions = manifest.permissions ?? [];
   const expectedPermissions =
-    browser === 'firefox' ? FIREFOX_REQUIRED_PERMISSIONS : REQUIRED_PERMISSIONS;
+    browser === 'firefox'
+      ? FIREFOX_REQUIRED_PERMISSIONS
+      : browser === 'edge'
+        ? EDGE_REQUIRED_PERMISSIONS
+        : REQUIRED_PERMISSIONS;
   if (!sameMembers(permissions, expectedPermissions)) {
     problems.push(`permissions ${permissions.join(',')}`);
   }
@@ -220,7 +229,9 @@ function parseBrowser(argv: readonly string[]): PackageBrowser {
   const flag = argv.find((arg) => arg.startsWith('--browser='));
   const index = argv.indexOf('--browser');
   const value = flag?.slice('--browser='.length) ?? (index >= 0 ? argv[index + 1] : undefined);
-  return value === 'firefox' ? 'firefox' : 'chrome';
+  if (value === 'firefox') return 'firefox';
+  if (value === 'edge') return 'edge';
+  return 'chrome';
 }
 
 function main(): void {
