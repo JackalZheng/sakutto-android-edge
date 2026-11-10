@@ -1,0 +1,89 @@
+name: 画面の文言 / Interface language
+description: 拡張機能の画面を別の言語に訳す、または既存の文言を直す。Add or fix UI catalog strings.
+title: '[i18n] '
+labels:
+  - i18n
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        拡張機能の画面文言（`public/_locales`）向けです。ウェブページの訳文の品質は「訳文の品質」テンプレートを使ってください。
+
+        先に [docs/TRANSLATING.md](https://github.com/jammaru/sakutto/blob/main/docs/TRANSLATING.md)
+        （[日本語](https://github.com/jammaru/sakutto/blob/main/docs/TRANSLATING.ja.md)）を読んでください。テストが課している規則と、その理由が書いてあります。
+
+        画面全体は `public/_locales/<lang>/messages.json` です。翻訳の pull request が触るのはそのファイルと、`src/shared/locales.ts` の 1 行だけです。Issue だけでも歓迎です。できるなら PR も大歓迎です。
+
+        This form is for the extension UI catalog, not for PLaMo page translations. Read TRANSLATING.md first. A translation pull request touches that catalog file, one line in `src/shared/locales.ts`, and nothing else. An issue by itself is welcome; a PR is very much wanted if you can.
+
+  - type: input
+    id: language
+    attributes:
+      label: 言語 / Language
+      description: 言語名とカタログ名。 The language and the catalog directory, e.g. `Polish / pl`.
+      placeholder: Polish / pl
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 何をするか / What are you doing?
+      options:
+        - 新しい言語を追加する / Adding a new language
+        - 既存の言語の文言を直す / Fixing strings in an existing language
+        - PLaMo が作ったカタログを見直す / Reviewing a PLaMo-generated catalog
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 何が変わったか、何がおかしいか / What changed, or what is wrong
+      description: |
+        新しい言語なら、全キーを訳したか一部だけか。修正なら、キー名と現行の文言、提案する文言。
+        For a new language, say whether you translated every key or only part of the file.
+        For a fix, quote the current string and the one you propose, with the key name.
+      placeholder: |
+        `onboardingModelNote` の単位の書き方がカタログとずれている。
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: pull request の前に / Before you open the pull request
+      description: テストが落とす項目です。 Please confirm each one. These are the things the suite rejects.
+      options:
+        - label: 英語カタログのキーがすべてあり、余分なキーはない。 Every English key exists, no extras.
+          required: false
+        - label: 英語の `$TOKEN$` が残っていて、`placeholders` は変えていない。 Tokens and placeholders unchanged.
+          required: false
+        - label: '`extensionName` と `extensionShortName` は `Sakutto` のまま。 Brand names stay Sakutto.'
+          required: false
+        - label: ライセンスの事実（売上上限、登録フォーム、モデルサイズ）は変えていない。 Licence facts left alone.
+          required: false
+        - label: '`pnpm test` が通る。 `pnpm test` passes. (pull request を出すとき)'
+          required: false
+
+  - type: textarea
+    id: review
+    attributes:
+      label: この言語の扱い / Fluency
+      description: |
+        機械翻訳は下書きです。母語または流暢な読み手か、トーンの確認がまだ必要か。名前は書かないでください。必須ではありません。
+        A machine translation is a draft. Native or fluent reader, or still needs a tone check.
+        Do not name a person. This is not a blocker.
+      placeholder: |
+        母語として読めます。オンボーディングのトーンは第二意見が欲しいです。
+        I can read this as a native speaker. The onboarding tone needs a second opinion.
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: pull request
+      description: 必須ではありません。Issue だけでも歓迎です。 Optional. An issue by itself is welcome.
+      options:
+        - label: できればこの Issue の PR を出してみたい / I'd like to open a PR for this
+          required: false
