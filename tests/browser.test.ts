@@ -4,6 +4,7 @@ import {
   FIREFOX_STRICT_MIN_VERSION,
   extensionBrowser,
   hasBuiltInTranslatorUi,
+  isEdgeBuild,
   isFirefoxBuild,
 } from '@/shared/browser';
 
@@ -11,6 +12,7 @@ describe('browser build flags', () => {
   it('treats unit tests as a Chrome bundle', () => {
     expect(extensionBrowser()).toBe('chrome');
     expect(isFirefoxBuild()).toBe(false);
+    expect(isEdgeBuild()).toBe(false);
     expect(hasBuiltInTranslatorUi()).toBe(true);
   });
 

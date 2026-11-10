@@ -20,9 +20,14 @@
     requestModelUse,
   } from '@/shared/messages';
   import { loadSettings } from '@/shared/storage';
+  import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
   import { formatByteSize } from './format';
 
-  const models: ModelId[] = [DEFAULT_MODEL_ID, HIGH_QUALITY_MODEL_ID];
+  // Edge for Android: 0.8B only. The 1.8 GB 2B model is not offered on a
+  // phone — download size, RAM and CPU fallback time all argue against it.
+  const models: ModelId[] = [DEFAULT_MODEL_ID, HIGH_QUALITY_MODEL_ID].filter((id) =>
+    isAndroidEdgeRuntime() ? isMobileModelAllowed(id) : true,
+  );
 
   let statuses = $state<Partial<Record<ModelId, ModelStatus>>>({});
   let activeId = $state<ModelId>(DEFAULT_MODEL_ID);

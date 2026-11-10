@@ -13,6 +13,8 @@ Sakutto is an unofficial extension for Chrome and Firefox that translates web pa
 
 The extension is free and open source (MIT). It has no ads and no paid features. The model weights are not in this repository or in the extension package.
 
+Edge for Android port: see [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) — PLaMo-only, 0.8B-only, no keyboard shortcuts, install via Edge Canary / Edge Add-ons.
+
 ## Install
 
 Install Sakutto from the Chrome Web Store:

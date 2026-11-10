@@ -42,7 +42,7 @@ function publish(root: string): void {
   }));
   const problems = storeZipProblems(entries);
 
-  const browsers = ['chrome-mv3', 'firefox-mv3'] as const;
+  const browsers = ['chrome-mv3', 'firefox-mv3', 'edge-mv3'] as const;
   const unpacked = browsers
     .map((name) => join(output, name))
     .find((path) => existsSync(join(path, 'manifest.json')));
@@ -71,7 +71,11 @@ function publish(root: string): void {
     console.log(`${entry.name} ${String(entry.bytes)}`);
   }
   if (unpacked) {
-    const name = unpacked.endsWith('firefox-mv3') ? 'firefox-mv3' : 'chrome-mv3';
+    const name = unpacked.endsWith('firefox-mv3')
+      ? 'firefox-mv3'
+      : unpacked.endsWith('edge-mv3')
+        ? 'edge-mv3'
+        : 'chrome-mv3';
     cpSync(unpacked, join(destination, name), { recursive: true });
   }
 }

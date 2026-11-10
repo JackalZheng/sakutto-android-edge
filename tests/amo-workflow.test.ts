@@ -28,11 +28,12 @@ describe('AMO workflow', () => {
     expect(action).toContain('target:');
     expect(action).toContain('default: chrome');
     expect(action).toContain('pnpm zip:firefox');
+    expect(action).toContain('pnpm zip:edge');
     expect(action).toContain('pnpm lint:firefox');
     expect(action).toContain('pnpm source:firefox');
     expect(action).toContain('scripts/compare-extension-builds.ts');
     expect(action).toContain('src/engine/wllama/firefox-webgpu-kick.ts');
-    expect(ci).toContain('target: [chrome, firefox]');
+    expect(ci).toContain('target: [chrome, firefox, edge]');
     expect(ci).toContain('target: ${{ matrix.target }}');
     expect(ci).toMatch(/checks:\n {4}needs: changes\n {4}runs-on:/);
     expect(ci).not.toContain('package-firefox');
@@ -40,6 +41,7 @@ describe('AMO workflow', () => {
     expect(ci).not.toContain('AMO_JWT');
     expect(packageJson).toContain('"build:firefox"');
     expect(packageJson).toContain('"zip:firefox"');
+    expect(packageJson).toContain('"zip:edge"');
     expect(packageJson).toContain('"source:firefox"');
   });
 });

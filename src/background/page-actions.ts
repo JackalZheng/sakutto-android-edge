@@ -12,26 +12,33 @@ interface PageTranslationCanceller {
 export function installPageActions(translations?: PageTranslationCanceller): void {
   installMenus();
 
-  browser.commands.onCommand.addListener((command) => {
-    if (!isShortcutCommand(command)) return;
-    void noteShortcutCommandAssigned(command);
-    void runOnActiveTab(SHORTCUT_PAGE_COMMANDS[command]);
-  });
+  // Edge for Android may not expose `commands` / `contextMenus` at all.
+  // Guard both so a missing API cannot kill the background worker; the
+  // popup and the in-page UI remain the touch entry points.
+  if (browser.commands?.onCommand) {
+    browser.commands.onCommand.addListener((command) => {
+      if (!isShortcutCommand(command)) return;
+      void noteShortcutCommandAssigned(command);
+      void runOnActiveTab(SHORTCUT_PAGE_COMMANDS[command]);
+    });
+  }
 
-  browser.contextMenus.onClicked.addListener((info, tab) => {
-    const tabId = tab?.id;
-    if (tabId === undefined) return;
-    const pageCommand =
-      info.menuItemId === 'translate-selection'
-        ? 'selection'
-        : info.menuItemId === 'translate-compose'
-          ? 'compose'
-          : info.menuItemId === 'translate-page'
-            ? 'toggle'
-            : null;
-    if (!pageCommand) return;
-    void runCommand(tabId, pageCommand);
-  });
+  if (browser.contextMenus?.onClicked) {
+    browser.contextMenus.onClicked.addListener((info, tab) => {
+      const tabId = tab?.id;
+      if (tabId === undefined) return;
+      const pageCommand =
+        info.menuItemId === 'translate-selection'
+          ? 'selection'
+          : info.menuItemId === 'translate-compose'
+            ? 'compose'
+            : info.menuItemId === 'translate-page'
+              ? 'toggle'
+              : null;
+      if (!pageCommand) return;
+      void runCommand(tabId, pageCommand);
+    });
+  }
 
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'loading') translations?.cancelTab(tabId);
@@ -45,6 +52,8 @@ export function installPageActions(translations?: PageTranslationCanceller): voi
 }
 
 function installMenus(): void {
+  // Edge for Android has no usable context menu; skip silently there.
+  if (!browser.contextMenus?.removeAll || !browser.contextMenus?.create) return;
   // Chrome decides menu contents when it opens, so hiding after contextmenu is too
   // late and the hidden state would be global across tabs. Keep this item on every
   // editable; ineligible fields no-op with feedback in the page.
