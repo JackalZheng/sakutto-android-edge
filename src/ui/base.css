@@ -41,6 +41,19 @@ button {
   cursor: pointer;
 }
 
+/* Touch-first (Edge for Android): 44px minimum targets, no hover-only affordances. */
+@media (pointer: coarse) {
+  button,
+  select,
+  input {
+    min-height: 44px;
+  }
+
+  body {
+    font-size: 14px;
+  }
+}
+
 a {
   color: var(--accent-strong);
 }
