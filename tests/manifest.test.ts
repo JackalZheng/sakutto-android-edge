@@ -3,7 +3,7 @@ import { FIREFOX_EXTENSION_ID, FIREFOX_STRICT_MIN_VERSION } from '@/shared/brows
 import { CHROME_DEFAULT_SHORTCUTS, FIREFOX_DEFAULT_SHORTCUTS } from '@/shared/shortcuts';
 import config from '../wxt.config';
 
-function manifestFor(browser: 'chrome' | 'firefox'): Record<string, unknown> {
+function manifestFor(browser: 'chrome' | 'firefox' | 'edge'): Record<string, unknown> {
   const factory = config.manifest;
   if (typeof factory !== 'function') throw new Error('expected a manifest factory');
   return factory({
@@ -16,6 +16,7 @@ function manifestFor(browser: 'chrome' | 'firefox'): Record<string, unknown> {
 
 const chromeManifest = manifestFor('chrome');
 const firefoxManifest = manifestFor('firefox');
+const edgeManifest = manifestFor('edge');
 
 describe('extension manifest', () => {
   it('uses the localized name and description', () => {
@@ -141,5 +142,31 @@ describe('Firefox manifest', () => {
 
   it('keeps the same CSP as Chrome so wasm can compile', () => {
     expect(firefoxManifest.content_security_policy).toEqual(chromeManifest.content_security_policy);
+  });
+});
+
+describe('Edge manifest', () => {
+  it('keeps the Chrome MV3 permissions, drops minimum_chrome_version, and binds no keys', () => {
+    expect(edgeManifest.permissions).toEqual([
+      'offscreen',
+      'storage',
+      'unlimitedStorage',
+      'activeTab',
+      'scripting',
+      'contextMenus',
+    ]);
+    expect(edgeManifest).not.toHaveProperty('minimum_chrome_version');
+    expect(edgeManifest).not.toHaveProperty('browser_specific_settings');
+    expect(edgeManifest.content_security_policy).toEqual(chromeManifest.content_security_policy);
+    const commands = edgeManifest.commands as Record<string, { suggested_key?: unknown }>;
+    expect(Object.keys(commands).sort()).toEqual([
+      'toggle-bilingual',
+      'translate-compose',
+      'translate-page',
+      'translate-selection',
+    ]);
+    for (const command of Object.values(commands)) {
+      expect(command.suggested_key).toBeUndefined();
+    }
   });
 });
