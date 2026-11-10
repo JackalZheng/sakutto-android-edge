@@ -3,7 +3,7 @@ description: Restore the pinned wllama build or compile it, then zip the extensi
 
 inputs:
   target:
-    description: Target browser (chrome or firefox)
+    description: Target browser (chrome, firefox or edge)
     required: false
     default: chrome
 
@@ -92,7 +92,7 @@ runs:
           public/vendor/wllama
         key: ${{ steps.wasm.outputs.cache-primary-key }}
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'chrome' }}
       shell: bash
       run: pnpm zip
 
@@ -100,17 +100,21 @@ runs:
       shell: bash
       run: pnpm zip:firefox
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'edge' }}
+      shell: bash
+      run: pnpm zip:edge
+
+    - if: ${{ inputs.target == 'chrome' }}
       uses: actions/cache@v6
       with:
         path: ~/.cache/ms-playwright
         key: ${{ steps.inputs.outputs.playwright }}
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'chrome' }}
       shell: bash
       run: pnpm exec playwright install --with-deps chromium
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'chrome' }}
       shell: bash
       run: pnpm exec playwright test e2e/wllama-worker.spec.ts
 
@@ -152,7 +156,7 @@ runs:
     - shell: bash
       run: node scripts/package-artifact.ts
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'chrome' }}
       uses: actions/upload-artifact@v7
       with:
         name: chrome-mv3-zip
@@ -160,7 +164,7 @@ runs:
         compression-level: 0
         path: artifacts/store/*.zip
 
-    - if: ${{ inputs.target != 'firefox' }}
+    - if: ${{ inputs.target == 'chrome' }}
       uses: actions/upload-artifact@v7
       with:
         name: chrome-mv3
@@ -168,6 +172,23 @@ runs:
         compression-level: 0
         include-hidden-files: true
         path: artifacts/chrome-mv3
+
+    - if: ${{ inputs.target == 'edge' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: edge-mv3-zip
+        if-no-files-found: error
+        compression-level: 0
+        path: artifacts/store/*.zip
+
+    - if: ${{ inputs.target == 'edge' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: edge-mv3
+        if-no-files-found: error
+        compression-level: 0
+        include-hidden-files: true
+        path: artifacts/edge-mv3
 
     - if: ${{ inputs.target == 'firefox' }}
       uses: actions/upload-artifact@v7
