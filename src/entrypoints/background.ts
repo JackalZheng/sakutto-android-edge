@@ -37,6 +37,7 @@ import {
   type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 import { ensureSettings } from '@/shared/storage';
+import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
 
 const CAPABILITIES_CACHE_KEY = 'engineCapabilities';
 
@@ -106,6 +107,9 @@ export default defineBackground(() => {
   }
 
   function startDownload(modelId: ModelId): boolean {
+    // Edge for Android: refuse the 1.8 GB 2B model even if an old UI
+    // still asks for it. The background is the last line of defence.
+    if (isAndroidEdgeRuntime() && !isMobileModelAllowed(modelId)) return false;
     if (downloads.has(modelId)) return true;
 
     const controller = new AbortController();
@@ -339,6 +343,10 @@ export default defineBackground(() => {
     }
 
     if (isModelUseRequest(message)) {
+      if (isAndroidEdgeRuntime() && !isMobileModelAllowed(message.modelId)) {
+        sendResponse(null);
+        return true;
+      }
       void client.useModel(message.modelId).then(
         (status) => {
           void broadcast({ type: 'model:progress', status });
