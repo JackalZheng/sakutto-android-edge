@@ -1,4 +1,4 @@
-export type ExtensionBrowser = 'chrome' | 'firefox';
+export type ExtensionBrowser = 'chrome' | 'firefox' | 'edge';
 
 /** Add-on ID for AMO. It cannot change after the first listed upload. */
 export const FIREFOX_EXTENSION_ID = 'sakutto@jammaru';
@@ -18,6 +18,7 @@ function readEnv(): BrowserEnv {
 export function extensionBrowser(): ExtensionBrowser {
   const env = readEnv();
   if (env.FIREFOX === true || env.BROWSER === 'firefox') return 'firefox';
+  if (env.BROWSER === 'edge') return 'edge';
   return 'chrome';
 }
 
@@ -25,10 +26,16 @@ export function isFirefoxBuild(): boolean {
   return extensionBrowser() === 'firefox';
 }
 
+export function isEdgeBuild(): boolean {
+  return extensionBrowser() === 'edge';
+}
+
 /**
- * Chrome's Translator / LanguageDetector APIs. Firefox has neither, so the
- * Chrome-only language list and onboarding note stay hidden there.
+ * Chrome's Translator / LanguageDetector APIs. Firefox has neither, and
+ * Edge (desktop or Android) does not ship them either, so the Chrome-only
+ * language list and onboarding note stay hidden on Edge builds too.
+ * Edge therefore uses PLaMo only, exactly like Firefox.
  */
 export function hasBuiltInTranslatorUi(): boolean {
-  return !isFirefoxBuild();
+  return extensionBrowser() === 'chrome';
 }
