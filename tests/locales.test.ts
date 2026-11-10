@@ -137,8 +137,8 @@ describe('locale messages', () => {
   const ja = readMessages('ja');
 
   it('uses the product names from the specification', () => {
-    expect(en.extensionName?.message).toBe('Sakutto - Local AI translation');
-    expect(ja.extensionName?.message).toBe('Sakutto - ローカルAI翻訳');
+    expect(en.extensionName?.message).toBe('Sakutto for Android Edge (unofficial port)');
+    expect(ja.extensionName?.message).toBe('Sakutto for Android Edge（非公式移植版）');
     expect(en.extensionShortName?.message).toBe('Sakutto');
     expect(ja.extensionShortName?.message).toBe('Sakutto');
   });

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Sakutto for Android Edge（非官方移植）— 隱私權政策 / Privacy policy / プライバシーポリシー
+    </title>
+    <style>
+      body {
+        font:
+          16px/1.7 system-ui,
+          -apple-system,
+          'Noto Sans TC',
+          'Noto Sans JP',
+          sans-serif;
+        max-width: 46em;
+        margin: 0 auto;
+        padding: 1.5em;
+        color: #1f2937;
+        background: #fff;
+      }
+      h1 {
+        font-size: 1.5em;
+        line-height: 1.3;
+      }
+      h2 {
+        font-size: 1.2em;
+        margin-top: 2em;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 0.2em;
+      }
+      h3 {
+        font-size: 1.05em;
+        margin-top: 1.4em;
+      }
+      nav a {
+        margin-right: 1em;
+      }
+      .note {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 8px;
+        padding: 0.8em 1em;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #111827;
+          color: #e5e7eb;
+        }
+        .note {
+          background: #3b2f0b;
+          border-color: #b45309;
+        }
+        h2 {
+          border-color: #374151;
+        }
+        a {
+          color: #7dd3fc;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+      Sakutto for Android Edge（非官方移植）<br />隱私權政策 / Privacy policy / プライバシーポリシー
+    </h1>
+    <p>最後更新 / Last updated / 最終更新：2026-11-10</p>
+    <nav><a href="#zh-Hant">繁體中文</a><a href="#en">English</a><a href="#ja">日本語</a></nav>
+
+    <section id="zh-Hant" lang="zh-Hant">
+      <h2>繁體中文</h2>
+      <p class="note">
+        <strong>這是非官方移植版。</strong>Sakutto for Android Edge 是把開源擴充功能
+        <a href="https://github.com/jammaru/sakutto">Sakutto</a>（作者 jammaru，MIT 授權）移植到
+        Android 版 Microsoft Edge 的非官方版本，由
+        <a href="https://github.com/JackalZheng/sakutto-android-edge"
+          >JackalZheng/sakutto-android-edge</a
+        >
+        維護。本版本與原作者 jammaru 沒有關係，也不是 Preferred Networks, Inc.
+        的產品，與該公司無任何關聯。翻譯模型為 PLaMo 3 Translate，依 PLaMo Community License
+        使用（Built with PLaMo）。
+      </p>
+      <h3>重點</h3>
+      <ul>
+        <li>翻譯在你的裝置上進行，網頁內容不會傳送到任何翻譯伺服器。</li>
+        <li>沒有帳號、沒有廣告、沒有分析或遙測，也沒有當機回報。</li>
+        <li>維護者（以及原作者）不會收到你翻譯的網頁、選取的文字、詞彙表或譯文。</li>
+        <li>擴充功能唯一主動下載的檔案，是從 Hugging Face 取得的 PLaMo 模型。</li>
+      </ul>
+      <h3>擴充功能會讀取什麼</h3>
+      <p>
+        當你要求翻譯頁面、選取的文字，或在擴充功能的文字輸入頁輸入的內容，或在你開啟自動翻譯的網站上，擴充功能會讀取要翻譯的文字和你設定的選項。這些文字只用來在你的裝置上產生譯文。
+      </p>
+      <h3>不收集的資料</h3>
+      <p>不收集、不上傳、不販售任何個人資料，也不用來建立使用者輪廓或投放廣告。</p>
+      <h3>模型下載與誰看得到</h3>
+      <p>
+        PLaMo 3 Translate 模型沒有包含在擴充功能套件裡。第一次需要時，擴充功能會從 Hugging Face
+        官方儲存庫下載模型並保存在裝置上。在 Android 版 Edge 上只提供 0.8B 模型（約 573
+        MB）。Hugging Face 和傳送檔案的網路可以看到你的 IP
+        位址以及模型檔被請求這件事，但看不到網頁內容、選取文字、詞彙表或譯文。下載完成後，翻譯不需要網路。Edge
+        本身可能會更新擴充功能，那是瀏覽器的連線，不是本擴充功能發出的。
+      </p>
+      <h3>Edge 上的差異</h3>
+      <p>
+        Edge 沒有 Chrome 內建的 Translator API，因此本版本只使用 PLaMo，不會把文字交給其他翻譯引擎。
+      </p>
+      <h3>保存在裝置上的資料</h3>
+      <p>
+        設定（目標語言、文體等）、詞彙表與各網站規則、同意授權的紀錄、模型檔，以及本機翻譯快取。這些都只存在你的裝置上。你可以在設定中刪除模型並清除快取；移除擴充功能會一併移除其餘資料。
+      </p>
+      <h3>權限</h3>
+      <p>
+        安裝時不會取得所有網站的存取權。單次翻譯目前分頁使用瀏覽器針對該動作授予的權限（activeTab）。特定網站的存取權是選用的，只有在你為該網站開啟自動翻譯時才會要求。
+      </p>
+      <h3>聯絡方式</h3>
+      <p>
+        對本政策或本移植版有疑問，請到
+        <a href="https://github.com/JackalZheng/sakutto-android-edge/issues"
+          >https://github.com/JackalZheng/sakutto-android-edge/issues</a
+        >
+        開 issue。請不要把本移植版的問題回報給原作者。
+      </p>
+    </section>
+
+    <section id="en" lang="en">
+      <h2>English</h2>
+      <p class="note">
+        <strong>This is an unofficial port.</strong> Sakutto for Android Edge is an unofficial port
+        of the open-source extension <a href="https://github.com/jammaru/sakutto">Sakutto</a> (by
+        jammaru, MIT License) to Microsoft Edge for Android, maintained at
+        <a href="https://github.com/JackalZheng/sakutto-android-edge"
+          >JackalZheng/sakutto-android-edge</a
+        >. It is not affiliated with or endorsed by jammaru, and it is not a product of, nor
+        affiliated with, Preferred Networks, Inc. The translation model is PLaMo 3 Translate, used
+        under the PLaMo Community License (Built with PLaMo).
+      </p>
+      <h3>At a glance</h3>
+      <ul>
+        <li>Translation runs on your device. Page text is not sent to any translation server.</li>
+        <li>No account, no advertising, no analytics, telemetry or crash reporting.</li>
+        <li>
+          The maintainer (and the upstream author) never receive the pages you translate, your
+          selections, your glossary or the translations.
+        </li>
+        <li>The only file the extension downloads is the PLaMo model, from Hugging Face.</li>
+      </ul>
+      <h3>What the extension reads</h3>
+      <p>
+        When you ask it to translate a page, a selection, or text typed on its own typed-text page,
+        or when a site is set to translate automatically, the extension reads the text it is about
+        to translate and the settings you entered. That text is used only to produce a translation
+        on your device.
+      </p>
+      <h3>What is not collected</h3>
+      <p>
+        No personal data is collected, uploaded or sold, and nothing is used for profiling or
+        advertising.
+      </p>
+      <h3>The model download, and who can see it</h3>
+      <p>
+        The PLaMo 3 Translate model is not bundled. The first time it is needed, the extension
+        downloads it from the official Hugging Face repository and keeps it on your device. On Edge
+        for Android only the 0.8B model (about 573 MB) is offered. Hugging Face and the network
+        serving the file can see your IP address and that a model file was requested; they do not
+        receive page text, selections, your glossary or translations. After the download,
+        translation works offline. Edge may update the extension itself; that is the browser's
+        request, not one this extension makes.
+      </p>
+      <h3>Differences on Edge</h3>
+      <p>
+        Edge has no Chrome built-in Translator API, so this port uses PLaMo only and never hands
+        text to another engine.
+      </p>
+      <h3>Stored on your device</h3>
+      <p>
+        Your settings, glossary and per-site rules, a record that you accepted the license, the
+        model file, and a local translation cache. You can delete the model and clear the cache in
+        the settings; removing the extension removes the rest.
+      </p>
+      <h3>Permissions</h3>
+      <p>
+        The extension does not get access to every site at install. A one-time translation of the
+        current tab uses the access the browser grants for that action (activeTab). Access to a
+        particular site is optional and requested only when you turn on automatic translation for
+        it.
+      </p>
+      <h3>Contact</h3>
+      <p>
+        Open an issue at
+        <a href="https://github.com/JackalZheng/sakutto-android-edge/issues"
+          >https://github.com/JackalZheng/sakutto-android-edge/issues</a
+        >. Please do not report problems with this port to the upstream author.
+      </p>
+    </section>
+
+    <section id="ja" lang="ja">
+      <h2>日本語</h2>
+      <p class="note">
+        <strong>これは非公式の移植版です。</strong>Sakutto for Android Edge
+        は、オープンソースの拡張機能 <a href="https://github.com/jammaru/sakutto">Sakutto</a>（作者
+        jammaru、MIT License）を Android 版 Microsoft Edge に移植した非公式版で、<a
+          href="https://github.com/JackalZheng/sakutto-android-edge"
+          >JackalZheng/sakutto-android-edge</a
+        >
+        で管理しています。原作者 jammaru とは関係がなく、Preferred Networks, Inc.
+        の製品でもなく、同社とも関係ありません。翻訳モデルは PLaMo 3 Translate で、PLaMo Community
+        License に従って使用しています（Built with PLaMo）。
+      </p>
+      <h3>要点</h3>
+      <ul>
+        <li>翻訳は端末の中で行い、ページの本文を翻訳サーバーへ送りません。</li>
+        <li>アカウント、広告、分析、テレメトリ、クラッシュ報告はありません。</li>
+        <li>管理者（および原作者）は、翻訳したページ、選択範囲、用語集、訳文を受け取りません。</li>
+        <li>拡張機能が取得するファイルは、Hugging Face から取る PLaMo のモデルだけです。</li>
+      </ul>
+      <h3>モデルのダウンロード</h3>
+      <p>
+        モデルは同梱していません。最初に必要になったとき Hugging Face
+        の公式リポジトリから取得し、端末に保存します。Android 版 Edge では 0.8B モデル（約 573
+        MB）だけを提供します。Hugging Face とファイルを配信するネットワークには IP
+        アドレスとモデルが要求されたことが伝わりますが、本文、選択範囲、用語集、訳文は伝わりません。取得後の翻訳に通信は要りません。
+      </p>
+      <h3>Edge での違い</h3>
+      <p>Edge には Chrome 内蔵の Translator API がないため、PLaMo だけを使います。</p>
+      <h3>端末に保存するもの</h3>
+      <p>
+        設定、用語集とサイトごとの規則、ライセンスへの同意の記録、モデルのファイル、翻訳キャッシュ。設定画面でモデルの削除とキャッシュの消去ができ、拡張機能を削除すると残りも消えます。
+      </p>
+      <h3>権限</h3>
+      <p>
+        インストール時にすべてのサイトへのアクセスは得ません。現在のタブの一回だけの翻訳には、その操作に対してブラウザが与えるアクセス（activeTab）を使います。特定サイトへのアクセスは任意で、そのサイトの自動翻訳をオンにしたときだけ要求します。
+      </p>
+      <h3>連絡先</h3>
+      <p>
+        <a href="https://github.com/JackalZheng/sakutto-android-edge/issues"
+          >https://github.com/JackalZheng/sakutto-android-edge/issues</a
+        >
+        に issue を作成してください。この移植版の問題を原作者に報告しないでください。
+      </p>
+    </section>
+  </body>
+</html>
