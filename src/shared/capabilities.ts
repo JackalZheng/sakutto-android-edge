@@ -32,7 +32,11 @@ const WEBGPU_STATUSES: ReadonlySet<string> = new Set<WebGpuStatus>([
   'failed',
 ]);
 
-interface NavigatorWithGpu extends Navigator {
+// TS 6's lib.dom gives Navigator a required `gpu: GPU` (with
+// getPreferredCanvasFormat + WGSLLanguageFeatures). The project only
+// ever calls requestAdapter / wgslLanguageFeatures, so keep the narrow
+// duck-typed NavigatorGpu and do not extend Navigator here.
+interface NavigatorWithGpu {
   readonly gpu?: NavigatorGpu;
 }
 
@@ -158,7 +162,7 @@ export function probeWebGpuAdapter(): Promise<WebGpuAdapterInfo> {
 
 async function requestWebGpuAdapter(): Promise<WebGpuAdapterInfo> {
   await loadWebGpuDebugProfileFromStorage();
-  const gpu = (navigator as NavigatorWithGpu).gpu;
+  const gpu = (navigator as unknown as NavigatorWithGpu).gpu;
   if (!gpu) {
     lastAdapterInfo = infoFromAdapter(null, false, { error: 'navigator.gpu is missing' });
     lastAdapterInfo.present = false;
@@ -239,7 +243,7 @@ function requestAdapterInQuietFrame(): Promise<WebGpuAdapterInfo | null> {
 }
 
 async function probeWebGpu(): Promise<WebGpuStatus> {
-  const gpu = (navigator as NavigatorWithGpu).gpu;
+  const gpu = (navigator as unknown as NavigatorWithGpu).gpu;
   if (!gpu) return 'unsupported';
 
   // A software WebGL context is not a reason to skip the adapter. Machines with a
