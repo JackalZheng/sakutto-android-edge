@@ -275,9 +275,14 @@ export default defineBackground(() => {
           if (status) void broadcast({ type: 'model:progress', status });
           sendResponse(true);
           // A page translated in the same moment should get the runtime before this sample.
-          setTimeout(() => {
-            void measureQuality(client);
-          }, 15_000);
+          // On Edge for Android there is no later sample at all: the 512-token benchmark
+          // cannot be aborted mid-generation, so a timer firing mid-translation would
+          // stall the page.
+          if (!isAndroidEdgeRuntime()) {
+            setTimeout(() => {
+              void measureQuality(client);
+            }, 15_000);
+          }
         },
         () => sendResponse(false),
       );

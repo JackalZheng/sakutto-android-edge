@@ -2,9 +2,9 @@ import type { GlossaryEntry } from '@/engine/types';
 import { normalizeGlossary } from './glossary';
 import {
   DEFAULT_TARGET_LANGUAGE,
+  defaultTargetLanguage,
   isChromeOnlyLanguage,
   isTargetLanguage,
-  resolveTargetLanguage,
   type TargetLanguage,
 } from './languages';
 import { isRecord } from './object';
@@ -131,7 +131,7 @@ export function createDefaultSettings(uiLanguage: string): Settings {
     ...DEFAULT_SETTINGS,
     glossary: [],
     shortcutsEnabled: defaultShortcutEnabled(),
-    targetLanguage: resolveTargetLanguage(uiLanguage),
+    targetLanguage: defaultTargetLanguage(uiLanguage),
   };
 }
 

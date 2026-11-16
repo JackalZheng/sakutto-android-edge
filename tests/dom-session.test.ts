@@ -12,6 +12,7 @@ import {
 import { PageSession, type PageEngine, type SessionPreferences } from '@/dom/session';
 import { JobScheduler } from '@/engine/queue/scheduler';
 import type { TranslateOptions } from '@/engine/types';
+import { deferred } from './support/ports';
 
 const labels = {
   original: '原文',
@@ -684,7 +685,7 @@ describe('page session', () => {
       expect(document.querySelector('#universities')?.textContent).toContain(',');
       expect(document.body.innerHTML).not.toMatch(/<i\d/);
       expect(document.documentElement.lang).toBe('ja');
-      expect(document.documentElement.dataset.sakuttoProgress).toMatch(/^\d+\/\d+$/);
+      expect(document.documentElement.dataset.sakuttoProgress).toMatch(/^\d+(\.\d)?\/\d+$/);
       expect(document.documentElement.dataset.sakuttoState).toBe('translated');
 
       document
@@ -705,6 +706,37 @@ describe('page session', () => {
     } finally {
       Element.prototype.getBoundingClientRect = originalRect;
     }
+  });
+
+  it('shows partial progress while the first block is still streaming', async () => {
+    document.documentElement.lang = 'en';
+    document.body.innerHTML = `<p>${'First paragraph of the page. '.repeat(8)}</p>`;
+    const gate = deferred<void>();
+    const session = start(
+      document,
+      engineOf(async function* (segments) {
+        const first = segments[0];
+        if (first) yield { id: first.id, textDelta: '…', engine: 'plamo' as const };
+        await gate.promise;
+        for (const segment of segments) {
+          yield { id: segment.id, final: `訳:${segment.text}`, engine: 'plamo' as const };
+        }
+      }),
+    );
+
+    const translating = session.translate();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (document.documentElement.dataset.sakuttoProgress === '0.5/1') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // Before the fix the counter floored the half credit to 0 and sat at 0/1 while the
+    // first block streamed, which read as a stall.
+    expect(document.documentElement.dataset.sakuttoProgress).toBe('0.5/1');
+
+    gate.resolve();
+    await translating;
+    await session.whenIdle();
+    expect(document.documentElement.dataset.sakuttoProgress).toBe('1/1');
   });
 
   it('drops a broken placeholder and retries the sentence as plain text', async () => {
