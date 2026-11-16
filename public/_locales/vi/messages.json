@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "song ngữ"
   },
+  "gestureHeading": {
+    "message": "Cử chỉ chạm"
+  },
+  "gestureTap": {
+    "message": "Chạm vào nút nổi"
+  },
+  "gestureLongPress": {
+    "message": "Nhấn giữ nút nổi"
+  },
+  "gestureLongPressNote": {
+    "message": "Khi không có văn bản nào được chọn, nút sẽ mở trình dịch cho văn bản bạn đang nhập."
+  },
+  "gestureBar": {
+    "message": "Nút song ngữ trên thanh tiến trình"
+  },
   "statusChecking": {
     "message": "Đang kiểm tra…"
   },

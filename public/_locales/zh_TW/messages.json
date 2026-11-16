@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "雙語"
   },
+  "gestureHeading": {
+    "message": "觸控手勢"
+  },
+  "gestureTap": {
+    "message": "點按懸浮按鈕"
+  },
+  "gestureLongPress": {
+    "message": "長按懸浮按鈕"
+  },
+  "gestureLongPressNote": {
+    "message": "未選取文字時，會開啟正在輸入的文字的翻譯。"
+  },
+  "gestureBar": {
+    "message": "進度列中的雙語按鈕"
+  },
   "statusChecking": {
     "message": "正在檢查…"
   },

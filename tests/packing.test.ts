@@ -20,8 +20,11 @@ const labels = {
   barDone: '翻訳しました。',
   barPartial: (blocks: number) => `翻訳できない箇所が ${String(blocks)} 件残っています。`,
   barOriginal: '原文に戻す',
+  barBilingual: '対訳表示',
+  barReplace: '原文に置き換え',
   barAlways: 'このサイトを常に翻訳します',
   barAlwaysOn: 'このサイトは常に翻訳します。',
+  fabLabel: 'このページを翻訳します',
 };
 
 function preferences(overrides: Partial<SessionPreferences> = {}): SessionPreferences {

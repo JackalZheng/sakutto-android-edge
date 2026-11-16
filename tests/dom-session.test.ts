@@ -31,8 +31,11 @@ const labels = {
   barDone: '翻訳しました。',
   barPartial: (blocks: number) => `翻訳できない箇所が ${String(blocks)} 件残っています。`,
   barOriginal: '原文に戻す',
+  barBilingual: '対訳表示',
+  barReplace: '原文に置き換え',
   barAlways: 'このサイトを常に翻訳します',
   barAlwaysOn: 'このサイトは常に翻訳します。',
+  fabLabel: 'このページを翻訳します',
 };
 
 function preferences(overrides: Partial<SessionPreferences> = {}): SessionPreferences {
@@ -1562,7 +1565,7 @@ describe('page session', () => {
     expect(bar?.shadowRoot).toBeNull();
     expect(uiShadow(bar)?.textContent).toContain('翻訳しました。');
     expect(document.querySelector('sakutto-bar button')).toBeNull();
-    expect(document.documentElement.style.paddingTop).toBe('40px');
+    expect(document.documentElement.style.paddingTop).toBe('48px');
     const original = uiShadow(bar)?.querySelector('button');
     expect(original).toBeInstanceOf(HTMLButtonElement);
     original?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1571,6 +1574,63 @@ describe('page session', () => {
     expect(document.querySelector('sakutto-bar') instanceof HTMLElement).toBe(true);
     expect((document.querySelector('sakutto-bar') as HTMLElement).hidden).toBe(true);
     expect(document.documentElement.style.paddingTop).toBe('');
+  });
+
+  it('switches between replacement and bilingual view from the page bar', async () => {
+    document.documentElement.lang = 'en';
+    document.body.innerHTML = '<p>Hello world</p>';
+    const session = start(
+      document,
+      immediate((text) => `訳:${text}`),
+    );
+
+    await session.translate();
+    await session.whenIdle();
+
+    const buttons = uiShadow(document.querySelector('sakutto-bar'))?.querySelectorAll('button');
+    expect(buttons).toHaveLength(3);
+    const bilingual = buttons?.[1];
+    expect(bilingual?.textContent).toBe('対訳表示');
+    bilingual?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.state().display).toBe('bilingual');
+    expect(bilingual?.textContent).toBe('原文に置き換え');
+    bilingual?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.state().display).toBe('replace');
+    expect(bilingual?.textContent).toBe('対訳表示');
+  });
+
+  it('shows the floating button on a touch runtime', () => {
+    document.body.innerHTML = '<p>Hello world</p>';
+    const coarse = vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+      media: '(pointer: coarse)',
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList);
+    try {
+      start(
+        document,
+        immediate((text) => `訳:${text}`),
+      );
+      expect(document.querySelector('sakutto-fab') instanceof HTMLElement).toBe(true);
+    } finally {
+      coarse.mockRestore();
+    }
+  });
+
+  it('does not show the floating button on a desktop runtime', () => {
+    document.body.innerHTML = '<p>Hello world</p>';
+    start(
+      document,
+      immediate((text) => `訳:${text}`),
+    );
+    expect(document.querySelector('sakutto-fab')).toBeNull();
   });
 });
 
@@ -1756,7 +1816,7 @@ describe('page translation corrections', () => {
 
     await session.translate();
     await session.whenIdle();
-    expect(document.documentElement.style.paddingTop).toBe('calc(12px + 40px)');
+    expect(document.documentElement.style.paddingTop).toBe('calc(12px + 48px)');
 
     session.restore();
     expect(document.documentElement.style.paddingTop).toBe('12px');
@@ -1782,7 +1842,7 @@ describe('page translation corrections', () => {
 
     await session.translate();
     await session.whenIdle();
-    const always = uiShadow(document.querySelector('sakutto-bar'))?.querySelectorAll('button')[1];
+    const always = uiShadow(document.querySelector('sakutto-bar'))?.querySelectorAll('button')[2];
     always?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.state().auto).toBe('ask');

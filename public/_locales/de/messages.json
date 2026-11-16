@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "Zweisprachig"
   },
+  "gestureHeading": {
+    "message": "Touch-Gesten"
+  },
+  "gestureTap": {
+    "message": "Auf die schwebende Schaltfläche tippen"
+  },
+  "gestureLongPress": {
+    "message": "Schwebende Schaltfläche lange drücken"
+  },
+  "gestureLongPressNote": {
+    "message": "Ohne ausgewählten Text wird der Übersetzer für den Text geöffnet, den Sie gerade schreiben."
+  },
+  "gestureBar": {
+    "message": "Schaltfläche für zweisprachige Ansicht in der Fortschrittsleiste"
+  },
   "statusChecking": {
     "message": "Prüfen…"
   },

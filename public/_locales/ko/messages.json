@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "이중 언어"
   },
+  "gestureHeading": {
+    "message": "터치 제스처"
+  },
+  "gestureTap": {
+    "message": "플로팅 버튼을 탭"
+  },
+  "gestureLongPress": {
+    "message": "플로팅 버튼을 길게 누르기"
+  },
+  "gestureLongPressNote": {
+    "message": "선택한 텍스트가 없으면 입력 중인 텍스트의 번역기를 엽니다."
+  },
+  "gestureBar": {
+    "message": "진행률 표시줄의 이중 언어 버튼"
+  },
   "statusChecking": {
     "message": "확인 중…"
   },

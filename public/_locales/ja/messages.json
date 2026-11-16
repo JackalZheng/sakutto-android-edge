@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "対訳表示"
   },
+  "gestureHeading": {
+    "message": "タッチジェスチャ"
+  },
+  "gestureTap": {
+    "message": "フローティングボタンをタップ"
+  },
+  "gestureLongPress": {
+    "message": "フローティングボタンを長押し"
+  },
+  "gestureLongPressNote": {
+    "message": "テキストが選択されていない場合は、入力中の文章の翻訳を開きます。"
+  },
+  "gestureBar": {
+    "message": "プログレスバーの対訳表示ボタン"
+  },
   "statusChecking": {
     "message": "確認中…"
   },

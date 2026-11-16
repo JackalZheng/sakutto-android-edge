@@ -20,6 +20,12 @@ export interface OverlayLabels {
   barOriginal: string;
   barAlways: string;
   barAlwaysOn: string;
+  /** Label of the bar button that switches the page to bilingual view. */
+  barBilingual: string;
+  /** Label of the bar button that switches the page back to replacement view. */
+  barReplace: string;
+  /** Label of the floating action button on touch runtimes. */
+  fabLabel: string;
 }
 
 /**
@@ -132,13 +138,19 @@ button:focus-visible { outline: 2px solid #0e7490; outline-offset: 2px; }
 }
 `;
 
+/** Square control drawn beside a selection. Matches the shadow-DOM button. */
+export const SELECTION_ICON_PX = 44;
+
+/** Height of the fixed progress bar at the top of a translating page. */
+const BAR_HEIGHT_PX = 48;
+
 const ICON_STYLE = `
 :host { all: initial; }
 button {
   box-sizing: border-box;
   display: block;
-  width: 26px;
-  height: 26px;
+  width: ${String(SELECTION_ICON_PX)}px;
+  height: ${String(SELECTION_ICON_PX)}px;
   padding: 0;
   border: 1px solid rgb(255 255 255 / 88%);
   border-radius: 7px;
@@ -153,14 +165,11 @@ button:focus-visible {
   border-color: #67e8f9;
 }
 button:focus-visible { outline: 2px solid #0e7490; outline-offset: 2px; }
-svg { display: block; width: 26px; height: 26px; }
+svg { display: block; width: ${String(SELECTION_ICON_PX)}px; height: ${String(SELECTION_ICON_PX)}px; }
 @media (prefers-reduced-motion: reduce) {
   button { transition: none; }
 }
 `;
-
-/** Square control drawn beside a selection. Matches the shadow-DOM button. */
-export const SELECTION_ICON_PX = 26;
 
 /**
  * Puts the selection icon just outside the selection so the highlight stays readable.
@@ -210,8 +219,8 @@ export function selectionIconBox(
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/** Folded-strip mark. Same polygons as scripts/icon.svg. */
-const SELECTION_ICON_POLYGONS: readonly (readonly [string, string])[] = [
+/** Folded-strip mark. Same polygons as scripts/icon.svg. Reused by the floating action button. */
+export const SELECTION_ICON_POLYGONS: readonly (readonly [string, string])[] = [
   ['87.52,33.76 40.48,33.76 40.48,47.2 87.52,47.2', '#7dd3fc'],
   ['87.52,47.2 104.32,40.48 87.52,33.76', '#7dd3fc'],
   ['35.73,45.23 59.25,68.75 68.75,59.25 45.23,35.73', '#7dd3fc'],
@@ -238,18 +247,19 @@ export function uiShadow(host: Element | null | undefined): ShadowRoot | null {
   return uiShadows.get(host) ?? null;
 }
 
-function attachUiShadow(host: HTMLElement): ShadowRoot {
+export function attachUiShadow(host: HTMLElement): ShadowRoot {
   const shadow = host.attachShadow({ mode: 'closed' });
   uiShadows.set(host, shadow);
   return shadow;
 }
 
 /**
- * Drawn with DOM constructors. `innerHTML` and `DOMParser.parseFromString` are
- * TrustedHTML sinks, so either one throws on pages that require Trusted Types
- * and the content script never attaches.
+ * Draws the folded-strip mark into a button. Exported so the floating action button
+ * paints the same mark; `innerHTML` and `DOMParser.parseFromString` are TrustedHTML
+ * sinks, so either one throws on pages that require Trusted Types and the content
+ * script never attaches.
  */
-function appendSelectionIcon(doc: Document, button: HTMLButtonElement): void {
+export function appendSelectionIcon(doc: Document, button: HTMLButtonElement): void {
   const svg = doc.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 128 128');
   svg.setAttribute('aria-hidden', 'true');
@@ -274,7 +284,7 @@ const BAR_STYLE = `
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  height: 40px;
+  height: ${String(BAR_HEIGHT_PX)}px;
   padding: 0 12px;
   border-bottom: 1px solid #d5dde6;
   background: #ffffff;
@@ -331,6 +341,7 @@ export class PageOverlay {
   private readonly bar: HTMLElement;
   private readonly barText: HTMLElement;
   private readonly barOriginal: HTMLButtonElement;
+  private readonly barBilingual: HTMLButtonElement;
   private readonly barAlways: HTMLButtonElement;
   private labels: OverlayLabels;
   private returnFocus: HTMLElement | null = null;
@@ -391,7 +402,7 @@ export class PageOverlay {
     this.bar.style.top = '0';
     this.bar.style.left = '0';
     this.bar.style.right = '0';
-    this.bar.style.height = '40px';
+    this.bar.style.height = `${String(BAR_HEIGHT_PX)}px`;
     const shadow = attachUiShadow(this.bar);
     const style = doc.createElement('style');
     style.textContent = BAR_STYLE;
@@ -407,6 +418,13 @@ export class PageOverlay {
       event.stopPropagation();
       this.onOriginal();
     });
+    this.barBilingual = doc.createElement('button');
+    this.barBilingual.type = 'button';
+    this.barBilingual.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onBilingual();
+    });
     this.barAlways = doc.createElement('button');
     this.barAlways.type = 'button';
     this.barAlways.addEventListener('click', (event) => {
@@ -414,13 +432,14 @@ export class PageOverlay {
       event.stopPropagation();
       this.onAlways();
     });
-    actions.append(this.barOriginal, this.barAlways);
+    actions.append(this.barOriginal, this.barBilingual, this.barAlways);
     row.append(this.barText, actions);
     shadow.append(style, row);
     doc.documentElement.append(this.bar);
   }
 
   private onOriginal: () => void = () => undefined;
+  private onBilingual: () => void = () => undefined;
   private onAlways: () => void = () => undefined;
   private pagePadding: string | null = null;
 
@@ -446,8 +465,13 @@ export class PageOverlay {
     if (view && shift > 0 && view.scrollY > 0) view.scrollBy?.(0, -shift);
   }
 
-  setBarActions(actions: { onOriginal: () => void; onAlways: () => void }): void {
+  setBarActions(actions: {
+    onOriginal: () => void;
+    onBilingual: () => void;
+    onAlways: () => void;
+  }): void {
     this.onOriginal = actions.onOriginal;
+    this.onBilingual = actions.onBilingual;
     this.onAlways = actions.onAlways;
   }
 
@@ -470,9 +494,16 @@ export class PageOverlay {
     this.bar.setAttribute('aria-label', labels.barLabel);
   }
 
-  showBar(state: { text: string; original: string; always: string; alwaysEnabled: boolean }): void {
+  showBar(state: {
+    text: string;
+    original: string;
+    bilingual: string;
+    always: string;
+    alwaysEnabled: boolean;
+  }): void {
     this.barText.textContent = state.text;
     this.barOriginal.textContent = state.original;
+    this.barBilingual.textContent = state.bilingual;
     this.barAlways.textContent = state.always;
     this.barAlways.disabled = !state.alwaysEnabled;
     this.bar.hidden = false;
@@ -741,8 +772,6 @@ export function translationStyleKeepsContrast(css: string): boolean {
 export function translationPageStyle(): string {
   return PAGE_STYLE;
 }
-
-const BAR_HEIGHT_PX = 40;
 
 function readPadding(root: HTMLElement): number {
   const value = root.ownerDocument.defaultView?.getComputedStyle(root).paddingTop ?? '';

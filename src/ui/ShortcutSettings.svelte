@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { t, tForBrowser, type MessageKey } from '@/shared/i18n';
   import { requestShortcutSnapshot, type ShortcutQueryResult } from '@/shared/messages';
+  import { isAndroidEdgeRuntime } from '@/shared/mobile';
   import { openShortcutEditor } from '@/shared/shortcut-editor';
   import {
     SHORTCUT_COMMANDS,
@@ -27,6 +28,13 @@
   }
 
   let { enabled = defaultShortcutEnabled(), onToggle }: Props = $props();
+
+  /**
+   * Edge for Android has no keyboard, so there are no bindings to show or change:
+   * chrome://extensions/shortcuts does not exist there. The gestures below are the
+   * touch replacement for the same four commands.
+   */
+  const androidEdge = isAndroidEdgeRuntime();
 
   let shortcutState = $state<ShortcutQueryResult | null>(null);
   let openFailed = $state(false);
@@ -90,33 +98,51 @@
   });
 </script>
 
-<dl class="bindings">
-  {#each SHORTCUT_COMMANDS as command (command)}
+{#if androidEdge}
+  <dl class="bindings">
     <div>
-      <dt>{t(LABELS[command])}</dt>
-      <dd>
-        <label class="use">
-          <input
-            type="checkbox"
-            checked={isOn(command)}
-            onchange={(event) => {
-              const input = event.currentTarget as HTMLInputElement;
-              onToggle?.(command, input.checked);
-            }}
-          />
-          <span>{t('shortcutUse')}</span>
-        </label>
-        <kbd aria-keyshortcuts={aria(command)}>{keyText(command)}</kbd>
-      </dd>
+      <dt>{t('gestureTap')}</dt>
+      <dd>{t('commandTranslate')}</dd>
     </div>
-    {#if showsFallback(command)}
-      <p class="fallback">{tForBrowser('shortcutFallbackNote', 'shortcutFallbackNoteFirefox')}</p>
-    {/if}
-  {/each}
-</dl>
-<button class="button secondary" type="button" onclick={openEditor}>{t('shortcutChange')}</button>
-{#if openFailed}
-  <p class="error" role="alert">{t('errorAction')}</p>
+    <div>
+      <dt>{t('gestureLongPress')}</dt>
+      <dd>{t('commandSelection')}</dd>
+    </div>
+    <p class="fallback">{t('gestureLongPressNote')}</p>
+    <div>
+      <dt>{t('gestureBar')}</dt>
+      <dd>{t('commandBilingual')}</dd>
+    </div>
+  </dl>
+{:else}
+  <dl class="bindings">
+    {#each SHORTCUT_COMMANDS as command (command)}
+      <div>
+        <dt>{t(LABELS[command])}</dt>
+        <dd>
+          <label class="use">
+            <input
+              type="checkbox"
+              checked={isOn(command)}
+              onchange={(event) => {
+                const input = event.currentTarget as HTMLInputElement;
+                onToggle?.(command, input.checked);
+              }}
+            />
+            <span>{t('shortcutUse')}</span>
+          </label>
+          <kbd aria-keyshortcuts={aria(command)}>{keyText(command)}</kbd>
+        </dd>
+      </div>
+      {#if showsFallback(command)}
+        <p class="fallback">{tForBrowser('shortcutFallbackNote', 'shortcutFallbackNoteFirefox')}</p>
+      {/if}
+    {/each}
+  </dl>
+  <button class="button secondary" type="button" onclick={openEditor}>{t('shortcutChange')}</button>
+  {#if openFailed}
+    <p class="error" role="alert">{t('errorAction')}</p>
+  {/if}
 {/if}
 
 <style>

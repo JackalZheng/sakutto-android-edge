@@ -20,6 +20,7 @@
   import { PLAMO_OFFICIAL_LINKS, PROJECT_LINKS } from '@/shared/plamo-license';
   import type { IdleMinutes, Settings, SettingsPatch, TierPreference } from '@/shared/settings';
   import { isIdleMinutes, isTierPreference } from '@/shared/settings';
+  import { isAndroidEdgeRuntime } from '@/shared/mobile';
   import type { TargetLanguage } from '@/shared/languages';
   import { loadSettings, saveSettings, subscribeSettings } from '@/shared/storage';
   import EngineStatusView from '@/ui/EngineStatus.svelte';
@@ -43,6 +44,8 @@
 
   const officialLinks = PLAMO_OFFICIAL_LINKS;
   const projectLinks = PROJECT_LINKS;
+  /** Edge for Android has no keyboard, so this panel shows gestures, not shortcuts. */
+  const androidEdge = isAndroidEdgeRuntime();
 
   let settings = $state<Settings | null>(null);
   let settingsError = $state<SettingsError>(null);
@@ -238,8 +241,10 @@
   </section>
 
   <section class="panel">
-    <h2>{t('shortcutHeading')}</h2>
-    <p class="muted help">{t(isFirefoxBuild() ? 'shortcutHelpFirefox' : 'shortcutHelp')}</p>
+    <h2>{t(androidEdge ? 'gestureHeading' : 'shortcutHeading')}</h2>
+    {#if !androidEdge}
+      <p class="muted help">{t(isFirefoxBuild() ? 'shortcutHelpFirefox' : 'shortcutHelp')}</p>
+    {/if}
     <p class="muted help">{t('composeHelp')}</p>
     <ShortcutSettings
       enabled={settings?.shortcutsEnabled}
