@@ -1582,7 +1582,10 @@ describe('page session', () => {
       dispatchEvent: () => false,
     } as unknown as MediaQueryList);
     try {
-      start(document, immediate((text) => `訳:${text}`));
+      start(
+        document,
+        immediate((text) => `訳:${text}`),
+      );
       expect(document.querySelector('sakutto-fab') instanceof HTMLElement).toBe(true);
     } finally {
       coarse.mockRestore();
@@ -1591,7 +1594,10 @@ describe('page session', () => {
 
   it('does not show the floating button on a desktop runtime', () => {
     document.body.innerHTML = '<p>Hello world</p>';
-    start(document, immediate((text) => `訳:${text}`));
+    start(
+      document,
+      immediate((text) => `訳:${text}`),
+    );
     expect(document.querySelector('sakutto-fab')).toBeNull();
   });
 });

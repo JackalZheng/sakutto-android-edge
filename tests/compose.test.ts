@@ -693,9 +693,7 @@ describe('compose controller', () => {
   it('places the icon outside a short single-line field', () => {
     const pos = composeIconPosition(new DOMRect(20, 40, 240, 32), { width: 800, height: 600 });
     expect(pos.left).toBeGreaterThanOrEqual(260);
-    expect(pos.left + COMPOSE_ICON_PX).toBeLessThanOrEqual(
-      20 + 240 + 6 + COMPOSE_ICON_PX + 1,
-    );
+    expect(pos.left + COMPOSE_ICON_PX).toBeLessThanOrEqual(20 + 240 + 6 + COMPOSE_ICON_PX + 1);
   });
 
   it('anchors the preview bar to the field and flips below when there is no room', () => {

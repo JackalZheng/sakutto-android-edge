@@ -137,9 +137,7 @@ export class FloatingActionButton {
 
   contains(node: Node): boolean {
     return (
-      this.host === node ||
-      this.host.contains(node) ||
-      uiShadow(this.host)?.contains(node) === true
+      this.host === node || this.host.contains(node) || uiShadow(this.host)?.contains(node) === true
     );
   }
 

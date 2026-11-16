@@ -89,9 +89,7 @@ describe('FloatingActionButton', () => {
   it('drags out of the way instead of tapping', () => {
     const { host, button, taps, longs } = setup();
     button.dispatchEvent(pointer('pointerdown', { clientX: 200, clientY: 200 }));
-    button.dispatchEvent(
-      pointer('pointermove', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 20 }),
-    );
+    button.dispatchEvent(pointer('pointermove', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 20 }));
     button.dispatchEvent(pointer('pointerup', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 20 }));
     button.dispatchEvent(pointer('click', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 20 }));
     expect(taps).toHaveLength(0);
@@ -103,9 +101,7 @@ describe('FloatingActionButton', () => {
   it('cancels the long-press when the pointer moves, then drags', () => {
     const { button, taps, longs } = setup();
     button.dispatchEvent(pointer('pointerdown', { clientX: 200, clientY: 200 }));
-    button.dispatchEvent(
-      pointer('pointermove', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 1 }),
-    );
+    button.dispatchEvent(pointer('pointermove', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 1 }));
     vi.advanceTimersByTime(FAB_LONG_PRESS_MS);
     expect(longs).toHaveLength(0);
     button.dispatchEvent(pointer('pointerup', { clientX: 200, clientY: 200 + FAB_DRAG_PX + 1 }));
