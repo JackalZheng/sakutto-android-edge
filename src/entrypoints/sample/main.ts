@@ -26,8 +26,11 @@ function overlayLabels(): OverlayLabels {
     barDone: t('pageTranslated'),
     barPartial: (blocks) => t('pagePartial', [String(blocks)]),
     barOriginal: t('restoreThisPage'),
+    barBilingual: t('displayBilingual'),
+    barReplace: t('displayReplace'),
     barAlways: t('alwaysTranslateSite'),
     barAlwaysOn: t('pageAlwaysOn'),
+    fabLabel: t('commandTranslate'),
   };
 }
 

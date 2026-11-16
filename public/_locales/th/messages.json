@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "สองภาษา"
   },
+  "gestureHeading": {
+    "message": "ท่าทางสัมผัส"
+  },
+  "gestureTap": {
+    "message": "แตะปุ่มลอย"
+  },
+  "gestureLongPress": {
+    "message": "กดปุ่มลอยค้างไว้"
+  },
+  "gestureLongPressNote": {
+    "message": "หากไม่มีข้อความที่เลือก ระบบจะเปิดตัวแปลสำหรับข้อความที่คุณกำลังพิมพ์"
+  },
+  "gestureBar": {
+    "message": "ปุ่มสองภาษาในแถบความคืบหน้า"
+  },
   "statusChecking": {
     "message": "กำลังตรวจสอบ…"
   },

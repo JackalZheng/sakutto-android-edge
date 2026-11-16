@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "Bilingual"
   },
+  "gestureHeading": {
+    "message": "Gerakan sentuh"
+  },
+  "gestureTap": {
+    "message": "Ketuk tombol mengambang"
+  },
+  "gestureLongPress": {
+    "message": "Tekan lama tombol mengambang"
+  },
+  "gestureLongPressNote": {
+    "message": "Jika tidak ada teks yang dipilih, tombol ini membuka penerjemah untuk teks yang sedang Anda tulis."
+  },
+  "gestureBar": {
+    "message": "Tombol dwibahasa di bilah progres"
+  },
   "statusChecking": {
     "message": "Memeriksa…"
   },

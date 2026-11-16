@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "Bilinguale"
   },
+  "gestureHeading": {
+    "message": "Gesti touch"
+  },
+  "gestureTap": {
+    "message": "Tocca il pulsante mobile"
+  },
+  "gestureLongPress": {
+    "message": "Tieni premuto il pulsante mobile"
+  },
+  "gestureLongPressNote": {
+    "message": "Senza testo selezionato, apre il traduttore del testo che stai scrivendo."
+  },
+  "gestureBar": {
+    "message": "Pulsante bilingue nella barra di avanzamento"
+  },
   "statusChecking": {
     "message": "Sto verificando…"
   },

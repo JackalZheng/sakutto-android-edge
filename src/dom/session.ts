@@ -32,6 +32,8 @@ import {
 } from './blocks';
 import type { OverlayLabels } from './overlay';
 import { PageOverlay, PAGE_STYLE_ELEMENT_ID } from './overlay';
+import { FloatingActionButton } from './fab';
+import { isTouchRuntime } from '@/shared/mobile';
 import { assessTranslation, stripPlaceholderTokens } from './placeholders';
 import {
   bandForRect,
@@ -182,6 +184,12 @@ export interface PageSessionOptions {
   pageKey?: (event: KeyboardEvent) => boolean;
   /** Bilingual toggle. Used when Chrome left that command unbound. */
   bilingualKey?: (event: KeyboardEvent) => boolean;
+  /**
+   * Called when the floating button is long-pressed with no selection. The content
+   * script opens the writing translator when a field is focused and returns true
+   * when it handled the gesture.
+   */
+  onComposeRequest?: () => boolean;
 }
 
 export function preferencesFor(
@@ -207,6 +215,8 @@ export function preferencesFor(
 export class PageSession {
   private readonly engine: PageEngine;
   private readonly overlay: PageOverlay;
+  private readonly fab: FloatingActionButton | null;
+  private readonly onComposeRequest: (() => boolean) | undefined;
   private readonly scheduleFrame: (callback: () => void) => void;
   private readonly debounceMs: number;
   private readonly onSitePatch: PageSessionOptions['onSitePatch'];
@@ -316,10 +326,24 @@ export class PageSession {
     this.overlay.setOnSelectionIcon(() => this.activateSelectionIcon());
     this.overlay.setBarActions({
       onOriginal: () => this.restore(),
+      onBilingual: () => {
+        void this.toggleDisplay();
+      },
       onAlways: () => {
         void this.rememberAlways();
       },
     });
+    this.onComposeRequest = options.onComposeRequest;
+    // Touch runtimes have no keyboard shortcuts, so the floating button is the way to
+    // reach the page commands. Desktop keeps the popup and the shortcuts.
+    this.fab = isTouchRuntime()
+      ? new FloatingActionButton(doc, options.labels.fabLabel, {
+          onTap: () => {
+            void this.handle('toggle');
+          },
+          onLongPress: () => this.handleFabLongPress(),
+        })
+      : null;
 
     this.onVisibility = () => {
       if (this.doc.hidden) {
@@ -359,7 +383,11 @@ export class PageSession {
     this.onPointerDown = (event) => {
       if (event instanceof MouseEvent && event.button !== 0) return;
       const target = event.target;
-      if (target instanceof Node && this.overlay.contains(target)) return;
+      if (
+        target instanceof Node &&
+        (this.overlay.contains(target) || this.fab?.contains(target) === true)
+      )
+        return;
       this.pointerDown = true;
       this.clearSelectionOffer();
       this.overlay.hideOriginal();
@@ -434,6 +462,7 @@ export class PageSession {
   setLabels(labels: OverlayLabels): void {
     this.labels = labels;
     this.overlay.setLabels(labels);
+    this.fab?.setLabel(labels.fabLabel);
   }
 
   setPreferences(next: SessionPreferences): void {
@@ -599,6 +628,8 @@ export class PageSession {
     const display = this.prefs.display === 'replace' ? 'bilingual' : 'replace';
     this.prefs = { ...this.prefs, display };
     this.repaintAll();
+    // The bar button names the switch it will make next, so it flips with the view.
+    this.publishState();
     this.overlay.showStatus(
       display === 'bilingual' ? this.labels.bilingualOn : this.labels.replaceOn,
     );
@@ -640,6 +671,20 @@ export class PageSession {
     const selected = this.readSelection();
     if (!selected) return;
     this.translateSelection(selected.text, selected.rect);
+  }
+
+  /**
+   * The floating button's long-press: a selection wins, otherwise the writing
+   * translator opens when a field is focused. A selection inside the field being
+   * typed in belongs to the field, so readSelection already skips it and the press
+   * falls through to compose.
+   */
+  private handleFabLongPress(): void {
+    if (this.readSelection()) {
+      this.translateDocumentSelection();
+      return;
+    }
+    this.onComposeRequest?.();
   }
 
   private readSelection(): { text: string; rect: DOMRect } | null {
@@ -810,6 +855,7 @@ export class PageSession {
     this.doc.defaultView?.removeEventListener('pagehide', this.onPageHide);
     this.doc.defaultView?.removeEventListener('popstate', this.onPopState);
     this.doc.defaultView?.removeEventListener('resize', this.onResize);
+    this.fab?.destroy();
     this.overlay.destroy();
   }
 
@@ -1789,6 +1835,8 @@ export class PageSession {
     this.overlay.showBar({
       text: this.barText(view),
       original: this.labels.barOriginal,
+      bilingual:
+        this.prefs.display === 'bilingual' ? this.labels.barReplace : this.labels.barBilingual,
       always: view.auto === 'always' ? this.labels.barAlwaysOn : this.labels.barAlways,
       alwaysEnabled: view.auto !== 'always',
     });

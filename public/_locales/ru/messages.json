@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "Двуязычный"
   },
+  "gestureHeading": {
+    "message": "Жесты касания"
+  },
+  "gestureTap": {
+    "message": "Нажмите плавающую кнопку"
+  },
+  "gestureLongPress": {
+    "message": "Нажмите и удерживайте плавающую кнопку"
+  },
+  "gestureLongPressNote": {
+    "message": "Если текст не выбран, открывается переводчик текста, который вы пишете."
+  },
+  "gestureBar": {
+    "message": "Кнопка двуязычного режима в строке прогресса"
+  },
   "statusChecking": {
     "message": "Проверяю…"
   },

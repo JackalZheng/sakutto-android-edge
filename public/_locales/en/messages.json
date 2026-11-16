@@ -38,6 +38,21 @@
   "displayBilingual": {
     "message": "Bilingual"
   },
+  "gestureHeading": {
+    "message": "Touch gestures"
+  },
+  "gestureTap": {
+    "message": "Tap the floating button"
+  },
+  "gestureLongPress": {
+    "message": "Long-press the floating button"
+  },
+  "gestureLongPressNote": {
+    "message": "With nothing selected, it opens the translator for the text you are writing."
+  },
+  "gestureBar": {
+    "message": "Bilingual button in the progress bar"
+  },
   "statusChecking": {
     "message": "Checking…"
   },

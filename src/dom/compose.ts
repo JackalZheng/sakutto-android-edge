@@ -98,7 +98,9 @@ export interface ComposePreferences {
   freePoint: ComposeFreePoint | null;
 }
 
-const ICON_PX = 26;
+/** Size of the あA button. Matches the port's 44px touch-target standard. */
+export const COMPOSE_ICON_PX = 44;
+const ICON_PX = COMPOSE_ICON_PX;
 /** Chrome's command and the page keydown can both arrive for one keypress. */
 const COMPOSE_SHORTCUT_DEDUP_MS = 200;
 
