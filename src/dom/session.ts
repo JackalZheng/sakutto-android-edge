@@ -1,6 +1,7 @@
 import { estimateTokens } from '@/engine/text/tokens';
 import {
   coveredBlocks,
+  formatProgressCount,
   formatRate,
   outputTokenCount,
   pageRates,
@@ -1779,8 +1780,9 @@ export class PageSession {
         ? 'partial'
         : 'translated'
       : 'translating';
-    const blocksDone = Math.min(view.total, Math.floor(view.done));
-    root.dataset.sakuttoProgress = `${String(blocksDone)}/${String(view.total)}`;
+    // Half credit while a block's translation is on screen, so the counter moves
+    // during the first stream instead of sitting at 0 and looking stalled.
+    root.dataset.sakuttoProgress = `${formatProgressCount(Math.min(view.total, view.done))}/${String(view.total)}`;
     if (view.tokensPerSecond !== null && view.segmentsPerSecond !== null) {
       root.dataset.sakuttoRate = `${formatRate(view.tokensPerSecond)} tok/s, ${formatRate(view.segmentsPerSecond)} seg/s`;
     } else {

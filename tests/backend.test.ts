@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyMobileLimits,
   CONTEXT_TOKENS,
   cpuFallback,
   GPU_LOSS_WINDOW_MS,
@@ -128,6 +129,16 @@ describe('backend selection', () => {
       tier: 'c8',
       nThreads: 4,
     });
+  });
+  it('caps threads and batch size for a phone without narrowing the GPU', () => {
+    const gpu = applyMobileLimits(selectBackend({ webgpu: true, hardwareConcurrency: 8 }));
+    expect(gpu).toMatchObject({ nThreads: 4, nBatch: 256, nParallel: 4 });
+
+    const cpu = applyMobileLimits(selectBackend({ webgpu: false, hardwareConcurrency: 12 }));
+    expect(cpu).toMatchObject({ nThreads: 4, nBatch: 256, nParallel: 1 });
+
+    const small = applyMobileLimits(selectBackend({ webgpu: false, hardwareConcurrency: 2 }));
+    expect(small).toMatchObject({ nThreads: 2, nBatch: 256 });
   });
 });
 

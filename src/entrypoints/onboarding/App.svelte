@@ -6,7 +6,7 @@
   import { agreementFromStorage } from '@/shared/agreement';
   import { hasBuiltInTranslatorUi } from '@/shared/browser';
   import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
-  import { resolveTargetLanguage, type TargetLanguage } from '@/shared/languages';
+  import { defaultTargetLanguage, type TargetLanguage } from '@/shared/languages';
   import {
     isModelProgressMessage,
     requestModelCancel,
@@ -53,7 +53,7 @@
 
   type Phase = OnboardingPhase;
 
-  let targetLanguage = $state<TargetLanguage>(resolveTargetLanguage(currentUiLanguage()));
+  let targetLanguage = $state<TargetLanguage>(defaultTargetLanguage(currentUiLanguage()));
   let startRequested = $state(false);
   let consentSaved = $state(false);
   /**

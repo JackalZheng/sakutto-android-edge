@@ -1,3 +1,5 @@
+import { MOBILE_MAX_BATCH, MOBILE_MAX_THREADS } from '@/shared/mobile';
+
 export type ComputeTier = 'g' | 'c8' | 'c4' | 'c1';
 
 export type BackendKind = 'webgpu' | 'cpu-wasm';
@@ -42,6 +44,8 @@ export interface BackendSelection {
   nThreads: number;
   nParallel: number;
   nCtx: number;
+  /** Prompt batch size passed to llama.cpp; unset keeps the loader default. */
+  nBatch?: number;
   sharedMemory?: boolean;
 }
 
@@ -176,6 +180,20 @@ export function cpuFallback(selection: BackendSelection): BackendSelection | nul
     hardwareConcurrency: selection.nThreads,
     ...(selection.sharedMemory === undefined ? {} : { sharedMemory: selection.sharedMemory }),
   });
+}
+
+/**
+ * The phone caps for an Edge for Android runtime: a phone's small cores and shared
+ * memory budget cannot use the desktop thread count, and a smaller prompt batch keeps
+ * first inference responsive. The parallel width is untouched — a WebGPU phone still
+ * translates on all its slots.
+ */
+export function applyMobileLimits(selection: BackendSelection): BackendSelection {
+  return {
+    ...selection,
+    nThreads: Math.min(selection.nThreads, MOBILE_MAX_THREADS),
+    nBatch: MOBILE_MAX_BATCH,
+  };
 }
 
 /**

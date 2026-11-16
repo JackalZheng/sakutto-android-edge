@@ -49,6 +49,7 @@ function createServices() {
   const reset = vi.fn();
   const dispose = vi.fn(async () => undefined);
   const download = vi.fn<DownloadFn>(async () => undefined);
+  const load = vi.fn(async () => ({}));
 
   const services = {
     manager: {
@@ -62,11 +63,11 @@ function createServices() {
     router: { activeEngine: null, translate: vi.fn() },
     chrome: { available: true, dispose },
     lazy: { kind: 'plamo', reset, translate: vi.fn() },
-    load: vi.fn(async () => ({})),
+    load,
     selection: SELECTION,
   } as unknown as EngineServices;
 
-  return { services, unload, reset, dispose, download };
+  return { services, unload, reset, dispose, download, load };
 }
 
 function createHost(services: EngineServices, idleReleaseMs = 60_000): EngineHost {
@@ -186,6 +187,116 @@ describe('EngineHost', () => {
     await flushTasks();
 
     expect(port.sent).toHaveLength(0);
+  });
+});
+
+describe('benchmark', () => {
+  function responseFor(
+    port: FakePort,
+    requestId: string,
+  ): { ok: boolean; value: unknown } | undefined {
+    return port
+      .messagesOfType('response')
+      .find((message) => (message as { requestId?: unknown }).requestId === requestId) as
+      { ok: boolean; value: unknown } | undefined;
+  }
+
+  it('declines a benchmark while a translation is active', async () => {
+    const { services } = createServices();
+    const release = deferred<void>();
+    services.router.translate = async function* () {
+      yield { id: 'a', textDelta: 'こん', engine: 'plamo' };
+      await release.promise;
+      yield { id: 'a', final: 'こんにちは', engine: 'plamo' };
+    } as never;
+
+    const host = createHost(services);
+    const port = new FakePort();
+    host.handlePort(port.port);
+
+    port.emit({
+      type: 'translate',
+      requestId: 'r1',
+      segments: [{ id: 'a', text: 'Hello.' }],
+      options: serializeTranslateOptions(options()),
+    });
+    await flushTasks();
+    expect(port.messagesOfType('chunk')).toHaveLength(1);
+
+    port.emit({ type: 'benchmark', requestId: 'b1' });
+    await flushTasks();
+
+    expect(responseFor(port, 'b1')).toEqual({
+      type: 'response',
+      requestId: 'b1',
+      ok: true,
+      value: null,
+    });
+
+    release.resolve();
+    await flushTasks();
+    expect(port.messagesOfType('done')).toHaveLength(1);
+  });
+
+  it('declines a benchmark while a warm-up is in flight', async () => {
+    const { services, load } = createServices();
+    const gate = deferred<Record<string, never>>();
+    load.mockImplementation(() => gate.promise);
+
+    const host = createHost(services);
+    const port = new FakePort();
+    host.handlePort(port.port);
+
+    port.emit({ type: 'model-warm', requestId: 'w1' });
+    await flushTasks();
+
+    port.emit({ type: 'benchmark', requestId: 'b1' });
+    await flushTasks();
+
+    expect(responseFor(port, 'b1')).toEqual({
+      type: 'response',
+      requestId: 'b1',
+      ok: true,
+      value: null,
+    });
+
+    gate.resolve({});
+    await flushTasks();
+    expect(responseFor(port, 'w1')?.ok).toBe(true);
+  });
+
+  it('runs one benchmark at a time and reports its time when idle', async () => {
+    const { services } = createServices();
+    const gate = deferred<void>();
+    const complete = vi.fn(() => gate.promise);
+    (services.manager as unknown as { loadedModel: unknown }).loadedModel = {
+      runtime: { complete },
+    };
+
+    const host = createHost(services);
+    const port = new FakePort();
+    host.handlePort(port.port);
+
+    port.emit({ type: 'benchmark', requestId: 'b1' });
+    await flushTasks();
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    port.emit({ type: 'benchmark', requestId: 'b2' });
+    await flushTasks();
+    expect(responseFor(port, 'b2')).toEqual({
+      type: 'response',
+      requestId: 'b2',
+      ok: true,
+      value: null,
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    gate.resolve();
+    await flushTasks();
+
+    const first = responseFor(port, 'b1');
+    expect(first?.ok).toBe(true);
+    expect(first?.value).toMatchObject({ milliseconds: expect.any(Number) });
   });
 });
 

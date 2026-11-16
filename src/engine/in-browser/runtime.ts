@@ -169,6 +169,7 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
           : 1,
       n_gpu_layers: selection.nGpuLayers,
       n_parallel: selection.nParallel,
+      ...(selection.nBatch === undefined ? {} : { n_batch: selection.nBatch }),
       /**
        * Ask llama.cpp for its full-size SWA cache.
        *

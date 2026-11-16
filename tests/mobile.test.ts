@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MOBILE_MODEL_ID,
   isAndroidEdgeUserAgent,
   isEdgeUserAgent,
   isMobileModelAllowed,
+  warmBeforePageCommand,
 } from '@/shared/mobile';
 import { edgeCommands } from '@/shared/manifest';
 
@@ -15,6 +16,33 @@ const CHROME_ANDROID_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
 describe('Edge for Android mobile target', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('warms before a page command on a desktop runtime', () => {
+    expect(warmBeforePageCommand()).toBe(true);
+  });
+
+  it('skips the warm-up on a coarse-pointer runtime', () => {
+    vi.stubGlobal('window', {
+      matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' }),
+    });
+    expect(warmBeforePageCommand()).toBe(false);
+  });
+
+  it('skips the warm-up in Edge for Android', () => {
+    vi.stubGlobal('navigator', { userAgent: EDGE_ANDROID_UA });
+    expect(warmBeforePageCommand()).toBe(false);
+  });
+
+  it('warms on a fine-pointer runtime', () => {
+    vi.stubGlobal('window', {
+      matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal('navigator', { userAgent: DESKTOP_EDGE_UA, maxTouchPoints: 0 });
+    expect(warmBeforePageCommand()).toBe(true);
+  });
   it('detects Edge on Android from the EdgA token', () => {
     expect(isAndroidEdgeUserAgent(EDGE_ANDROID_UA)).toBe(true);
     expect(isAndroidEdgeUserAgent(DESKTOP_EDGE_UA)).toBe(false);

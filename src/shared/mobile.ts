@@ -41,6 +41,16 @@ export function isTouchRuntime(): boolean {
   return window.matchMedia?.('(pointer: coarse)').matches === true || navigator.maxTouchPoints > 0;
 }
 
+/**
+ * Whether a page command warms the engine first. On a touch runtime the warm-up
+ * generation would take the inference slot ahead of the translation the user just
+ * asked for, so the command goes straight to translating; the translate request
+ * loads the model itself when it has to.
+ */
+export function warmBeforePageCommand(): boolean {
+  return !isTouchRuntime();
+}
+
 export function isMobileModelAllowed(modelId: ModelId): boolean {
   return modelId === MOBILE_MODEL_ID;
 }

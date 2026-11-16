@@ -214,6 +214,27 @@ export function resolveTargetLanguage(
 }
 
 /**
+ * The browser's own language setting. In extension pages, content scripts and the
+ * service worker this tracks the language the user reads in, including on Edge for
+ * Android where the extension i18n API can report the extension default instead.
+ */
+export function browserLanguage(): string | null {
+  const language = globalThis.navigator?.language;
+  return typeof language === 'string' && language.length > 0 ? language : null;
+}
+
+/**
+ * The first-run translation target: the browser language when it names a supported
+ * language, otherwise the extension UI language. The extension i18n API can report
+ * the extension default ('en') from the service worker on Edge for Android while
+ * the browser itself is zh-TW; following the browser language keeps a zh-TW first
+ * run in Traditional Chinese instead of flipping an English page to Japanese.
+ */
+export function defaultTargetLanguage(uiLanguage: string): LanguageCode {
+  return canonicalLanguage(browserLanguage() ?? '') ?? resolveTargetLanguage(uiLanguage);
+}
+
+/**
  * When the page is already in the preferred language, pick the other side of the
  * main pair so the first translation is not a no-op. An explicit site choice wins.
  */

@@ -46,6 +46,7 @@ import {
   type ShortcutSnapshot,
 } from '@/shared/messages';
 import { loadSettings, saveSettings, subscribeSettings } from '@/shared/storage';
+import { warmBeforePageCommand } from '@/shared/mobile';
 import type { Settings } from '@/shared/settings';
 import { typedReadiness, type TypedReadiness } from '@/shared/typed-translation';
 import { translateViaBackground } from '@/shared/translation-client';
@@ -413,7 +414,9 @@ export default defineContentScript({
 
       if (rule.auto === 'always') {
         if (!__SAKUTTO_FAKE_ENGINE__) {
-          void requestEngineWarm();
+          // No warm-up ahead of the translation on a touch runtime: the warm-up
+          // generation would take the inference slot before the page command runs.
+          if (warmBeforePageCommand()) void requestEngineWarm();
           void requestEngineTier(session);
         }
         void session.translate();
@@ -435,7 +438,9 @@ export default defineContentScript({
         return session.state();
       }
       if (!__SAKUTTO_FAKE_ENGINE__) {
-        void requestEngineWarm();
+        // No warm-up ahead of the translation on a touch runtime: the warm-up
+        // generation would take the inference slot before the page command runs.
+        if (warmBeforePageCommand()) void requestEngineWarm();
         void requestEngineTier(session);
       }
       if (command === 'compose') {

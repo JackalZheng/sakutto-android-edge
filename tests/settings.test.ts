@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_GLOSSARY_ENTRIES } from '@/shared/glossary';
 import { displayLanguage, resolveTargetLanguage } from '@/shared/languages';
 import { defaultShortcutEnabled } from '@/shared/shortcuts';
@@ -36,6 +36,18 @@ function stored(overrides: Partial<Settings> = {}): Settings {
   };
 }
 
+// The first-run default target follows the browser language (navigator.language)
+// when it names a supported language. These tests exercise the UI-language
+// fallback, so the browser language is absent here; the browser-language
+// precedence is covered in its own describe below.
+beforeEach(() => {
+  vi.stubGlobal('navigator', undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('settings defaults', () => {
   it('accepts the single-thread CPU tier used on Firefox', () => {
     expect(isTierPreference('c1')).toBe(true);
@@ -60,6 +72,26 @@ describe('settings defaults', () => {
     expect(resolveTargetLanguage('zh-TW')).toBe('zh-hant');
     expect(resolveTargetLanguage('zh-HK')).toBe('zh-hant');
     expect(resolveTargetLanguage('zh-Hant-HK')).toBe('zh-hant');
+  });
+
+  it('follows the browser language for the first-run default target', () => {
+    // A zh-TW browser defaults to Traditional Chinese even when the extension UI
+    // language reports English, as the service worker can on Edge for Android.
+    vi.stubGlobal('navigator', { language: 'zh-TW' });
+    expect(createDefaultSettings('en').targetLanguage).toBe('zh-hant');
+    expect(createDefaultSettings('en-US').targetLanguage).toBe('zh-hant');
+    expect(normalizeSettings({}, 'en').targetLanguage).toBe('zh-hant');
+  });
+
+  it('maps the browser language to the supported script', () => {
+    vi.stubGlobal('navigator', { language: 'zh-CN' });
+    expect(createDefaultSettings('en').targetLanguage).toBe('zh-hans');
+  });
+
+  it('falls back to the UI language when the browser language is unsupported', () => {
+    vi.stubGlobal('navigator', { language: 'xx' });
+    expect(createDefaultSettings('fr-FR').targetLanguage).toBe('fr');
+    expect(createDefaultSettings('').targetLanguage).toBe('en');
   });
 
   it('falls back to the raw tag when a page language cannot be displayed', () => {

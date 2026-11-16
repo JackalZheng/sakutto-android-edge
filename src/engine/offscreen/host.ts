@@ -7,6 +7,7 @@ import type { EngineStatus, ModelStatus } from '@/shared/engine-status';
 import { advanceModelStatus } from '@/shared/model-progress';
 import { loadSettings } from '@/shared/storage';
 import type { TierPreference } from '@/shared/settings';
+import { isAndroidEdgeRuntime } from '@/shared/mobile';
 import { MemoryTranslationCacheStore, IndexedDbTranslationCacheStore } from '../cache/store';
 import { CachingEngine } from '../cache/caching-engine';
 import { TranslationCache } from '../cache/cache';
@@ -14,6 +15,7 @@ import { prewarmRequest } from '../cache/prewarm';
 import { ChromeTranslatorEngine } from '../chrome/translator';
 import { isAbortError, isEngineError } from '../errors';
 import {
+  applyMobileLimits,
   cpuFallback,
   isGpuLoadFallback,
   lighterSelection,
@@ -227,7 +229,10 @@ export class EngineHost {
       sharedMemory: capabilities.crossOriginIsolated,
     };
     const stored = browser.storage?.local ? await loadSettings().catch(() => null) : null;
-    const selection = selectionForTier(stored?.tier ?? 'auto', probe);
+    const initial = selectionForTier(stored?.tier ?? 'auto', probe);
+    // A phone's small cores and shared memory budget cannot use the desktop thread
+    // and batch sizes; the parallel width is untouched.
+    const selection = isAndroidEdgeRuntime() ? applyMobileLimits(initial) : initial;
     const selectionState = { current: selection };
     const store = await OpfsModelFileStore.open();
     const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
@@ -300,7 +305,8 @@ export class EngineHost {
       },
       clearCache: () => cache.clear(),
       setTier: async (tier: TierPreference) => {
-        selectionState.current = selectionForTier(tier, probe);
+        const next = selectionForTier(tier, probe);
+        selectionState.current = isAndroidEdgeRuntime() ? applyMobileLimits(next) : next;
         this.gpuFallback = false;
         this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), null);
         lazy.reset();
@@ -686,7 +692,20 @@ export class EngineHost {
     port: Browser.runtime.Port,
     request: BenchmarkRequest,
   ): Promise<void> {
-    if ([...this.requests.values()].some((entry) => entry.kind === 'translate')) {
+    // A benchmark is already running: never queue a second 512-token run behind it.
+    if (this.benchmark) {
+      this.respond(port, request.requestId, null);
+      return;
+    }
+    // A translation is running, or a warm-up is in flight ahead of one: the
+    // benchmark would take a slot the page needs. Decline it; the next idle
+    // moment can measure again. A cancelled benchmark keeps generating until its
+    // 512 tokens are done, so starting one here would stall the page.
+    if (
+      [...this.requests.values()].some(
+        (entry) => entry.kind === 'translate' || entry.kind === 'warm',
+      )
+    ) {
       this.respond(port, request.requestId, null);
       return;
     }
