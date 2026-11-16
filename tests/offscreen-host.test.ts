@@ -195,9 +195,10 @@ describe('benchmark', () => {
     port: FakePort,
     requestId: string,
   ): { ok: boolean; value: unknown } | undefined {
-    return port.messagesOfType('response').find(
-      (message) => (message as { requestId?: unknown }).requestId === requestId,
-    ) as { ok: boolean; value: unknown } | undefined;
+    return port
+      .messagesOfType('response')
+      .find((message) => (message as { requestId?: unknown }).requestId === requestId) as
+      { ok: boolean; value: unknown } | undefined;
   }
 
   it('declines a benchmark while a translation is active', async () => {
