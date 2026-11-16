@@ -2,6 +2,17 @@
 
 Release sections are added by `pnpm release`. Each section lists commit subjects since the previous `vX.Y.Z` tag.
 
+## [1.2.1] - 2026-11-16
+
+### Bug Fixes
+
+- On Edge for Android, page translation no longer stalls at 0/N: the first-use quality benchmark and the engine warm-up no longer run ahead of a page translation on touch devices, and the progress counter shows partial progress while the first block streams.
+- New installs now default the translation target to the browser language instead of Japanese, so a Traditional Chinese browser translates into Traditional Chinese.
+
+### Features
+
+- Mobile gestures for Edge for Android: a floating action button (tap to translate or restore, long-press for the selection or the writing translator), a bilingual toggle on the progress bar, and 44px touch targets for the selection and writing icons. The settings page shows a Gestures section instead of keyboard shortcuts on Android.
+
 ## [1.2.0] - 2026-11-10
 
 ### Features
