@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHarnessConfigs,
+  compareAdapterToReference,
   compareRuns,
   firstStreamedToken,
+  POCO_F5_PRO_REFERENCE,
   type HarnessRunResult,
 } from '../src/engine/debug-harness';
 import type { BackendProbe } from '../src/engine/in-browser/backend';
+import { EMPTY_GPU_DIAGNOSTIC, type GpuDiagnostic } from '../src/shared/gpu-diagnostic';
 
 const GPU_PROBE: BackendProbe = {
   webgpu: true,
@@ -84,6 +87,45 @@ describe('firstStreamedToken', () => {
   it('returns an empty string when nothing streamed', () => {
     expect(firstStreamedToken([])).toBe('');
     expect(firstStreamedToken([''])).toBe('');
+  });
+});
+
+describe('compareAdapterToReference', () => {
+  const pocoDiagnostic: GpuDiagnostic = {
+    ...EMPTY_GPU_DIAGNOSTIC,
+    vendor: POCO_F5_PRO_REFERENCE.vendor,
+    architecture: POCO_F5_PRO_REFERENCE.architecture,
+    fallbackAdapter: POCO_F5_PRO_REFERENCE.fallbackAdapter,
+    shaderF16: POCO_F5_PRO_REFERENCE.shaderF16,
+    subgroups: POCO_F5_PRO_REFERENCE.subgroups,
+    subgroupMinSize: POCO_F5_PRO_REFERENCE.subgroupMinSize,
+    subgroupMaxSize: POCO_F5_PRO_REFERENCE.subgroupMaxSize,
+    maxBufferSize: POCO_F5_PRO_REFERENCE.maxBufferSize,
+    maxStorageBufferBindingSize: POCO_F5_PRO_REFERENCE.maxStorageBufferBindingSize,
+    maxComputeWorkgroupStorageSize: POCO_F5_PRO_REFERENCE.maxComputeWorkgroupStorageSize,
+    maxComputeInvocationsPerWorkgroup: POCO_F5_PRO_REFERENCE.maxComputeInvocationsPerWorkgroup,
+    adapterAttempts: ['high-performance'],
+  };
+
+  it('matches every field for the reference device', () => {
+    const rows = compareAdapterToReference(pocoDiagnostic);
+    expect(rows).toHaveLength(12);
+    expect(rows.every((row) => row.matches)).toBe(true);
+  });
+
+  it('flags a different subgroup width', () => {
+    const rows = compareAdapterToReference({ ...pocoDiagnostic, subgroupMaxSize: 32 });
+    const row = rows.find((r) => r.field === 'subgroupMaxSize');
+    expect(row?.matches).toBe(false);
+    expect(row?.reference).toBe('128');
+    expect(row?.actual).toBe('32');
+    expect(rows.filter((r) => !r.matches)).toHaveLength(1);
+  });
+
+  it('treats missing values as differences, not matches', () => {
+    const rows = compareAdapterToReference(EMPTY_GPU_DIAGNOSTIC);
+    expect(rows.every((row) => !row.matches)).toBe(true);
+    expect(rows.find((r) => r.field === 'vendor')?.actual).toBe('n/a');
   });
 });
 

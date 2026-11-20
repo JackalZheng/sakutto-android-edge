@@ -1,5 +1,6 @@
 import {
   buildHarnessConfigs,
+  compareAdapterToReference,
   compareRuns,
   firstStreamedToken,
   HARNESS_MAX_TOKENS,
@@ -168,6 +169,7 @@ async function main(): Promise<void> {
     probeWebGpuAdapter(),
   ]);
   const diag = adapterInfo.diagnostic;
+  const referenceRows = compareAdapterToReference(diag);
   adapterEl.textContent = [
     `webgpu status: ${capabilities.webgpu}`,
     `vendor: ${describe(diag.vendor)}`,
@@ -187,7 +189,20 @@ async function main(): Promise<void> {
     `crossOriginIsolated: ${capabilities.crossOriginIsolated}`,
     `gpu fast batches: ${describe(capabilities.gpuFastBatches)}`,
     `android edge runtime: ${isAndroidEdgeRuntime()}`,
+    '',
+    'POCO F5 Pro reference check (owner diagnostic, 2026-11-21):',
+    ...referenceRows.map(
+      (row) =>
+        `${row.matches ? 'MATCH' : 'DIFF '} ${row.field}: reference=${row.reference} actual=${row.actual}`,
+    ),
   ].join('\n');
+  const diffs = referenceRows.filter((row) => !row.matches);
+  log(
+    `adapter reference: ${referenceRows.length - diffs.length}/${referenceRows.length} fields match the POCO F5 Pro diagnostic`,
+  );
+  for (const row of diffs) {
+    log(`DIFF ${row.field}: reference=${row.reference} actual=${row.actual}`);
+  }
 
   const store = await OpfsModelFileStore.open();
   const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });

@@ -5,6 +5,7 @@ import {
   type BackendSelection,
 } from './in-browser/backend';
 import { looksLikeBrokenTranslation } from './text/garbage';
+import type { GpuDiagnostic } from '@/shared/gpu-diagnostic';
 
 /**
  * Stage 1 debug harness for the Android WebGPU garbage-output investigation.
@@ -119,4 +120,73 @@ export function compareRuns(cpu: HarnessRunResult, gpu: HarnessRunResult): RunCo
       HARNESS_TARGET_LANGUAGE,
     ),
   };
+}
+
+/**
+ * The owner's POCO F5 Pro WebGPU diagnostic (Sakutto settings diagnostic,
+ * 2026-11-21), kept as the reference the harness compares a run against
+ * field by field, so a phone run can be diffed against the known device
+ * line by line. Note the subgroup width: 64–128 on this Adreno, where
+ * NVIDIA reports 32 — ggml's subgroup reductions are sized from these
+ * numbers, and a wrong width is a prime garbage-output suspect.
+ */
+export const POCO_F5_PRO_REFERENCE = {
+  vendor: 'qualcomm',
+  architecture: 'adreno-7xx',
+  fallbackAdapter: false,
+  shaderF16: true,
+  subgroups: true,
+  subgroupMinSize: 64,
+  subgroupMaxSize: 128,
+  maxBufferSize: 1073741824,
+  maxStorageBufferBindingSize: 134217728,
+  maxComputeWorkgroupStorageSize: 32768,
+  maxComputeInvocationsPerWorkgroup: 1024,
+  adapterAttempt: 'high-performance',
+} as const;
+
+export interface AdapterFieldComparison {
+  field: string;
+  reference: string;
+  actual: string;
+  matches: boolean;
+}
+
+export function compareAdapterToReference(
+  diagnostic: GpuDiagnostic,
+  reference: typeof POCO_F5_PRO_REFERENCE = POCO_F5_PRO_REFERENCE,
+): AdapterFieldComparison[] {
+  const rows: Array<readonly [string, unknown, unknown]> = [
+    ['vendor', reference.vendor, diagnostic.vendor],
+    ['architecture', reference.architecture, diagnostic.architecture],
+    ['fallbackAdapter', reference.fallbackAdapter, diagnostic.fallbackAdapter],
+    ['shaderF16', reference.shaderF16, diagnostic.shaderF16],
+    ['subgroups', reference.subgroups, diagnostic.subgroups],
+    ['subgroupMinSize', reference.subgroupMinSize, diagnostic.subgroupMinSize],
+    ['subgroupMaxSize', reference.subgroupMaxSize, diagnostic.subgroupMaxSize],
+    ['maxBufferSize', reference.maxBufferSize, diagnostic.maxBufferSize],
+    [
+      'maxStorageBufferBindingSize',
+      reference.maxStorageBufferBindingSize,
+      diagnostic.maxStorageBufferBindingSize,
+    ],
+    [
+      'maxComputeWorkgroupStorageSize',
+      reference.maxComputeWorkgroupStorageSize,
+      diagnostic.maxComputeWorkgroupStorageSize,
+    ],
+    [
+      'maxComputeInvocationsPerWorkgroup',
+      reference.maxComputeInvocationsPerWorkgroup,
+      diagnostic.maxComputeInvocationsPerWorkgroup,
+    ],
+    ['adapterAttempts', reference.adapterAttempt, diagnostic.adapterAttempts.join(', ')],
+  ];
+  return rows.map(([field, ref, actual]) => ({
+    field,
+    reference: String(ref),
+    actual: actual === null || actual === undefined ? 'n/a' : String(actual),
+    // Attempt entries carry outcome text; the reference is the attempt name.
+    matches: field === 'adapterAttempts' ? String(actual).includes(String(ref)) : ref === actual,
+  }));
 }
