@@ -1055,5 +1055,20 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "在手機 GPU 上使用 WebGPU 可能產生錯誤的翻譯。如果出現亂碼，Sakutto 會自動切回 CPU。"
+  },
+  "fabEverywhereSetting": {
+    "message": "在所有網站顯示翻譯按鈕"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "按鈕需要所有網站的存取權，只會詢問一次。設為絕不翻譯的網站不會顯示。"
+  },
+  "fabEverywhereGrant": {
+    "message": "允許在所有網站顯示翻譯按鈕"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "未取得網站存取權。按鈕只會出現在你開啟過 Sakutto 的頁面。"
   }
 }

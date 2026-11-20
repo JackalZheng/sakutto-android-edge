@@ -1055,5 +1055,20 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "WebGPU trên GPU điện thoại có thể cho bản dịch sai. Nếu chữ bị lỗi, Sakutto sẽ tự chuyển về CPU."
+  },
+  "fabEverywhereSetting": {
+    "message": "Hiển thị nút dịch trên mọi trang web"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "Nút cần quyền truy cập mọi trang web, chỉ hỏi một lần. Các trang được đặt là không bao giờ dịch sẽ bị bỏ qua."
+  },
+  "fabEverywhereGrant": {
+    "message": "Cho phép nút dịch trên mọi trang web"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "Chưa được cấp quyền truy cập trang web. Nút chỉ hiện trên các trang mà bạn mở Sakutto."
   }
 }
