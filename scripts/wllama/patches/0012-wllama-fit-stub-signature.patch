@@ -1,0 +1,25 @@
+Update wllama's common_fit_params stub to llama.cpp's new signature.
+
+wllama replaces llama.cpp's device-memory fitting with a stub in
+cpp/wllama-context.h that always returns COMMON_PARAMS_FIT_STATUS_FAILURE
+(there is no device fitting to do in a browser). llama.cpp d7d1b632d
+changed the first parameter from a single model path (const char *) to a
+list of model paths (const std::vector<std::string> &), so the stub no
+longer matches the calls in common.cpp and the link failed. The stub
+ignores its arguments, so only the signature changes; behaviour is
+identical to the old pin. common/fit.cpp therefore stays excluded
+(patch 0011).
+
+diff --git a/cpp/wllama-context.h b/cpp/wllama-context.h
+index 3e9e1c0..e1850be 100644
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -1329,7 +1329,7 @@ void common_log_default_callback(enum ggml_log_level level, const char *text, vo
+ }
+ 
+ enum common_params_fit_status common_fit_params(
+-    const char *path_model,
++    const std::vector<std::string> &paths_model,
+     llama_model_params *mparams,
+     llama_context_params *cparams,
+     float *tensor_split,
