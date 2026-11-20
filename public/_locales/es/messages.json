@@ -1055,5 +1055,20 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "WebGPU en las GPU de los teléfonos puede producir traducciones erróneas. Si el texto sale ilegible, Sakutto vuelve a la CPU por sí solo."
+  },
+  "fabEverywhereSetting": {
+    "message": "Mostrar el botón de traducir en todos los sitios"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "El botón necesita acceso a todos los sitios, que se pide una sola vez. Se omiten los sitios configurados para no traducirse nunca."
+  },
+  "fabEverywhereGrant": {
+    "message": "Permitir el botón de traducir en todos los sitios"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "No se concedió el acceso a los sitios. El botón solo aparece en las páginas donde abras Sakutto."
   }
 }

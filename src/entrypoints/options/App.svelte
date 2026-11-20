@@ -9,6 +9,7 @@
   import type { EngineStatus } from '@/shared/engine-status';
   import { hasBuiltInTranslatorUi, isFirefoxBuild } from '@/shared/browser';
   import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
+  import { hasAllSitesAccess, requestAllSitesAccess } from '@/shared/all-sites';
   import {
     requestCacheClear,
     requestEngineCapabilities,
@@ -61,6 +62,8 @@
   let quality = $state<QualitySample | null>(null);
   let cacheState = $state<CacheState>(null);
   let actionFailed = $state(false);
+  let allSites = $state<boolean | null>(null);
+  let allSitesFailed = $state(false);
 
   let siteList = $derived(
     Object.values(rules).sort((left, right) => left.host.localeCompare(right.host)),
@@ -82,6 +85,22 @@
     });
     return t(label.key, label.substitutions);
   });
+
+  async function changeFabEverywhere(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    allSitesFailed = false;
+    // The grant prompt has to open inside this click, before anything else is awaited.
+    if (input.checked && allSites !== true) {
+      allSites = await requestAllSitesAccess();
+      allSitesFailed = !allSites;
+    }
+    await updateSettings({ fabEverywhere: input.checked });
+  }
+
+  async function grantAllSites() {
+    allSites = await requestAllSitesAccess();
+    allSitesFailed = !allSites;
+  }
 
   async function updateSettings(patch: SettingsPatch) {
     try {
@@ -200,6 +219,11 @@
     });
     void loadStoredSettings();
     void loadRules();
+    if (androidEdge) {
+      void hasAllSitesAccess().then((granted) => {
+        allSites = granted;
+      });
+    }
     void requestEngineStatus().then((status) => {
       engine = status;
     });
@@ -228,6 +252,21 @@
     <h2>{t('settingsLabel')}</h2>
     {#if settings}
       <SettingsFields {settings} {uiLanguage} onChange={updateSettings} />
+      {#if androidEdge}
+        <label class="check">
+          <input type="checkbox" checked={settings.fabEverywhere} onchange={changeFabEverywhere} />
+          <span>{t('fabEverywhereSetting')}</span>
+        </label>
+        <p class="muted help">{t('fabEverywhereSettingHelp')}</p>
+        {#if settings.fabEverywhere && allSites === false}
+          <button class="link-button" type="button" onclick={grantAllSites}>
+            {t('fabEverywhereGrant')}
+          </button>
+        {/if}
+        {#if allSitesFailed}
+          <p class="error" role="alert">{t('fabEverywhereGrantFailed')}</p>
+        {/if}
+      {/if}
       <p class="muted help">{t('optionsDefaultHint')}</p>
       {#if settingsError === 'save'}
         <p class="error" role="alert">{t('errorSaveSettings')}</p>
@@ -381,6 +420,9 @@
         </select>
       </label>
       <p class="muted help">{t('tierHelp')}</p>
+      {#if androidEdge && settings.tier === 'g'}
+        <p class="error" role="note">{t('tierGpuMobileWarning')}</p>
+      {/if}
       <label class="field">
         <span>{t('idleLabel')}</span>
         <select value={String(settings.idleMinutes)} onchange={changeIdle}>
@@ -503,6 +545,13 @@
 </main>
 
 <style>
+  .check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text);
+    font-size: 13px;
+  }
   .page {
     display: grid;
     gap: var(--space-4);
