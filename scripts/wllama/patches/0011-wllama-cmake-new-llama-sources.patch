@@ -1,0 +1,37 @@
+Compile the llama.cpp sources wllama's hand-maintained list is missing.
+
+The Stage 0 bump to llama.cpp d7d1b632d split the server code and moved
+helpers into files wllama @d275dac does not compile, so the wasm link
+failed with undefined symbols:
+
+- common_fit_params is defined in common/fit.cpp, which the exclude list
+  dropped; common.cpp calls it now, so compile fit.cpp again.
+- server_slot_sched, server_prompt_cache and server_prompt::get_reuse
+  moved to tools/server/server-slot-sched.cpp; server_realtime_slot to
+  tools/server/server-realtime.cpp. Add both to LLAMA_SERVER_SRC.
+- cpp-httplib is a compiled library in this llama.cpp version and
+  server-common.cpp calls httplib::hosted_at; add
+  vendor/cpp-httplib/httplib.cpp.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4248078..6a56962 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -92,7 +92,6 @@ list(REMOVE_ITEM LLAMA_COMMON_SRC
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/arg.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/console.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/debug.cpp
+-    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/fit.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/hf-cache.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/log.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/common/preset.cpp
+@@ -106,6 +105,9 @@ set(LLAMA_SERVER_SRC llama.cpp/tools/server/server-context.cpp
+     llama.cpp/tools/server/server-decision.cpp
+     llama.cpp/tools/server/server-schema.cpp
+     llama.cpp/tools/server/server-stream.cpp
++    llama.cpp/tools/server/server-realtime.cpp
++    llama.cpp/tools/server/server-slot-sched.cpp
++    llama.cpp/vendor/cpp-httplib/httplib.cpp
+ )
+ 
+ set(WLLAMA_SRC ${LLAMA_COMMON_SRC} ${LLAMA_SERVER_SRC}
