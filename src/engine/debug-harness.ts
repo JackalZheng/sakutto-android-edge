@@ -89,6 +89,10 @@ export interface HarnessRunResult {
   gpuEvidence: 'engaged' | 'missing' | 'unknown' | null;
   /** ggml's own correctness-probe verdict from the load log, when present. */
   correctnessProbe: string | null;
+  /** Subgroup size the correctness probe measured on the device, when reported. */
+  correctnessProbeSubgroupSize: number | null;
+  /** Correctness-probe duration from the load log, when reported. */
+  correctnessProbeMs: number | null;
 }
 
 export function firstStreamedToken(chunks: readonly string[]): string {
@@ -120,6 +124,30 @@ export function compareRuns(cpu: HarnessRunResult, gpu: HarnessRunResult): RunCo
       HARNESS_TARGET_LANGUAGE,
     ),
   };
+}
+
+export interface RunVerdict {
+  pass: boolean;
+  reasons: string[];
+}
+
+/**
+ * The harness verdict for one GPU config. Deliberately based ONLY on the
+ * real output compared with the CPU reference — never on ggml's built-in
+ * correctness probe: on the owner's POCO F5 Pro that probe reports "ok"
+ * (42.4 ms, subgroup_size 128) while real translation output is garbled,
+ * because the probe's add/subgroup kernels do not cover the failing
+ * Q4_K dequant / mul_mat path. Probe fields are printed for the record.
+ */
+export function verdictForRun(cpu: HarnessRunResult, gpu: HarnessRunResult): RunVerdict {
+  const reasons: string[] = [];
+  if (!gpu.ok) reasons.push(`run failed: ${gpu.error ?? 'unknown error'}`);
+  const comparison = compareRuns(cpu, gpu);
+  if (!comparison.firstTokenMatches) reasons.push('first token differs from the CPU reference');
+  if (comparison.gpuLooksBroken) {
+    reasons.push('output flagged as broken by the mixed-script/length check');
+  }
+  return { pass: reasons.length === 0, reasons };
 }
 
 /**

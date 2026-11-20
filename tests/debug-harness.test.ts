@@ -5,6 +5,7 @@ import {
   compareRuns,
   firstStreamedToken,
   POCO_F5_PRO_REFERENCE,
+  verdictForRun,
   type HarnessRunResult,
 } from '../src/engine/debug-harness';
 import type { BackendProbe } from '../src/engine/in-browser/backend';
@@ -28,6 +29,8 @@ function run(partial: Partial<HarnessRunResult>): HarnessRunResult {
     error: null,
     gpuEvidence: null,
     correctnessProbe: null,
+    correctnessProbeSubgroupSize: null,
+    correctnessProbeMs: null,
     ...partial,
   };
 }
@@ -126,6 +129,53 @@ describe('compareAdapterToReference', () => {
     const rows = compareAdapterToReference(EMPTY_GPU_DIAGNOSTIC);
     expect(rows.every((row) => !row.matches)).toBe(true);
     expect(rows.find((r) => r.field === 'vendor')?.actual).toBe('n/a');
+  });
+});
+
+describe('verdictForRun', () => {
+  const goodOutput = '早班列車離開安靜的車站，麵包師傅在轉角開了一間小店。';
+  const cpu = run({ configId: 'cpu', output: goodOutput, firstToken: '早' });
+
+  it('passes when the GPU output agrees with the CPU reference', () => {
+    const verdict = verdictForRun(cpu, run({ output: goodOutput, firstToken: '早' }));
+    expect(verdict.pass).toBe(true);
+    expect(verdict.reasons).toEqual([]);
+  });
+
+  it('fails on a differing first token even if the text is not flagged broken', () => {
+    const verdict = verdictForRun(
+      cpu,
+      run({ output: '晚班列車離開安靜的車站，麵包師傅在轉角開了一間小店。', firstToken: '晚' }),
+    );
+    expect(verdict.pass).toBe(false);
+    expect(verdict.reasons.join(' ')).toContain('first token');
+  });
+
+  it('fails on garbled output', () => {
+    const verdict = verdictForRun(
+      cpu,
+      run({ output: '難ら일까지郷この難ら일까지郷この', firstToken: '難' }),
+    );
+    expect(verdict.pass).toBe(false);
+  });
+
+  it('fails when the run itself failed', () => {
+    const verdict = verdictForRun(cpu, run({ ok: false, error: 'Error: load failed' }));
+    expect(verdict.pass).toBe(false);
+    expect(verdict.reasons.join(' ')).toContain('load failed');
+  });
+
+  it('ignores the built-in probe status either way', () => {
+    const probeOk = verdictForRun(
+      cpu,
+      run({ output: '難ら일까지郷この難ら일까지郷この', firstToken: '難', correctnessProbe: 'ok' }),
+    );
+    expect(probeOk.pass).toBe(false);
+    const probeFailed = verdictForRun(
+      cpu,
+      run({ output: goodOutput, firstToken: '早', correctnessProbe: 'failed' }),
+    );
+    expect(probeFailed.pass).toBe(true);
   });
 });
 

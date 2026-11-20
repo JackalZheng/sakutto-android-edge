@@ -9,6 +9,7 @@ import {
   HARNESS_TARGET_LANGUAGE,
   type HarnessConfig,
   type HarnessRunResult,
+  verdictForRun,
 } from '@/engine/debug-harness';
 import { createWllamaRuntime, gpuEvidence, lastWebGpuLoadLog } from '@/engine/in-browser/runtime';
 import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
@@ -60,6 +61,8 @@ async function runConfig(
     error: null,
     gpuEvidence: null,
     correctnessProbe: null,
+    correctnessProbeSubgroupSize: null,
+    correctnessProbeMs: null,
   };
   log(`--- ${config.label} ---`);
   try {
@@ -72,10 +75,11 @@ async function runConfig(
     if (config.selection.backend === 'webgpu') {
       const lines = lastWebGpuLoadLog();
       result.gpuEvidence = gpuEvidence(lines);
-      result.correctnessProbe = parseWebGpuLog(lines).correctnessProbe;
-      log(
-        `gpu evidence: ${result.gpuEvidence}; correctness probe: ${describe(result.correctnessProbe)}`,
-      );
+      const parsed = parseWebGpuLog(lines);
+      result.correctnessProbe = parsed.correctnessProbe;
+      result.correctnessProbeSubgroupSize = parsed.correctnessProbeSubgroupSize;
+      result.correctnessProbeMs = parsed.correctnessProbeMs;
+      log(`gpu evidence: ${result.gpuEvidence}`);
       for (const line of lines) {
         if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
       }
@@ -108,6 +112,16 @@ async function runConfig(
     log(`FAILED: ${result.error}`);
   } finally {
     if (config.debugProfile) resetWebGpuDebugProfile();
+  }
+  if (config.selection.backend === 'webgpu') {
+    // The settings diagnostic only fills these after a load, and the text
+    // copied from a phone may carry just the adapter section — so the
+    // harness prints the probe verdict explicitly after every GPU run.
+    log(
+      `correctness probe: ${describe(result.correctnessProbe)} ` +
+        `subgroup_size=${describe(result.correctnessProbeSubgroupSize)} ` +
+        `ms=${describe(result.correctnessProbeMs)}`,
+    );
   }
   return result;
 }
@@ -150,13 +164,17 @@ function renderResults(
       row.append(td);
     }
     table.append(row);
-    if (comparison) {
+    if (comparison && cpu) {
+      const verdict = verdictForRun(cpu, result);
       const note = document.createElement('p');
       note.textContent =
         `${config?.label ?? result.configId} vs CPU: first token ` +
         `${comparison.firstTokenMatches ? 'matches' : 'DIFFERS'}, output ` +
         `${comparison.outputsIdentical ? 'identical' : 'differs'}, gpu evidence ` +
-        `${describe(result.gpuEvidence)}, correctness probe ${describe(result.correctnessProbe)}.`;
+        `${describe(result.gpuEvidence)}, correctness probe ${describe(result.correctnessProbe)} ` +
+        `subgroup_size=${describe(result.correctnessProbeSubgroupSize)} — verdict: ` +
+        `${verdict.pass ? 'PASS' : `FAIL (${verdict.reasons.join('; ')})`} ` +
+        '(verdict uses the output diff only; the built-in probe is recorded, not trusted).';
       resultsEl.append(note);
     }
   }
@@ -234,7 +252,15 @@ async function main(): Promise<void> {
         log(`source: ${HARNESS_SOURCE_TEXT}`);
         const results: HarnessRunResult[] = [];
         for (const config of configs) {
-          results.push(await runConfig(manager, config, prompt));
+          const result = await runConfig(manager, config, prompt);
+          results.push(result);
+          const cpuResult = results.find((r) => r.configId === 'cpu');
+          if (cpuResult && config.id !== 'cpu') {
+            const verdict = verdictForRun(cpuResult, result);
+            log(
+              `verdict ${config.id}: ${verdict.pass ? 'PASS' : `FAIL (${verdict.reasons.join('; ')})`}`,
+            );
+          }
           renderResults(configs, results);
         }
         await manager.unload();
