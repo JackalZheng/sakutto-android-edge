@@ -2,7 +2,15 @@ import {
   buildHarnessConfigs,
   compareAdapterToReference,
   compareRuns,
+  describeErrorChain,
+  emptyIsolatedState,
   firstStreamedToken,
+  ISOLATED_RELOAD_DELAY_MS,
+  ISOLATED_STATE_KEY,
+  type IsolatedRunState,
+  parseIsolatedState,
+  planIsolatedQueue,
+  recordIsolatedResult,
   HARNESS_MAX_TOKENS,
   HARNESS_SOURCE_LANGUAGE,
   HARNESS_SOURCE_TEXT,
@@ -11,7 +19,22 @@ import {
   type HarnessRunResult,
   verdictForRun,
 } from '@/engine/debug-harness';
-import { createWllamaRuntime, gpuEvidence, lastWebGpuLoadLog } from '@/engine/in-browser/runtime';
+import {
+  createWllamaRuntime,
+  gpuEvidence,
+  lastRuntimeLogTail,
+  lastWebGpuLoadLog,
+} from '@/engine/in-browser/runtime';
+import {
+  formatNumber,
+  isOpDiagnosticContextLine,
+  type OpGroupOutcome,
+  opGroupArgs,
+  parseOpDiagnosticLines,
+  PLAMO3_OP_GROUPS,
+  summarizeOpGroup,
+} from '@/engine/debug-op-diagnostics';
+import { createWllama } from '@/engine/wllama';
 import type { BackendSelection } from '@/engine/in-browser/backend';
 import { isEngineError } from '@/engine/errors';
 import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
@@ -39,6 +62,13 @@ const adapterEl = document.querySelector<HTMLElement>('#adapter')!;
 const logEl = document.querySelector<HTMLElement>('#log')!;
 const resultsEl = document.querySelector<HTMLElement>('#results')!;
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
+const runIsolatedButton = document.querySelector<HTMLButtonElement>('#run-isolated')!;
+const clearButton = document.querySelector<HTMLButtonElement>('#clear-saved')!;
+const configsEl = document.querySelector<HTMLElement>('#configs')!;
+const opsButton = document.querySelector<HTMLButtonElement>('#run-ops')!;
+const opsProfileEl = document.querySelector<HTMLSelectElement>('#ops-profile')!;
+const opsBackendEl = document.querySelector<HTMLSelectElement>('#ops-backend')!;
+const opsEl = document.querySelector<HTMLElement>('#ops')!;
 
 function log(line: string): void {
   logEl.textContent += `${line}\n`;
@@ -79,7 +109,7 @@ async function runLoaded(
     result.correctnessProbeMs = parsed.correctnessProbeMs;
     log(`gpu evidence: ${result.gpuEvidence}`);
     for (const line of lines) {
-      if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
+      if (/ggml_webgpu|offload|sakutto:|flash_attn/u.test(line)) log(`  ${line}`);
     }
   }
   const chunks: string[] = [];
@@ -128,6 +158,12 @@ async function runConfig(
     fellBackToCpu: false,
   };
   log(`--- ${config.label} ---`);
+  log(
+    `  selection: backend=${config.selection.backend} n_gpu_layers=${config.selection.nGpuLayers} ` +
+      `n_parallel=${config.selection.nParallel} n_ctx=${config.selection.nCtx} ` +
+      `n_batch=${describe(config.selection.nBatch)} profile=${config.debugProfile ?? 'none'}` +
+      `${config.selection.debugLoad ? ` debugLoad=${JSON.stringify(config.selection.debugLoad)}` : ''}`,
+  );
   try {
     if (config.debugProfile) setWebGpuDebugProfile(config.debugProfile);
     else resetWebGpuDebugProfile();
@@ -158,6 +194,12 @@ async function runConfig(
   } catch (error) {
     result.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     log(`FAILED: ${result.error}`);
+    log(`  error chain: ${describeErrorChain(error)}`);
+    // Device-lost reason / device error text logged by ggml-webgpu during the run.
+    for (const line of lastRuntimeLogTail()) log(`  runtime: ${line}`);
+    for (const line of lastWebGpuLoadLog()) {
+      if (/lost|abort|error|fail|sakutto:/iu.test(line)) log(`  load: ${line}`);
+    }
   } finally {
     if (config.debugProfile) resetWebGpuDebugProfile();
   }
@@ -272,47 +314,150 @@ async function main(): Promise<void> {
     log(`DIFF ${row.field}: reference=${row.reference} actual=${row.actual}`);
   }
 
+  // `?forceWebgpuConfigs=1` lists the WebGPU configs even when the page's own probe says
+  // WebGPU is unavailable (the worker may still get a device, or the run shows why not).
+  const forceGpu = new URLSearchParams(location.search).get('forceWebgpuConfigs') === '1';
+  const probe = {
+    webgpu: forceGpu || capabilities.webgpu === 'ready',
+    hardwareConcurrency: capabilities.hardwareConcurrency,
+    fastBatches: capabilities.gpuFastBatches === true,
+    sharedMemory: capabilities.crossOriginIsolated,
+  };
+  const configs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
+  const cpuConfig = configs.find((c) => c.id === 'cpu');
+  if (!cpuConfig) throw new Error('harness has no CPU reference config');
+
+  // The op diagnostics need no model file, so they are wired up first.
+  setupOpDiagnostics();
+
   const store = await OpfsModelFileStore.open();
   const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
   const modelStatus = await manager.status();
   if (modelStatus.state !== 'ready' && modelStatus.state !== 'loaded') {
     statusEl.textContent =
       `Model is not downloaded (state: ${modelStatus.state}). ` +
-      'Download the model from the options page first, then reopen this page.';
+      'Download the model from the options page first, then reopen this page. ' +
+      'The op diagnostics below still work without it.';
     return;
   }
   statusEl.textContent = 'Model ready. Keep other Sakutto pages closed while the harness runs.';
-  runButton.disabled = false;
+
+  const prompt = buildTranslationPrompt({
+    text: HARNESS_SOURCE_TEXT,
+    src: HARNESS_SOURCE_LANGUAGE,
+    tgt: HARNESS_TARGET_LANGUAGE,
+  });
+
+  const buttons = (): HTMLButtonElement[] => [
+    runButton,
+    runIsolatedButton,
+    clearButton,
+    opsButton,
+    ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
+  ];
+  const setBusy = (busy: boolean): void => {
+    for (const button of buttons()) button.disabled = busy;
+  };
+
+  const logVerdict = (results: readonly HarnessRunResult[], config: HarnessConfig): void => {
+    const cpuResult = results.find((r) => r.configId === 'cpu');
+    const result = results.find((r) => r.configId === config.id);
+    if (cpuResult && result && config.id !== 'cpu') {
+      const verdict = verdictForRun(cpuResult, result);
+      log(
+        `verdict ${config.id}: ${verdict.pass ? 'PASS' : `FAIL (${verdict.reasons.join('; ')})`}`,
+      );
+    }
+  };
+
+  // --- isolated mode: one config per page load ---------------------------
+  const readState = (): IsolatedRunState =>
+    parseIsolatedState(sessionStorage.getItem(ISOLATED_STATE_KEY)) ?? emptyIsolatedState();
+  const writeState = (state: IsolatedRunState): void => {
+    sessionStorage.setItem(ISOLATED_STATE_KEY, JSON.stringify(state));
+  };
+  const startIsolated = (requested: readonly string[]): void => {
+    const state = readState();
+    const queue = planIsolatedQueue(
+      configs.map((c) => c.id),
+      requested,
+      state,
+    );
+    writeState({ ...state, queue });
+    location.reload();
+  };
+
+  for (const config of configs) {
+    const row = document.createElement('div');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'small';
+    button.textContent = 'Run alone';
+    button.addEventListener('click', () => {
+      startIsolated([config.id]);
+    });
+    const label = document.createElement('span');
+    label.textContent = ` ${config.id}: ${config.label}`;
+    row.append(button, label);
+    configsEl.append(row);
+  }
+
+  runIsolatedButton.addEventListener('click', () => {
+    startIsolated(configs.map((c) => c.id));
+  });
+  clearButton.addEventListener('click', () => {
+    sessionStorage.removeItem(ISOLATED_STATE_KEY);
+    resultsEl.replaceChildren();
+    logEl.textContent = '';
+    log('saved isolated results cleared');
+  });
+
+  const saved = readState();
+  if (saved.results.length > 0 || saved.queue.length > 0) {
+    logEl.textContent = `${saved.log}${logEl.textContent ?? ''}`;
+    renderResults(configs, saved.results);
+  }
+  const next = saved.queue[0];
+  if (next !== undefined) {
+    const config = configs.find((c) => c.id === next);
+    setBusy(true);
+    const before = logEl.textContent;
+    if (!config) {
+      writeState({ ...saved, queue: saved.queue.slice(1) });
+    } else {
+      statusEl.textContent = `Isolated run: ${config.id} (${saved.queue.length} left in the queue)…`;
+      log(`=== isolated run (fresh page, fresh worker and WebGPU device): ${config.id} ===`);
+      const result = await runConfig(manager, config, prompt, cpuConfig.selection);
+      await manager.unload().catch(() => undefined);
+      const results = [...saved.results.filter((r) => r.configId !== result.configId), result];
+      logVerdict(results, config);
+      const chunk = (logEl.textContent ?? '').slice((before ?? '').length);
+      writeState(recordIsolatedResult(saved, result, chunk));
+    }
+    const remaining = readState().queue.length;
+    if (remaining > 0) {
+      statusEl.textContent = `Isolated run: reloading for the next config (${remaining} left)…`;
+      await new Promise((resolve) => setTimeout(resolve, ISOLATED_RELOAD_DELAY_MS));
+      location.reload();
+      return;
+    }
+    log('isolated run done');
+    statusEl.textContent = 'Isolated run done. Results are kept until "Clear saved results".';
+    renderResults(configs, readState().results);
+  }
+  setBusy(false);
+
+  // --- same-page mode (the original Stage 1/2 harness) --------------------
   runButton.addEventListener('click', () => {
     void (async () => {
-      runButton.disabled = true;
+      setBusy(true);
       try {
-        const probe = {
-          webgpu: capabilities.webgpu === 'ready',
-          hardwareConcurrency: capabilities.hardwareConcurrency,
-          fastBatches: capabilities.gpuFastBatches === true,
-          sharedMemory: capabilities.crossOriginIsolated,
-        };
-        const configs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
-        const cpuConfig = configs.find((c) => c.id === 'cpu');
-        if (!cpuConfig) throw new Error('harness has no CPU reference config');
-        const prompt = buildTranslationPrompt({
-          text: HARNESS_SOURCE_TEXT,
-          src: HARNESS_SOURCE_LANGUAGE,
-          tgt: HARNESS_TARGET_LANGUAGE,
-        });
         log(`source: ${HARNESS_SOURCE_TEXT}`);
         const results: HarnessRunResult[] = [];
         for (const config of configs) {
           const result = await runConfig(manager, config, prompt, cpuConfig.selection);
           results.push(result);
-          const cpuResult = results.find((r) => r.configId === 'cpu');
-          if (cpuResult && config.id !== 'cpu') {
-            const verdict = verdictForRun(cpuResult, result);
-            log(
-              `verdict ${config.id}: ${verdict.pass ? 'PASS' : `FAIL (${verdict.reasons.join('; ')})`}`,
-            );
-          }
+          logVerdict(results, config);
           renderResults(configs, results);
         }
         await manager.unload();
@@ -320,10 +465,196 @@ async function main(): Promise<void> {
       } catch (error) {
         reportFatal(error);
       } finally {
-        runButton.disabled = false;
+        setBusy(false);
       }
     })();
   });
+}
+
+/**
+ * Op-level WebGPU vs CPU comparison (test-backend-ops with the PLaMo 3 op
+ * suite). Each op group runs in its own throwaway wllama worker, so a group
+ * that loses the WebGPU device only takes itself down.
+ */
+function setupOpDiagnostics(): void {
+  opsButton.disabled = false;
+  opsButton.addEventListener('click', () => {
+    void (async () => {
+      opsButton.disabled = true;
+      opsEl.replaceChildren();
+      const profile = opsProfileEl.value === 'no-subgroups' ? 'no-subgroups' : null;
+      const backend = opsBackendEl.value === 'CPU' ? 'CPU' : undefined;
+      log(
+        `=== op diagnostics (profile: ${profile ?? 'default'}, backend: ${backend ?? 'WebGPU'}) ===`,
+      );
+      const outcomes: OpGroupOutcome[] = [];
+      try {
+        for (const group of PLAMO3_OP_GROUPS) {
+          const outcome = await runOpGroup(group, profile, backend);
+          outcomes.push(outcome);
+          renderOpOutcomes(outcomes);
+        }
+        log('op diagnostics done');
+      } catch (error) {
+        reportFatal(error);
+      } finally {
+        opsButton.disabled = false;
+      }
+    })();
+  });
+}
+
+async function runOpGroup(
+  group: (typeof PLAMO3_OP_GROUPS)[number],
+  profile: 'no-subgroups' | null,
+  backend: string | undefined,
+): Promise<OpGroupOutcome> {
+  const lines: string[] = [];
+  const note = (...data: unknown[]): void => {
+    if (lines.length < 20_000) lines.push(data.map((value) => String(value)).join(' '));
+  };
+  const started = performance.now();
+  let error: string | null = null;
+  let retcode: number | null = null;
+  if (profile) setWebGpuDebugProfile(profile);
+  else resetWebGpuDebugProfile();
+  try {
+    const wllama = await createWllama({
+      suppressNativeLog: false,
+      logger: { debug: note, log: note, warn: note, error: note },
+    });
+    if (typeof wllama.testBackendOps !== 'function') {
+      throw new Error('this wllama build has no testBackendOps (patch 0016 missing)');
+    }
+    const outcome = await wllama.testBackendOps(opGroupArgs(group, backend));
+    retcode = outcome.retcode;
+  } catch (caught) {
+    error = describeErrorChain(caught);
+  } finally {
+    if (profile) resetWebGpuDebugProfile();
+  }
+  const rows = parseOpDiagnosticLines(lines);
+  const outcome: OpGroupOutcome = { group, rows, error, retcode };
+  const summary = summarizeOpGroup(outcome);
+  log(
+    `op ${group.id}: ${summary.verdict} ok=${summary.ok} fail=${summary.fail} ` +
+      `unsupported=${summary.unsupported} incomplete=${summary.incomplete} ` +
+      `retcode=${describe(retcode)} ${Math.round(performance.now() - started)}ms` +
+      `${error ? ` error=${error}` : ''}`,
+  );
+  for (const row of rows) {
+    if (row.status !== 'OK') {
+      const w = row.worst;
+      log(
+        `  ${row.status} ${row.op}(${row.vars})` +
+          (w
+            ? ` nmse=${formatNumber(w.nmse)} thr=${formatNumber(w.threshold)} maxabs=${formatNumber(w.maxAbs)} nan=${w.nanGpu}/${w.nanCpu} inf=${w.infGpu}/${w.infCpu}`
+            : ''),
+      );
+    }
+  }
+  const context = lines.filter(isOpDiagnosticContextLine);
+  for (const line of context.slice(0, 12)) log(`  ${line}`);
+  return outcome;
+}
+
+function renderOpOutcomes(outcomes: readonly OpGroupOutcome[]): void {
+  opsEl.replaceChildren();
+  const summaryTable = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const label of [
+    'Op group',
+    'Verdict',
+    'OK',
+    'FAIL',
+    'n/s',
+    'Incomplete',
+    'Worst NMSE',
+    'Max abs',
+  ]) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    head.append(th);
+  }
+  summaryTable.append(head);
+  for (const outcome of outcomes) {
+    const summary = summarizeOpGroup(outcome);
+    let worstNmse = 0;
+    let worstAbs = 0;
+    for (const row of outcome.rows) {
+      if (row.worst) {
+        worstNmse = Number.isNaN(row.worst.nmse) ? worstNmse : Math.max(worstNmse, row.worst.nmse);
+        worstAbs = Number.isNaN(row.worst.maxAbs) ? worstAbs : Math.max(worstAbs, row.worst.maxAbs);
+      }
+    }
+    const row = document.createElement('tr');
+    for (const text of [
+      outcome.group.label,
+      `${summary.verdict}${outcome.error ? ` (${outcome.error})` : ''}`,
+      String(summary.ok),
+      String(summary.fail),
+      String(summary.unsupported),
+      String(summary.incomplete),
+      formatNumber(worstNmse),
+      formatNumber(worstAbs),
+    ]) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      row.append(td);
+    }
+    summaryTable.append(row);
+  }
+  opsEl.append(summaryTable);
+
+  const detail = document.createElement('table');
+  const detailHead = document.createElement('tr');
+  for (const label of [
+    'Case',
+    'Status',
+    'NMSE',
+    'Threshold',
+    'Max abs',
+    'NaN gpu/cpu',
+    'Inf gpu/cpu',
+  ]) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    detailHead.append(th);
+  }
+  detail.append(detailHead);
+  // Every non-OK case, plus the closest-to-threshold OK case of each group, so a phone
+  // screenshot stays readable; the full list is in the log on failure.
+  for (const outcome of outcomes) {
+    const bad = outcome.rows.filter((row) => row.status !== 'OK');
+    const closest = outcome.rows
+      .filter((row) => row.status === 'OK' && row.worst)
+      .reduce<(typeof outcome.rows)[number] | null>((best, row) => {
+        const ratio = (r: typeof row): number =>
+          r.worst && r.worst.threshold > 0 ? r.worst.nmse / r.worst.threshold : 0;
+        return best === null || ratio(row) > ratio(best) ? row : best;
+      }, null);
+    const shown = closest ? [...bad, closest] : bad;
+    for (const caseRow of shown) {
+      const w = caseRow.worst;
+      const tr = document.createElement('tr');
+      if (caseRow.status !== 'OK') tr.className = 'bad';
+      for (const text of [
+        `${caseRow.op}(${caseRow.vars})`,
+        caseRow.status,
+        w ? formatNumber(w.nmse) : 'n/a',
+        w ? formatNumber(w.threshold) : 'n/a',
+        w ? formatNumber(w.maxAbs) : 'n/a',
+        w ? `${w.nanGpu}/${w.nanCpu}` : 'n/a',
+        w ? `${w.infGpu}/${w.infCpu}` : 'n/a',
+      ]) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        tr.append(td);
+      }
+      detail.append(tr);
+    }
+  }
+  opsEl.append(detail);
 }
 
 void main().catch(reportFatal);

@@ -1,0 +1,23 @@
+Debug harness: always link test-backend-ops into the wasm builds.
+
+wllama already exposes testBackendOps() behind -DWLLAMA_TEST_BACKEND=ON.
+Turn it on for both the JSPI and compat builds so the GPU harness page can
+run the PLaMo 3 op suite (patch 0015) on the phone. Nothing in the
+translation path calls it.
+
+--- a/scripts/docker-compose.yml
++++ b/scripts/docker-compose.yml
+@@ -54,10 +54,9 @@
+         fi
+         python3 -c "import zipfile; zf=zipfile.ZipFile('emdawn.zip','r'); zf.extractall('/source/build/emdawn'); zf.close()"
+ 
+-        CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=OFF"
+-        if [ -n "${WLLAMA_TEST_BACKEND}" ]; then
+-          CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=ON";
+-        fi
++        # Sakutto: always link test-backend-ops (with the PLaMo 3 op suite) so the
++        # debug-only GPU harness page can compare WebGPU against the CPU per op.
++        CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=ON"
+ 
+         emcmake cmake .. -DEMSCRIPTEN_SYSTEM_PROCESSOR=wasm32 -DGGML_WEBGPU=ON -DGGML_WEBGPU_JSPI=ON -DEMDAWNWEBGPU_DIR="$${EMDAWNWEBGPU_DIR}" $${CMAKE_EXTRA_FLAGS}
+         emmake make wllama -j$$(nproc)

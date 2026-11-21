@@ -34,6 +34,38 @@ export const HARNESS_SOURCE_LANGUAGE = 'en';
 export const HARNESS_TARGET_LANGUAGE = 'zh-hant';
 export const HARNESS_MAX_TOKENS = 128;
 
+/**
+ * PLaMo 3 Translate 0.8B layer layout (GGUF `plamo3.block_count` 16,
+ * `attention.sliding_window` 2048, `sliding_window_pattern` 8): every layer is
+ * attention + SwiGLU FFN (no Mamba/SSM blocks); layers 7 and 15 use full
+ * attention (RoPE base 1e6 + YaRN), the other 14 use sliding-window attention
+ * (RoPE base 1e4). llama.cpp offloads from the END: `n_gpu_layers` N puts the
+ * output layer plus repeating layers 16-(N-1)..15 on the GPU, so layers-2 is
+ * layer 15 alone (full attention) and layers-3 adds layer 14 (SWA).
+ */
+export const PLAMO3_LAYER_COUNT = 16;
+export const PLAMO3_FULL_ATTENTION_LAYERS: readonly number[] = [7, 15];
+
+export function plamo3SwaLayers(): number[] {
+  return Array.from({ length: PLAMO3_LAYER_COUNT }, (_, i) => i).filter(
+    (i) => !PLAMO3_FULL_ATTENTION_LAYERS.includes(i),
+  );
+}
+
+/** A llama.cpp `-ot` rule that keeps every tensor of the given layers on the CPU. */
+export function layersOnCpuOverride(layers: readonly number[]): string {
+  return `blk\\.(${layers.join('|')})\\.=CPU`;
+}
+
+/** Repeating layers that land on the GPU for a given n_gpu_layers (output layer excluded). */
+export function offloadedRepeatingLayers(
+  nGpuLayers: number,
+  layerCount = PLAMO3_LAYER_COUNT,
+): number[] {
+  const repeating = Math.max(0, Math.min(layerCount, nGpuLayers - 1));
+  return Array.from({ length: repeating }, (_, i) => layerCount - repeating + i);
+}
+
 export interface HarnessConfig {
   id: string;
   label: string;
@@ -100,10 +132,43 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
       selection: { ...gpu, nGpuLayers: 1 },
       debugProfile: null,
     },
+    ...[2, 3, 4].map((layers): HarnessConfig => ({
+      id: `gpu-layers-${layers}`,
+      label: `WebGPU (${layers} GPU layers: output + layer ${offloadedRepeatingLayers(layers).join(',')})`,
+      selection: { ...gpu, nGpuLayers: layers },
+      debugProfile: null,
+    })),
     {
       id: 'gpu-layers-8',
       label: 'WebGPU (8 GPU layers)',
       selection: { ...gpu, nGpuLayers: 8 },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-no-flash-attn',
+      label: 'WebGPU (flash attention off)',
+      selection: { ...gpu, debugLoad: { flashAttn: false } },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-kv-on-cpu',
+      label: 'WebGPU (weights on GPU, KV cache + attention on CPU)',
+      selection: { ...gpu, debugLoad: { noKvOffload: true } },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-swa-layers-only',
+      label: `WebGPU (only SWA layers' weights on GPU; layers ${PLAMO3_FULL_ATTENTION_LAYERS.join(',')} on CPU)`,
+      selection: {
+        ...gpu,
+        debugLoad: { tensorOverrides: layersOnCpuOverride(PLAMO3_FULL_ATTENTION_LAYERS) },
+      },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-full-attn-layers-only',
+      label: `WebGPU (only full-attention layers ${PLAMO3_FULL_ATTENTION_LAYERS.join(',')} weights on GPU)`,
+      selection: { ...gpu, debugLoad: { tensorOverrides: layersOnCpuOverride(plamo3SwaLayers()) } },
       debugProfile: null,
     },
   );
@@ -253,4 +318,105 @@ export function compareAdapterToReference(
     // Attempt entries carry outcome text; the reference is the attempt name.
     matches: field === 'adapterAttempts' ? String(actual).includes(String(ref)) : ref === actual,
   }));
+}
+
+/**
+ * "Run isolated": one config per page load. The page stores the queue and the
+ * results in sessionStorage, runs the head of the queue in a fresh page (new
+ * JS realm, new wllama worker, new WebGPU device), saves the result and
+ * reloads, so nothing a previous config did to the device or the module can
+ * leak into the next one.
+ */
+export const ISOLATED_STATE_KEY = 'sakuttoGpuHarnessIsolated';
+/** Pause before the next isolated config so a lost device can be torn down. */
+export const ISOLATED_RELOAD_DELAY_MS = 1500;
+const ISOLATED_LOG_LIMIT = 200_000;
+
+export interface IsolatedRunState {
+  version: 1;
+  queue: string[];
+  results: HarnessRunResult[];
+  log: string;
+}
+
+export function emptyIsolatedState(): IsolatedRunState {
+  return { version: 1, queue: [], results: [], log: '' };
+}
+
+/**
+ * Queue for an isolated run of `requested` config ids: unknown ids are dropped,
+ * duplicates removed, and the CPU reference is put first unless a CPU result
+ * is already stored (every verdict needs it).
+ */
+export function planIsolatedQueue(
+  configIds: readonly string[],
+  requested: readonly string[],
+  state: IsolatedRunState,
+): string[] {
+  const known = new Set(configIds);
+  const queue: string[] = [];
+  for (const id of requested) {
+    if (known.has(id) && !queue.includes(id)) queue.push(id);
+  }
+  const haveCpu = state.results.some((r) => r.configId === 'cpu' && r.ok);
+  const withoutCpu = queue.filter((id) => id !== 'cpu');
+  return haveCpu && !requested.includes('cpu') ? withoutCpu : ['cpu', ...withoutCpu];
+}
+
+export function parseIsolatedState(raw: string | null): IsolatedRunState | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<IsolatedRunState> | null;
+    if (
+      !value ||
+      value.version !== 1 ||
+      !Array.isArray(value.queue) ||
+      !Array.isArray(value.results) ||
+      typeof value.log !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      version: 1,
+      queue: value.queue.filter((id): id is string => typeof id === 'string'),
+      results: value.results,
+      log: value.log,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Store a finished config: drop it from the queue, replace any older result for it. */
+export function recordIsolatedResult(
+  state: IsolatedRunState,
+  result: HarnessRunResult,
+  logChunk: string,
+): IsolatedRunState {
+  const log = `${state.log}${logChunk}`;
+  return {
+    version: 1,
+    queue: state.queue.filter((id, index) => !(index === 0 && id === result.configId)),
+    results: [...state.results.filter((r) => r.configId !== result.configId), result],
+    log: log.length > ISOLATED_LOG_LIMIT ? log.slice(log.length - ISOLATED_LOG_LIMIT) : log,
+  };
+}
+
+/** Error text including the cause chain (the wasm abort message lives in the cause). */
+export function describeErrorChain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null; depth += 1) {
+    if (current instanceof Error) {
+      const detail = (current as { detail?: unknown }).detail;
+      parts.push(
+        `${current.name}: ${current.message}${typeof detail === 'string' && detail ? ` [${detail}]` : ''}`,
+      );
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(' <- ');
 }

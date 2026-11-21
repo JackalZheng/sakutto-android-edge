@@ -86,11 +86,24 @@ export function isRuntimeDead(error: unknown): boolean {
 export type GpuEvidence = 'engaged' | 'missing' | 'unknown';
 
 let lastWebGpuLines: string[] = [];
+let runtimeTailLines: string[] = [];
 
 /** llama.cpp WebGPU lines from the most recent model load. Used by the settings diagnostic. */
 export function lastWebGpuLoadLog(): readonly string[] {
   return lastWebGpuLines;
 }
+
+/**
+ * Warnings, errors and WebGPU lines logged after the most recent load finished (during
+ * completions): where ggml-webgpu reports `Device lost! Reason: …` or a device error before
+ * the module aborts. Read by the debug harness; capped so a long session cannot grow it.
+ */
+export function lastRuntimeLogTail(): readonly string[] {
+  return runtimeTailLines;
+}
+
+const RUNTIME_TAIL_LINES = 200;
+const RUNTIME_TAIL_PATTERN = /ggml_webgpu|webgpu|device|lost|abort|error|warn|fail/iu;
 
 /**
  * Reads llama.cpp's own load log to tell whether the model really landed on the GPU.
@@ -143,8 +156,15 @@ function loadLog(): { lines: string[]; logger: Required<WllamaConfig>['logger'];
   const lines: string[] = [];
   let open = true;
   const note = (...data: unknown[]): void => {
-    if (!open || lines.length >= LOAD_LOG_LINES) return;
-    lines.push(data.map((value) => String(value)).join(' '));
+    const line = data.map((value) => String(value)).join(' ');
+    if (!open) {
+      if (runtimeTailLines.length < RUNTIME_TAIL_LINES && RUNTIME_TAIL_PATTERN.test(line)) {
+        runtimeTailLines.push(line);
+      }
+      return;
+    }
+    if (lines.length >= LOAD_LOG_LINES) return;
+    lines.push(line);
   };
   return {
     lines,
@@ -160,6 +180,8 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
   const wllama = await createWllama({ suppressNativeLog: false, logger: log.logger });
 
   lastWebGpuLines = [];
+  runtimeTailLines = [];
+  const debugLoad = selection.debugLoad;
   try {
     await wllama.loadModel([file], {
       n_ctx: selection.nCtx,
@@ -197,6 +219,11 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
       ...(selection.nParallel > 1 ? { cont_batching: true } : {}),
       ctx_shift: false,
       log_level: LOG_LEVEL_INFO,
+      ...(debugLoad?.flashAttn === undefined ? {} : { flash_attn: debugLoad.flashAttn }),
+      ...(debugLoad?.noKvOffload === true ? { no_kv_offload: true } : {}),
+      ...(debugLoad?.tensorOverrides
+        ? { kv_overrides: { 'sakutto.tensor_buft_overrides': debugLoad.tensorOverrides } }
+        : {}),
     });
   } catch (error) {
     log.stop();

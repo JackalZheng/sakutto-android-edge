@@ -1,0 +1,224 @@
+/**
+ * Op-level WebGPU vs CPU comparison for the debug GPU harness.
+ *
+ * The patched wllama links llama.cpp's test-backend-ops (patch 0016) with a
+ * PLaMo 3 Translate 0.8B op suite (patch 0015, flag `--sakutto-plamo3`): the
+ * Q4_K/Q6_K matmul shapes, F16 attention matmuls, norms, RoPE, softmax,
+ * flash attention etc. the model actually runs, each evaluated on WebGPU and
+ * on the CPU reference. Every compared node prints a `SAKUTTO_OPSTAT` line and
+ * every case a `SAKUTTO_OPRESULT` line; this module turns those lines into
+ * rows. Thresholds are test-backend-ops' own per-op NMSE limits, and the
+ * status also covers its NaN / Inf / sentinel (out-of-bounds write) checks.
+ *
+ * Each group runs in its own throwaway worker (a fresh WebGPU device), so an
+ * op that loses the device only takes its own group down.
+ */
+
+export interface OpGroup {
+  id: string;
+  label: string;
+  /** test-backend-ops `-o` filter (op name of the case's output node). */
+  op: string;
+  /** Optional test-backend-ops `-p` regex on the case parameters. */
+  params?: string;
+}
+
+export const PLAMO3_OP_GROUPS: readonly OpGroup[] = [
+  { id: 'mul_mat-q6_k', label: 'MUL_MAT Q6_K weights', op: 'MUL_MAT', params: 'type_a=q6_K' },
+  { id: 'mul_mat-q4_k', label: 'MUL_MAT Q4_K weights', op: 'MUL_MAT', params: 'type_a=q4_K' },
+  {
+    id: 'mul_mat-f16',
+    label: 'MUL_MAT F16 (attention KQ / KQV)',
+    op: 'MUL_MAT',
+    params: 'type_a=f16',
+  },
+  { id: 'flash_attn', label: 'FLASH_ATTN_EXT', op: 'FLASH_ATTN_EXT' },
+  { id: 'soft_max', label: 'SOFT_MAX (masked, scaled)', op: 'SOFT_MAX' },
+  { id: 'rope', label: 'ROPE (NEOX, YaRN / plain)', op: 'ROPE' },
+  { id: 'rms_norm', label: 'RMS_NORM', op: 'RMS_NORM' },
+  { id: 'add', label: 'ADD (incl. fused RMS_NORM+MUL+ADD)', op: 'ADD' },
+  { id: 'mul', label: 'MUL (norm weight broadcast)', op: 'MUL' },
+  { id: 'swiglu', label: 'SWIGLU (GLU)', op: 'SWIGLU' },
+  { id: 'get_rows', label: 'GET_ROWS', op: 'GET_ROWS' },
+  { id: 'set_rows', label: 'SET_ROWS (KV cache write)', op: 'SET_ROWS' },
+  { id: 'cpy', label: 'CPY F32->F16', op: 'CPY' },
+  { id: 'cont', label: 'CONT (permuted)', op: 'CONT' },
+  { id: 'scale', label: 'SCALE', op: 'SCALE' },
+];
+
+/**
+ * `backend` limits the run to one ggml device by name. Unset tests every non-CPU device
+ * (only WebGPU in this build); 'CPU' compares the optimized CPU kernels with the CPU
+ * reference, a self-check of the suite that works without a usable GPU.
+ */
+export function opGroupArgs(group: OpGroup, backend?: string): string[] {
+  const args = ['test', '--sakutto-plamo3', '-o', group.op];
+  if (group.params) args.push('-p', group.params);
+  if (backend) args.push('-b', backend);
+  return args;
+}
+
+/**
+ * test-backend-ops lines worth keeping in the harness log: which devices it found and
+ * skipped, and why a device could not be used.
+ */
+export function isOpDiagnosticContextLine(line: string): boolean {
+  return /Backend \d+\/\d+|Skipping|Device lost|device ready|lacks shader-f16|no adapter|giving up|error:|abort/iu.test(
+    line,
+  );
+}
+
+export type OpCaseStatus = 'OK' | 'FAIL' | 'NOT_SUPPORTED' | 'INCOMPLETE';
+
+export interface OpNodeStat {
+  node: string;
+  n: number;
+  nmse: number;
+  threshold: number;
+  maxAbs: number;
+  nanGpu: number;
+  nanCpu: number;
+  infGpu: number;
+  infCpu: number;
+}
+
+export interface OpCaseRow {
+  op: string;
+  vars: string;
+  status: OpCaseStatus;
+  /** Worst compared node of the case (largest NMSE relative to its threshold). */
+  worst: OpNodeStat | null;
+  nodes: OpNodeStat[];
+}
+
+const STAT_TAG = 'SAKUTTO_OPSTAT\t';
+const RESULT_TAG = 'SAKUTTO_OPRESULT\t';
+
+function field(parts: readonly string[], name: string): number {
+  const prefix = `${name}=`;
+  const raw = parts.find((part) => part.startsWith(prefix));
+  if (raw === undefined) return Number.NaN;
+  const value = raw.slice(prefix.length).trim().toLowerCase();
+  if (value === 'inf' || value === '+inf') return Number.POSITIVE_INFINITY;
+  if (value === '-inf') return Number.NEGATIVE_INFINITY;
+  return Number(value);
+}
+
+function severity(stat: OpNodeStat): number {
+  if (stat.nanGpu + stat.infGpu > stat.nanCpu + stat.infCpu) return Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(stat.nmse)) return Number.POSITIVE_INFINITY;
+  return stat.threshold > 0 ? stat.nmse / stat.threshold : stat.nmse;
+}
+
+/**
+ * Parse test-backend-ops output lines (in order). Stat lines belong to the next
+ * result line; stats left without a result (the device was lost or the module
+ * aborted mid-case) become an INCOMPLETE row.
+ */
+export function parseOpDiagnosticLines(lines: readonly string[]): OpCaseRow[] {
+  const rows: OpCaseRow[] = [];
+  let pending: { op: string; vars: string; nodes: OpNodeStat[] } | null = null;
+
+  const flushIncomplete = (): void => {
+    if (!pending) return;
+    rows.push(finish(pending.op, pending.vars, 'INCOMPLETE', pending.nodes));
+    pending = null;
+  };
+
+  for (const line of lines) {
+    const statAt = line.indexOf(STAT_TAG);
+    if (statAt >= 0) {
+      const parts = line.slice(statAt + STAT_TAG.length).split('\t');
+      const [op = '', node = '', vars = ''] = parts;
+      const stat: OpNodeStat = {
+        node,
+        n: field(parts, 'n'),
+        nmse: field(parts, 'nmse'),
+        threshold: field(parts, 'thr'),
+        maxAbs: field(parts, 'maxabs'),
+        nanGpu: field(parts, 'nan_gpu'),
+        nanCpu: field(parts, 'nan_cpu'),
+        infGpu: field(parts, 'inf_gpu'),
+        infCpu: field(parts, 'inf_cpu'),
+      };
+      if (pending && (pending.op !== op || pending.vars !== vars)) flushIncomplete();
+      pending ??= { op, vars, nodes: [] };
+      pending.nodes.push(stat);
+      continue;
+    }
+    const resultAt = line.indexOf(RESULT_TAG);
+    if (resultAt >= 0) {
+      const [status = '', op = '', vars = ''] = line
+        .slice(resultAt + RESULT_TAG.length)
+        .split('\t')
+        .map((part) => part.trim());
+      const nodes = pending && pending.op === op && pending.vars === vars ? pending.nodes : [];
+      if (pending && nodes.length === 0) flushIncomplete();
+      pending = null;
+      rows.push(finish(op, vars, toStatus(status), nodes));
+    }
+  }
+  flushIncomplete();
+  return rows;
+}
+
+function toStatus(raw: string): OpCaseStatus {
+  return raw === 'OK' || raw === 'FAIL' || raw === 'NOT_SUPPORTED' ? raw : 'INCOMPLETE';
+}
+
+function finish(op: string, vars: string, status: OpCaseStatus, nodes: OpNodeStat[]): OpCaseRow {
+  let worst: OpNodeStat | null = null;
+  for (const node of nodes) {
+    if (!worst || severity(node) > severity(worst)) worst = node;
+  }
+  return { op, vars, status, worst, nodes };
+}
+
+export interface OpGroupOutcome {
+  group: OpGroup;
+  rows: OpCaseRow[];
+  /** testBackendOps rejected (device lost, abort) or the module is missing. */
+  error: string | null;
+  retcode: number | null;
+}
+
+export interface OpGroupSummary {
+  ok: number;
+  fail: number;
+  unsupported: number;
+  incomplete: number;
+  verdict: 'PASS' | 'FAIL' | 'CRASH' | 'NO-DATA';
+}
+
+export function summarizeOpGroup(outcome: OpGroupOutcome): OpGroupSummary {
+  const count = (status: OpCaseStatus): number =>
+    outcome.rows.filter((row) => row.status === status).length;
+  const ok = count('OK');
+  const fail = count('FAIL');
+  const unsupported = count('NOT_SUPPORTED');
+  const incomplete = count('INCOMPLETE');
+  let verdict: OpGroupSummary['verdict'];
+  if (fail > 0) verdict = 'FAIL';
+  else if (outcome.error !== null || incomplete > 0) verdict = 'CRASH';
+  else if (ok === 0) verdict = 'NO-DATA';
+  else verdict = 'PASS';
+  return { ok, fail, unsupported, incomplete, verdict };
+}
+
+export function formatNumber(value: number): string {
+  if (Number.isNaN(value)) return 'n/a';
+  if (!Number.isFinite(value)) return value > 0 ? 'inf' : '-inf';
+  if (value === 0) return '0';
+  return Math.abs(value) >= 1e-3 && Math.abs(value) < 1e4
+    ? value.toPrecision(4)
+    : value.toExponential(2);
+}
+
+export function formatOpRow(row: OpCaseRow): string {
+  const w = row.worst;
+  const stats = w
+    ? ` nmse=${formatNumber(w.nmse)} (thr ${formatNumber(w.threshold)}) maxabs=${formatNumber(w.maxAbs)}` +
+      ` nan gpu/cpu=${w.nanGpu}/${w.nanCpu} inf gpu/cpu=${w.infGpu}/${w.infCpu}`
+    : '';
+  return `${row.status.padEnd(13)} ${row.op}(${row.vars})${stats}`;
+}

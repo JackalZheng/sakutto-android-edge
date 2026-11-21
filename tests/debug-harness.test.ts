@@ -3,11 +3,21 @@ import {
   buildHarnessConfigs,
   compareAdapterToReference,
   compareRuns,
+  describeErrorChain,
+  emptyIsolatedState,
   firstStreamedToken,
+  layersOnCpuOverride,
+  offloadedRepeatingLayers,
+  parseIsolatedState,
+  planIsolatedQueue,
+  plamo3SwaLayers,
+  PLAMO3_FULL_ATTENTION_LAYERS,
   POCO_F5_PRO_REFERENCE,
+  recordIsolatedResult,
   verdictForRun,
   type HarnessRunResult,
 } from '../src/engine/debug-harness';
+import { EngineError } from '../src/engine/errors';
 import type { BackendProbe } from '../src/engine/in-browser/backend';
 import { EMPTY_GPU_DIAGNOSTIC, type GpuDiagnostic } from '../src/shared/gpu-diagnostic';
 
@@ -53,7 +63,14 @@ describe('buildHarnessConfigs', () => {
       'gpu-no-f16',
       'gpu-no-subgroups',
       'gpu-layers-1',
+      'gpu-layers-2',
+      'gpu-layers-3',
+      'gpu-layers-4',
       'gpu-layers-8',
+      'gpu-no-flash-attn',
+      'gpu-kv-on-cpu',
+      'gpu-swa-layers-only',
+      'gpu-full-attn-layers-only',
     ]);
   });
 
@@ -242,5 +259,132 @@ describe('compareRuns', () => {
     const comparison = compareRuns(cpu, gpu);
     expect(comparison.cpuLooksBroken).toBe(false);
     expect(comparison.gpuLooksBroken).toBe(true);
+  });
+});
+
+describe('PLaMo 3 layer layout helpers', () => {
+  it('lists layers 7 and 15 as full attention and the other 14 as SWA', () => {
+    expect(PLAMO3_FULL_ATTENTION_LAYERS).toEqual([7, 15]);
+    const swa = plamo3SwaLayers();
+    expect(swa).toHaveLength(14);
+    expect(swa).not.toContain(7);
+    expect(swa).not.toContain(15);
+  });
+
+  it('offloads repeating layers from the end, after the output layer', () => {
+    expect(offloadedRepeatingLayers(1)).toEqual([]);
+    expect(offloadedRepeatingLayers(2)).toEqual([15]);
+    expect(offloadedRepeatingLayers(4)).toEqual([13, 14, 15]);
+    expect(offloadedRepeatingLayers(17)).toHaveLength(16);
+    expect(offloadedRepeatingLayers(99)).toHaveLength(16);
+  });
+
+  it('builds an -ot rule that matches only the listed layers', () => {
+    const rule = layersOnCpuOverride([7, 15]);
+    expect(rule).toBe('blk\\.(7|15)\\.=CPU');
+    const pattern = new RegExp(rule.slice(0, rule.lastIndexOf('=')));
+    expect(pattern.test('blk.7.attn_qkv.weight')).toBe(true);
+    expect(pattern.test('blk.15.ffn_up.weight')).toBe(true);
+    expect(pattern.test('blk.1.attn_qkv.weight')).toBe(false);
+    expect(pattern.test('blk.17.attn_qkv.weight')).toBe(false);
+  });
+});
+
+describe('debug load configs', () => {
+  const configs = buildHarnessConfigs(GPU_PROBE, false);
+  const byId = (id: string) => configs.find((c) => c.id === id);
+
+  it('offloads 2, 3 and 4 layers for the extra partial-offload configs', () => {
+    expect(byId('gpu-layers-2')?.selection.nGpuLayers).toBe(2);
+    expect(byId('gpu-layers-3')?.selection.nGpuLayers).toBe(3);
+    expect(byId('gpu-layers-4')?.selection.nGpuLayers).toBe(4);
+    expect(byId('gpu-layers-2')?.label).toContain('layer 15');
+  });
+
+  it('turns flash attention off only for the flash-attention config', () => {
+    for (const config of configs) {
+      expect(config.selection.debugLoad?.flashAttn).toBe(
+        config.id === 'gpu-no-flash-attn' ? false : undefined,
+      );
+    }
+  });
+
+  it('keeps the KV cache on the CPU for the kv-on-cpu config', () => {
+    expect(byId('gpu-kv-on-cpu')?.selection.debugLoad?.noKvOffload).toBe(true);
+    expect(byId('gpu-default')?.selection.debugLoad).toBeUndefined();
+  });
+
+  it('moves the full-attention layers to the CPU for the SWA-only config and vice versa', () => {
+    expect(byId('gpu-swa-layers-only')?.selection.debugLoad?.tensorOverrides).toBe(
+      layersOnCpuOverride([7, 15]),
+    );
+    expect(byId('gpu-full-attn-layers-only')?.selection.debugLoad?.tensorOverrides).toBe(
+      layersOnCpuOverride(plamo3SwaLayers()),
+    );
+  });
+
+  it('never sets debug load options on the CPU reference', () => {
+    expect(byId('cpu')?.selection.debugLoad).toBeUndefined();
+  });
+});
+
+describe('isolated run state', () => {
+  const ids = ['cpu', 'gpu-default', 'gpu-layers-2'];
+
+  it('puts the CPU reference first when none is stored', () => {
+    expect(planIsolatedQueue(ids, ['gpu-layers-2'], emptyIsolatedState())).toEqual([
+      'cpu',
+      'gpu-layers-2',
+    ]);
+  });
+
+  it('reuses a stored CPU result for a single config', () => {
+    const state = recordIsolatedResult(
+      { ...emptyIsolatedState(), queue: ['cpu'] },
+      run({ configId: 'cpu' }),
+      'log\n',
+    );
+    expect(planIsolatedQueue(ids, ['gpu-layers-2'], state)).toEqual(['gpu-layers-2']);
+    expect(planIsolatedQueue(ids, ['cpu', 'gpu-default'], state)).toEqual(['cpu', 'gpu-default']);
+  });
+
+  it('drops unknown and duplicate ids', () => {
+    expect(
+      planIsolatedQueue(ids, ['nope', 'gpu-default', 'gpu-default'], emptyIsolatedState()),
+    ).toEqual(['cpu', 'gpu-default']);
+  });
+
+  it('records a result, pops the queue head and replaces older results', () => {
+    let state = { ...emptyIsolatedState(), queue: ['gpu-default', 'gpu-layers-2'] };
+    state = recordIsolatedResult(state, run({ configId: 'gpu-default', output: 'a' }), 'one\n');
+    expect(state.queue).toEqual(['gpu-layers-2']);
+    state = { ...state, queue: ['gpu-default'] };
+    state = recordIsolatedResult(state, run({ configId: 'gpu-default', output: 'b' }), 'two\n');
+    expect(state.results.filter((r) => r.configId === 'gpu-default')).toHaveLength(1);
+    expect(state.results[0]?.output).toBe('b');
+    expect(state.log).toBe('one\ntwo\n');
+  });
+
+  it('round-trips through JSON and rejects malformed state', () => {
+    const state = recordIsolatedResult(emptyIsolatedState(), run({ configId: 'cpu' }), 'x');
+    expect(parseIsolatedState(JSON.stringify(state))).toEqual(state);
+    expect(parseIsolatedState(null)).toBeNull();
+    expect(parseIsolatedState('{')).toBeNull();
+    expect(parseIsolatedState('{"version":2,"queue":[],"results":[],"log":""}')).toBeNull();
+  });
+});
+
+describe('describeErrorChain', () => {
+  it('includes the cause and the detail', () => {
+    const cause = new Error('abort(ggml_webgpu: Device lost! Reason: 2)');
+    cause.name = 'RuntimeError';
+    const error = new EngineError('gpu-lost', 'The GPU stopped working.', { cause });
+    const text = describeErrorChain(error);
+    expect(text).toContain('EngineError: The GPU stopped working.');
+    expect(text).toContain('RuntimeError: abort(ggml_webgpu: Device lost! Reason: 2)');
+  });
+
+  it('handles plain strings', () => {
+    expect(describeErrorChain('worker gone')).toBe('worker gone');
   });
 });
