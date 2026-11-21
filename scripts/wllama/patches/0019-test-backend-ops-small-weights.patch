@@ -1,0 +1,53 @@
+test-backend-ops (Sakutto PLaMo 3 suite, patch 0015): MUL_MAT cases with
+weights at a real checkpoint's scale (|w| <= 0.02), so the Q4_K/Q6_K f16
+block scales are subnormal. Mat-vec (n = 1, 2) and tiled (n = 41) for the
+Q6_K and Q4_K shapes PLaMo 3 0.8B uses. Catches f16 FTZ in the dequant
+(patch 0017 part 2), which uniform [-1, 1] weights never hit.
+
+--- a/llama.cpp/tests/test-backend-ops.cpp
++++ b/llama.cpp/tests/test-backend-ops.cpp
+@@ -14619,6 +14619,31 @@
+ // 12288-wide SwiGLU up projection, vocab 107520; weights Q4_K / Q6_K; KV cache
+ // F16; NEOX RoPE with YaRN on full-attention layers, base 10000 on SWA layers).
+ // Token counts cover decode (1), small batches and a typical paragraph prompt.
++// Sakutto: weights at the scale of a real checkpoint. With |w| <= 0.02 the f16 super-block
++// scales of Q4_K/Q6_K fall in the f16 subnormal range (Q6_K d ~ 5e-6, Q4_K d ~ 4e-5; the
++// smallest normal f16 is 6.1e-5), as they do in PLaMo 3 / Qwen3. A shader that routes the
++// scale through f16 arithmetic loses it on GPUs that flush f16 subnormals (FTZ).
++struct test_mul_mat_small_weights : public test_mul_mat {
++    const float w_max;
++
++    test_mul_mat_small_weights(ggml_type type_a, int64_t m, int64_t n, int64_t k, float w_max)
++        : test_mul_mat(type_a, GGML_TYPE_F32, m, n, k, {1, 1}, {1, 1}), w_max(w_max) {}
++
++    std::string vars() override {
++        return test_mul_mat::vars() + ",w_max=" + std::to_string(w_max);
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            if (ggml_is_quantized(t->type)) {
++                init_tensor_uniform(t, -w_max, w_max);
++            } else {
++                init_tensor_uniform(t);
++            }
++        }
++    }
++};
++
+ static std::vector<std::unique_ptr<test_case>> make_test_cases_sakutto_plamo3() {
+     std::vector<std::unique_ptr<test_case>> test_cases;
+     const int64_t n_embd = 1536, head_dim = 128, n_head = 16, n_ff = 6144;
+@@ -14638,6 +14663,12 @@
+             test_cases.emplace_back(new test_mul_mat(w.type, GGML_TYPE_F32, w.m, n, w.k, {1, 1}, {1, 1}));
+         }
+     }
++    // real-checkpoint weight scale (subnormal f16 block scales): mat-vec (n <= 4) and tiled (n = 41)
++    for (int64_t n : { (int64_t) 1, (int64_t) 2, (int64_t) 41 }) {
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q6_K, 2304,   n, n_embd, 0.02f));
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q6_K, n_embd, n, n_ff,   0.02f));
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q4_K, 2304,   n, n_embd, 0.02f));
++    }
+     // output projection (Q6_K, 107520 rows; > maxStorageBufferBindingSize on Adreno), decode only
+     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 107520, 1, n_embd, {1, 1}, {1, 1}));
+ 

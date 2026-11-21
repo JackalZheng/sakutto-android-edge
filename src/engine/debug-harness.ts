@@ -5,7 +5,7 @@ import {
   type BackendSelection,
 } from './in-browser/backend';
 import { looksLikeBrokenTranslation } from './text/garbage';
-import type { GpuDiagnostic } from '@/shared/gpu-diagnostic';
+import type { GpuDiagnostic, WebGpuDebugProfile } from '@/shared/gpu-diagnostic';
 
 /**
  * Stage 1 debug harness for the Android WebGPU garbage-output investigation.
@@ -77,7 +77,7 @@ export interface HarnessConfig {
    * 'no-subgroups' (patch 0013): the patched ggml requests a device without
    * the Subgroups feature, so the workgroup-reduction shaders run.
    */
-  debugProfile: 'no-f16' | 'no-subgroups' | null;
+  debugProfile: Exclude<WebGpuDebugProfile, 'off'> | null;
   /**
    * When the WebGPU load refuses the device (EngineError 'gpu-unavailable'),
    * rerun this config on the CPU selection and report the fallback outcome
@@ -105,7 +105,12 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
 
   const gpu = limit(selectionForTier('g', probe));
   configs.push(
-    { id: 'gpu-default', label: 'WebGPU (default)', selection: gpu, debugProfile: null },
+    {
+      id: 'gpu-default',
+      label: 'WebGPU (default; Adreno: subgroups off, mat-vec routed to tiled matmul)',
+      selection: gpu,
+      debugProfile: null,
+    },
     {
       id: 'gpu-1-slot',
       label: 'WebGPU (1 slot, n_ctx 1024)',
@@ -130,6 +135,26 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
       label: 'WebGPU (no subgroups profile)',
       selection: gpu,
       debugProfile: 'no-subgroups',
+    },
+    // Patch 0017 profiles. On Adreno the default is subgroups off + mat-vec routed to the
+    // tiled matmul; these turn each half back on (no effect on other GPUs).
+    {
+      id: 'gpu-adreno-upstream',
+      label: 'WebGPU (Adreno: upstream subgroups + mat-vec; expected to garble)',
+      selection: gpu,
+      debugProfile: 'adreno-subgroups',
+    },
+    {
+      id: 'gpu-adreno-matvec',
+      label: 'WebGPU (Adreno: subgroups off, mat-vec on)',
+      selection: gpu,
+      debugProfile: 'adreno-matvec',
+    },
+    {
+      id: 'gpu-adreno-sg-tiled',
+      label: 'WebGPU (Adreno: subgroups on, mat-vec routed to tiled matmul)',
+      selection: gpu,
+      debugProfile: 'adreno-sg-tiled',
     },
     {
       id: 'gpu-layers-1',

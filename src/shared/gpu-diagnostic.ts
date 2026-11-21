@@ -1,7 +1,27 @@
 import { isRecord } from './object';
 
+/**
+ * ggml-webgpu debug profiles (wllama patches 0007, 0008, 0013, 0017). The Adreno ones only
+ * change anything on a Qualcomm adapter, where patch 0017 turns subgroups off and routes
+ * mat-vec to the tiled matmul by default:
+ * - 'adreno-subgroups': upstream behaviour (subgroups and mat-vec on), reproduces the bug;
+ * - 'adreno-matvec': subgroups off, mat-vec on (workgroup reduction);
+ * - 'adreno-sg-tiled': subgroups on, mat-vec routed to the tiled matmul.
+ * 'no-matvec' routes mat-vec to the tiled matmul and 'as-adreno' applies the Adreno
+ * defaults on any adapter.
+ */
 export type WebGpuDebugProfile =
-  'off' | 'amd-rdna3' | 'intel-arc' | 'no-f16' | 'reject-max-limits' | 'no-subgroups';
+  | 'off'
+  | 'amd-rdna3'
+  | 'intel-arc'
+  | 'no-f16'
+  | 'reject-max-limits'
+  | 'no-subgroups'
+  | 'adreno-subgroups'
+  | 'adreno-matvec'
+  | 'adreno-sg-tiled'
+  | 'no-matvec'
+  | 'as-adreno';
 
 export type CorrectnessProbeStatus = 'ok' | 'failed' | 'subgroups-disabled';
 
@@ -16,6 +36,11 @@ const DEBUG_PROFILES: ReadonlySet<string> = new Set<WebGpuDebugProfile>([
   'no-f16',
   'reject-max-limits',
   'no-subgroups',
+  'adreno-subgroups',
+  'adreno-matvec',
+  'adreno-sg-tiled',
+  'no-matvec',
+  'as-adreno',
 ]);
 
 const REJECT_MAX_NOTE = 'debug: reject adapter-max requestDevice';

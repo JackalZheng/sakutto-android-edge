@@ -1,4 +1,4 @@
-import { abortError, EngineError, isAbortError } from '../errors';
+import { abortError, EngineError, GARBLED_OUTPUT_DETAIL, isAbortError } from '../errors';
 import { gpuFailureExcerpt } from '@/shared/gpu-diagnostic';
 import { TRANSLATION_STOP_TOKENS } from '../prompt/pfml3';
 import { createWllama } from '../wllama';
@@ -80,6 +80,27 @@ export function forwardCompletionToken(
  * worker posts back. A failure the model itself reports is a typed WllamaError instead, and
  * leaves the runtime usable.
  */
+/**
+ * Failures that come from garbled output rather than from the GPU: tokens that decode to
+ * invalid UTF-8 made the worker's JSON step throw ("invalid UTF-8 byte", wllama patch 0018
+ * now replaces such bytes) or left it with a broken result buffer ("Invalid typed array
+ * length"). Reads the cause chain, where the worker's message usually is.
+ */
+export function isGarbledOutputFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    const text =
+      typeof current === 'string'
+        ? current
+        : current instanceof Error
+          ? `${current.name}: ${current.message}`
+          : '';
+    if (/invalid UTF-8|Invalid typed array length/iu.test(text)) return true;
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return false;
+}
+
 export function isRuntimeDead(error: unknown): boolean {
   if (typeof error === 'string') return true;
   return error instanceof Error && error.name === 'RuntimeError';
@@ -286,6 +307,15 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
           if (request.signal.aborted) throw abortError();
         } catch (error) {
           if (isAbortError(error) || request.signal.aborted) throw abortError();
+          if (selection.backend === 'webgpu' && isGarbledOutputFailure(error)) {
+            const garbled = new EngineError('gpu-lost', 'The GPU returned garbled output.', {
+              cause: error,
+              detail: GARBLED_OUTPUT_DETAIL,
+            });
+            // A worker that died on it takes the other slots' requests with it.
+            if (isRuntimeDead(error)) reportLoss(garbled);
+            throw garbled;
+          }
           if (selection.backend === 'webgpu' && isRuntimeDead(error)) {
             reportLoss(error);
             throw new EngineError('gpu-lost', 'The GPU stopped working.', { cause: error });

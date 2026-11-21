@@ -177,10 +177,70 @@ function finish(op: string, vars: string, status: OpCaseStatus, nodes: OpNodeSta
 export interface OpGroupOutcome {
   group: OpGroup;
   rows: OpCaseRow[];
-  /** testBackendOps rejected (device lost, abort) or the module is missing. */
+  /** testBackendOps rejected (device lost, abort), timed out, or the module is missing. */
   error: string | null;
   retcode: number | null;
+  /** ggml-webgpu debug profile the group ran under; absent for the default. */
+  profile?: string;
 }
+
+/**
+ * A group whose worker aborts (device lost, wasm abort) may never answer: wllama's
+ * testBackendOps then never settles. Each group gets this long before the runner records it
+ * as a crash and moves on to the next group, so one bad group cannot end the run.
+ */
+export const OP_GROUP_TIMEOUT_MS = 180_000;
+
+export class OpGroupTimeoutError extends Error {
+  override readonly name = 'OpGroupTimeoutError';
+}
+
+/** Settle with `promise`, or reject with OpGroupTimeoutError after `ms`. */
+export function withOpGroupTimeout<T>(
+  promise: Promise<T>,
+  ms: number = OP_GROUP_TIMEOUT_MS,
+  timers: {
+    set: (fn: () => void, ms: number) => unknown;
+    clear: (id: unknown) => void;
+  } = {
+    set: (fn, delay) => setTimeout(fn, delay),
+    clear: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+  },
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = timers.set(() => {
+      reject(
+        new OpGroupTimeoutError(
+          `no answer after ${Math.round(ms / 1000)} s (worker hung: device lost or wasm abort)`,
+        ),
+      );
+    }, ms);
+    promise.then(
+      (value) => {
+        timers.clear(id);
+        resolve(value);
+      },
+      (error: unknown) => {
+        timers.clear(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/** The MUL_MAT groups, run under every Adreno profile by "Run MUL_MAT × Adreno profiles". */
+export const MUL_MAT_GROUP_IDS: readonly string[] = ['mul_mat-q6_k', 'mul_mat-q4_k', 'mul_mat-f16'];
+
+/**
+ * Profiles for the Adreno matrix run (patch 0017): the default (subgroups off, mat-vec routed
+ * to the tiled matmul), upstream behaviour, and each half turned back on.
+ */
+export const ADRENO_OP_PROFILES: ReadonlyArray<string | null> = [
+  null,
+  'adreno-subgroups',
+  'adreno-matvec',
+  'adreno-sg-tiled',
+];
 
 export interface OpGroupSummary {
   ok: number;

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectBackend } from '@/engine/in-browser/backend';
-import { createWllamaRuntime, gpuEvidence, isRuntimeDead } from '@/engine/in-browser/runtime';
+import {
+  createWllamaRuntime,
+  gpuEvidence,
+  isGarbledOutputFailure,
+  isRuntimeDead,
+} from '@/engine/in-browser/runtime';
 import type { WllamaLogger } from '@/engine/wllama/module';
 
 const native = vi.hoisted(() => ({
@@ -216,5 +221,20 @@ describe('a dead WASM runtime', () => {
     expect(isRuntimeDead('RuntimeError: Aborted()')).toBe(true);
     expect(isRuntimeDead(new Error('request exceeds the available context size'))).toBe(false);
     expect(isRuntimeDead(undefined)).toBe(false);
+  });
+});
+
+describe('garbled GPU output', () => {
+  it('is told from a lost device by the worker message in the cause chain', () => {
+    const json = new Error('[json.exception.type_error.316] invalid UTF-8 byte at index 3: 0xFF');
+    const wrapped = new Error('wllama action failed', { cause: json });
+    const typed = new RangeError('Invalid typed array length: -12');
+
+    expect(isGarbledOutputFailure(json)).toBe(true);
+    expect(isGarbledOutputFailure(wrapped)).toBe(true);
+    expect(isGarbledOutputFailure(typed)).toBe(true);
+    expect(isGarbledOutputFailure('RuntimeError: Aborted(invalid UTF-8 byte)')).toBe(true);
+    expect(isGarbledOutputFailure(new Error('Device lost! Reason: 1'))).toBe(false);
+    expect(isGarbledOutputFailure(undefined)).toBe(false);
   });
 });

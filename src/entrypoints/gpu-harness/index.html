@@ -147,8 +147,12 @@
       <label
         >Device profile
         <select id="ops-profile">
-          <option value="default">default</option>
+          <option value="default">default (Adreno: subgroups off, mat-vec → tiled)</option>
+          <option value="adreno-subgroups">adreno-subgroups (upstream; reproduces the bug)</option>
+          <option value="adreno-matvec">adreno-matvec (subgroups off, mat-vec on)</option>
+          <option value="adreno-sg-tiled">adreno-sg-tiled (subgroups on, mat-vec → tiled)</option>
           <option value="no-subgroups">no-subgroups</option>
+          <option value="no-matvec">no-matvec (any GPU)</option>
         </select>
       </label>
       <label
@@ -159,6 +163,7 @@
         </select>
       </label>
       <button id="run-ops" type="button" disabled>Run op diagnostics</button>
+      <button id="run-ops-matrix" type="button" disabled>Run MUL_MAT × Adreno profiles</button>
       <div id="ops"></div>
       <h2>Log</h2>
       <pre id="log"></pre>

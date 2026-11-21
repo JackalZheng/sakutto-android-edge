@@ -64,6 +64,9 @@ describe('buildHarnessConfigs', () => {
       'gpu-nctx-2048',
       'gpu-no-f16',
       'gpu-no-subgroups',
+      'gpu-adreno-upstream',
+      'gpu-adreno-matvec',
+      'gpu-adreno-sg-tiled',
       'gpu-layers-1',
       'gpu-layers-2',
       'gpu-layers-3',
@@ -98,13 +101,14 @@ describe('buildHarnessConfigs', () => {
   it('marks only the profile configs with a debug profile', () => {
     const configs = buildHarnessConfigs(GPU_PROBE, false);
     for (const config of configs) {
-      expect(config.debugProfile).toBe(
-        config.id === 'gpu-no-f16'
-          ? 'no-f16'
-          : config.id === 'gpu-no-subgroups'
-            ? 'no-subgroups'
-            : null,
-      );
+      const expected: Record<string, string> = {
+        'gpu-no-f16': 'no-f16',
+        'gpu-no-subgroups': 'no-subgroups',
+        'gpu-adreno-upstream': 'adreno-subgroups',
+        'gpu-adreno-matvec': 'adreno-matvec',
+        'gpu-adreno-sg-tiled': 'adreno-sg-tiled',
+      };
+      expect(config.debugProfile).toBe(expected[config.id] ?? null);
     }
   });
 
@@ -442,5 +446,21 @@ describe('model-aware isolated state', () => {
       'gpu-swa-layers-only',
       'gpu-full-attn-layers-only',
     ]);
+  });
+});
+
+describe('Adreno mat-vec profiles (patch 0017)', () => {
+  it('runs each Adreno profile once, on the WebGPU selection', () => {
+    const configs = buildHarnessConfigs(
+      { webgpu: true, hardwareConcurrency: 8, fastBatches: true, sharedMemory: true },
+      true,
+    );
+    const byId = new Map(configs.map((c) => [c.id, c]));
+    expect(byId.get('gpu-adreno-upstream')?.debugProfile).toBe('adreno-subgroups');
+    expect(byId.get('gpu-adreno-matvec')?.debugProfile).toBe('adreno-matvec');
+    expect(byId.get('gpu-adreno-sg-tiled')?.debugProfile).toBe('adreno-sg-tiled');
+    for (const id of ['gpu-adreno-upstream', 'gpu-adreno-matvec', 'gpu-adreno-sg-tiled']) {
+      expect(byId.get(id)?.selection.backend).toBe('webgpu');
+    }
   });
 });

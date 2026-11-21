@@ -41,13 +41,17 @@ import {
   isHarnessModelId,
 } from '@/engine/debug-models';
 import {
+  ADRENO_OP_PROFILES,
   formatNumber,
   isOpDiagnosticContextLine,
+  MUL_MAT_GROUP_IDS,
+  type OpGroup,
   type OpGroupOutcome,
   opGroupArgs,
   parseOpDiagnosticLines,
   PLAMO3_OP_GROUPS,
   summarizeOpGroup,
+  withOpGroupTimeout,
 } from '@/engine/debug-op-diagnostics';
 import { createWllama } from '@/engine/wllama';
 import type { BackendSelection } from '@/engine/in-browser/backend';
@@ -57,9 +61,11 @@ import { OpfsModelFileStore } from '@/engine/model/file-store';
 import { ModelManager } from '@/engine/model/manager';
 import { probeCapabilities, probeWebGpuAdapter } from '@/shared/capabilities';
 import {
+  isWebGpuDebugProfile,
   parseWebGpuLog,
   resetWebGpuDebugProfile,
   setWebGpuDebugProfile,
+  type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 import { isAndroidEdgeRuntime } from '@/shared/mobile';
 
@@ -80,6 +86,7 @@ const runIsolatedButton = document.querySelector<HTMLButtonElement>('#run-isolat
 const clearButton = document.querySelector<HTMLButtonElement>('#clear-saved')!;
 const configsEl = document.querySelector<HTMLElement>('#configs')!;
 const opsButton = document.querySelector<HTMLButtonElement>('#run-ops')!;
+const opsMatrixButton = document.querySelector<HTMLButtonElement>('#run-ops-matrix')!;
 const opsProfileEl = document.querySelector<HTMLSelectElement>('#ops-profile')!;
 const opsBackendEl = document.querySelector<HTMLSelectElement>('#ops-backend')!;
 const opsEl = document.querySelector<HTMLElement>('#ops')!;
@@ -531,6 +538,7 @@ async function main(): Promise<void> {
     modelDeleteButton,
     clearButton,
     opsButton,
+    opsMatrixButton,
     ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
   ];
   const setBusy = (busy: boolean): void => {
@@ -665,35 +673,54 @@ async function main(): Promise<void> {
  */
 function setupOpDiagnostics(): void {
   opsButton.disabled = false;
-  opsButton.addEventListener('click', () => {
-    void (async () => {
-      opsButton.disabled = true;
-      opsEl.replaceChildren();
-      const profile = opsProfileEl.value === 'no-subgroups' ? 'no-subgroups' : null;
-      const backend = opsBackendEl.value === 'CPU' ? 'CPU' : undefined;
-      log(
-        `=== op diagnostics (profile: ${profile ?? 'default'}, backend: ${backend ?? 'WebGPU'}) ===`,
-      );
-      const outcomes: OpGroupOutcome[] = [];
-      try {
-        for (const group of PLAMO3_OP_GROUPS) {
-          const outcome = await runOpGroup(group, profile, backend);
-          outcomes.push(outcome);
-          renderOpOutcomes(outcomes);
-        }
-        log('op diagnostics done');
-      } catch (error) {
-        reportFatal(error);
-      } finally {
-        opsButton.disabled = false;
+  opsMatrixButton.disabled = false;
+  const run = async (
+    plan: ReadonlyArray<{ group: OpGroup; profile: WebGpuDebugProfile | null }>,
+    title: string,
+  ): Promise<void> => {
+    opsButton.disabled = true;
+    opsMatrixButton.disabled = true;
+    opsEl.replaceChildren();
+    const backend = opsBackendEl.value === 'CPU' ? 'CPU' : undefined;
+    log(`=== op diagnostics (${title}, backend: ${backend ?? 'WebGPU'}) ===`);
+    const outcomes: OpGroupOutcome[] = [];
+    try {
+      // Every group runs, whatever the previous one did: runOpGroup records a crash or a
+      // timeout as that group's outcome instead of throwing.
+      for (const step of plan) {
+        outcomes.push(await runOpGroup(step.group, step.profile, backend));
+        renderOpOutcomes(outcomes);
       }
-    })();
+      log('op diagnostics done');
+    } catch (error) {
+      reportFatal(error);
+    } finally {
+      opsButton.disabled = false;
+      opsMatrixButton.disabled = false;
+    }
+  };
+  opsButton.addEventListener('click', () => {
+    const profile = isWebGpuDebugProfile(opsProfileEl.value) ? opsProfileEl.value : null;
+    void run(
+      PLAMO3_OP_GROUPS.map((group) => ({ group, profile })),
+      `profile: ${profile ?? 'default'}`,
+    );
+  });
+  opsMatrixButton.addEventListener('click', () => {
+    const groups = PLAMO3_OP_GROUPS.filter((group) => MUL_MAT_GROUP_IDS.includes(group.id));
+    const plan = ADRENO_OP_PROFILES.flatMap((profile) =>
+      groups.map((group) => ({
+        group,
+        profile: isWebGpuDebugProfile(profile) ? profile : null,
+      })),
+    );
+    void run(plan, 'MUL_MAT × Adreno profiles');
   });
 }
 
 async function runOpGroup(
-  group: (typeof PLAMO3_OP_GROUPS)[number],
-  profile: 'no-subgroups' | null,
+  group: OpGroup,
+  profile: WebGpuDebugProfile | null,
   backend: string | undefined,
 ): Promise<OpGroupOutcome> {
   const lines: string[] = [];
@@ -713,7 +740,7 @@ async function runOpGroup(
     if (typeof wllama.testBackendOps !== 'function') {
       throw new Error('this wllama build has no testBackendOps (patch 0016 missing)');
     }
-    const outcome = await wllama.testBackendOps(opGroupArgs(group, backend));
+    const outcome = await withOpGroupTimeout(wllama.testBackendOps(opGroupArgs(group, backend)));
     retcode = outcome.retcode;
   } catch (caught) {
     error = describeErrorChain(caught);
@@ -721,10 +748,16 @@ async function runOpGroup(
     if (profile) resetWebGpuDebugProfile();
   }
   const rows = parseOpDiagnosticLines(lines);
-  const outcome: OpGroupOutcome = { group, rows, error, retcode };
+  const outcome: OpGroupOutcome = {
+    group,
+    rows,
+    error,
+    retcode,
+    ...(profile ? { profile } : {}),
+  };
   const summary = summarizeOpGroup(outcome);
   log(
-    `op ${group.id}: ${summary.verdict} ok=${summary.ok} fail=${summary.fail} ` +
+    `op ${group.id}${profile ? ` [${profile}]` : ''}: ${summary.verdict} ok=${summary.ok} fail=${summary.fail} ` +
       `unsupported=${summary.unsupported} incomplete=${summary.incomplete} ` +
       `retcode=${describe(retcode)} ${Math.round(performance.now() - started)}ms` +
       `${error ? ` error=${error}` : ''}`,
@@ -776,7 +809,7 @@ function renderOpOutcomes(outcomes: readonly OpGroupOutcome[]): void {
     }
     const row = document.createElement('tr');
     for (const text of [
-      outcome.group.label,
+      `${outcome.group.label}${outcome.profile ? ` [${outcome.profile}]` : ''}`,
       `${summary.verdict}${outcome.error ? ` (${outcome.error})` : ''}`,
       String(summary.ok),
       String(summary.fail),
