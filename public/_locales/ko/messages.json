@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "휴대폰 GPU에서 WebGPU를 사용하면 번역 결과가 잘못될 수 있습니다. 글자가 깨지면 Sakutto가 자동으로 CPU로 전환합니다."
+  },
+  "fabEverywhereSetting": {
+    "message": "모든 사이트에 번역 버튼 표시"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "버튼은 모든 사이트에 대한 접근 권한이 필요하며 한 번만 요청합니다. 번역하지 않도록 설정한 사이트는 제외됩니다."
+  },
+  "fabEverywhereGrant": {
+    "message": "모든 사이트에서 번역 버튼 허용"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "사이트 접근 권한을 받지 못했습니다. 버튼은 Sakutto를 연 페이지에만 표시됩니다."
+  },
+  "openGpuHarness": {
+    "message": "GPU 하네스 열기"
+  },
+  "gpuHarnessHelp": {
+    "message": "고정된 문단을 CPU와 WebGPU로 실행해 출력을 비교합니다. 사이드로드 설치본은 모델을 따로 저장하므로, 먼저 여기서 0.8B 모델을 다운로드하세요."
   }
 }

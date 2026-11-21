@@ -21,10 +21,11 @@ profiles that actually constrain the wasm request (no-f16, reject-max-limits).
 See ggml-org/llama.cpp#21744, #23844 and Chromium crbug 369219127.
 
 diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+index b658d4b..d9f5ec7 100644
 --- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -4146,34 +4146,399 @@
-     ctx->memset_pipeline = ggml_webgpu_create_pipeline(ctx->device, wgsl_memset, "memset", constants);
+@@ -4774,34 +4774,399 @@ static void ggml_webgpu_init_scatter_write_pipeline(webgpu_global_context & ctx)
+     ctx->set_tensor_n_pipeline = ggml_webgpu_create_pipeline(ctx->device, wgsl_set_tensor_n, "set_tensor_n", constants);
  }
  
 +static const char * ggml_webgpu_power_preference_name(wgpu::PowerPreference preference) {
@@ -155,13 +156,7 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
 +        limits.maxBufferSize = cap;
 +    }
 +}
- 
--    instance.WaitAny(
--        instance.RequestAdapter(
--            &options, wgpu::CallbackMode::AllowSpontaneous,
--            [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, wgpu::StringView message) {
--                if (status != wgpu::RequestAdapterStatus::Success) {
--                    GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter: %s\n", std::string(message).c_str());
++
 +static bool ggml_webgpu_try_request_device(ggml_backend_webgpu_reg_context *     ctx,
 +                                           const std::vector<wgpu::FeatureName> & features,
 +                                           const wgpu::Limits *                   limits,
@@ -173,7 +168,13 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
 +            return false;
 +        }
 +    }
-+
+ 
+-    instance.WaitAny(
+-        instance.RequestAdapter(
+-            &options, wgpu::CallbackMode::AllowSpontaneous,
+-            [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, wgpu::StringView message) {
+-                if (status != wgpu::RequestAdapterStatus::Success) {
+-                    GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter: %s\n", std::string(message).c_str());
 +    wgpu::DeviceDescriptor dev_desc;
 +    dev_desc.requiredLimits       = limits;
 +    dev_desc.requiredFeatures     = features.data();
@@ -438,7 +439,7 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
  
      ctx->webgpu_global_ctx->adapter.GetLimits(&ctx->webgpu_global_ctx->capabilities.limits);
  
-@@ -4218,81 +4583,96 @@
+@@ -4846,82 +5211,97 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
  
      // Runtime subgroup size can be any supported size in this range. Shaders
      // that allocate per-lane register arrays must size them for the minimum.
@@ -532,6 +533,9 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
 -    deviceTogglesDesc.enabledToggleCount  = 3;
 -    deviceTogglesDesc.disabledToggles     = deviceDisabledToggles;
 -    deviceTogglesDesc.disabledToggleCount = 1;
+-
+-    dev_desc.nextInChain = &deviceTogglesDesc;
+-#endif
 +    wgpu::Limits limits_max = ctx->webgpu_global_ctx->capabilities.limits;
 +    wgpu::Limits limits_cap = limits_max;
 +    ggml_webgpu_cap_storage_limits(limits_cap);
@@ -541,9 +545,7 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
 +        ggml_webgpu_cap_storage_limits(limits_max);
 +        limits_cap = limits_max;
 +    }
- 
--    dev_desc.nextInChain = &deviceTogglesDesc;
--#endif
++
 +    // Keep Subgroups on every limit retry when the adapter has it. Dropping that
 +    // feature while capabilities.supports_subgroups is still true compiles WGSL
 +    // with `enable subgroups` and Chrome rejects it.
@@ -584,6 +586,7 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
 +    }
  
      ggml_webgpu_init_memset_pipeline(ctx->webgpu_global_ctx);
+     ggml_webgpu_init_scatter_write_pipeline(ctx->webgpu_global_ctx);
      ggml_webgpu_create_buffer(ctx->webgpu_global_ctx->device, ctx->webgpu_global_ctx->memset_params_buf,
                                WEBGPU_PARAMS_BUF_SIZE_BYTES, wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform,
                                "memset_params_buf");
@@ -591,7 +594,7 @@ diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src
  
      GGML_LOG_INFO(
          "ggml_webgpu: adapter_info: vendor_id: %u | vendor: %s | architecture: %s | device_id: %u | name: %s | "
-@@ -4923,18 +5303,13 @@
+@@ -5601,18 +5981,13 @@ ggml_backend_reg_t ggml_backend_webgpu_reg() {
      ctx->webgpu_global_ctx           = webgpu_global_context(new webgpu_global_context_struct());
      ctx->webgpu_global_ctx->instance = std::move(inst);
  

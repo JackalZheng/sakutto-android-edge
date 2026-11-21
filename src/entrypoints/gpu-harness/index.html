@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sakutto GPU harness (debug)</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f4f6f8;
+        color: #18202d;
+        font-family: 'Segoe UI', 'Yu Gothic UI', 'Hiragino Sans', sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      main {
+        max-width: 52rem;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+
+      .warn {
+        color: #9a3412;
+        font-weight: 600;
+      }
+
+      button {
+        min-height: 44px;
+        padding: 8px 20px;
+        font-size: 16px;
+        margin: 12px 0;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+      }
+
+      .muted {
+        color: #5b6b7d;
+      }
+
+      ul.models {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      ul.models > li {
+        border: 1px solid #c3ccd6;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+      }
+
+      ul.models > li.selected {
+        border-color: #2563eb;
+        border-width: 2px;
+      }
+
+      ul.models input[type='radio'] {
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+      ul.models p {
+        margin: 6px 0;
+      }
+
+      ul.models .actions button {
+        margin: 4px 8px 4px 0;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .muted {
+          color: #9aa7b8;
+        }
+
+        ul.models > li {
+          border-color: #39424f;
+        }
+
+        ul.models > li.selected {
+          border-color: #60a5fa;
+        }
+      }
+
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #e8ecf1;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 12.5px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 12px 0;
+      }
+
+      th,
+      td {
+        border: 1px solid #c3ccd6;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #0e1218;
+          color: #edf1f6;
+        }
+
+        pre {
+          background: #1a212c;
+        }
+
+        th,
+        td {
+          border-color: #39424f;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GPU harness <span class="warn">(debug tool)</span></h1>
+      <p>
+        Runs one fixed English paragraph through the CPU backend and several WebGPU configurations
+        of the selected model, then compares the outputs. Used to diagnose garbled WebGPU output on
+        Android and to A/B-compare translation quality and speed across models. This page is not
+        part of the translation product.
+      </p>
+      <p id="status">Probing…</p>
+      <h2>模型（依檔案大小排序）</h2>
+      <p class="muted">
+        選一個模型測試：每個模型分開下載、各自快取、可單獨刪除。下載前會先顯示大小、請你確認。
+        PLaMo-3 是現行對照組；Qwen3 兩個模型已關閉思考模式；Hy-MT2 是重點候選。
+      </p>
+      <div id="models"></div>
+      <h2>Adapter</h2>
+      <pre id="adapter">…</pre>
+      <button id="run" type="button" disabled>Run harness</button>
+      <h2>Results</h2>
+      <div id="results"></div>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

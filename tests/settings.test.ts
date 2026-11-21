@@ -32,6 +32,7 @@ function stored(overrides: Partial<Settings> = {}): Settings {
     composeTargetLanguage: null,
     composeInstantReplace: false,
     composePlacement: 'above',
+    fabEverywhere: true,
     ...overrides,
   };
 }

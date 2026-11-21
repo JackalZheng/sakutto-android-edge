@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "WebGPU on phone GPUs can produce wrong translations. If the text comes out garbled, Sakutto switches back to the CPU by itself."
+  },
+  "fabEverywhereSetting": {
+    "message": "Show the translate button on every site"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "The button needs access to all sites, which is asked for once. Sites set to never translate are skipped."
+  },
+  "fabEverywhereGrant": {
+    "message": "Allow the translate button on all sites"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "Site access was not granted. The button appears only on pages where you open Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Open GPU harness"
+  },
+  "gpuHarnessHelp": {
+    "message": "Runs a fixed paragraph through the CPU and WebGPU backends and compares the outputs. A sideloaded install keeps its own model copy, so download the 0.8B model here first."
   }
 }

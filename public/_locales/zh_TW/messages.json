@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "在手機 GPU 上使用 WebGPU 可能產生錯誤的翻譯。如果出現亂碼，Sakutto 會自動切回 CPU。"
+  },
+  "fabEverywhereSetting": {
+    "message": "在所有網站顯示翻譯按鈕"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "按鈕需要所有網站的存取權，只會詢問一次。設為絕不翻譯的網站不會顯示。"
+  },
+  "fabEverywhereGrant": {
+    "message": "允許在所有網站顯示翻譯按鈕"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "未取得網站存取權。按鈕只會出現在你開啟過 Sakutto 的頁面。"
+  },
+  "openGpuHarness": {
+    "message": "開啟 GPU 測試工具"
+  },
+  "gpuHarnessHelp": {
+    "message": "用一段固定文字分別跑 CPU 與 WebGPU，再比對輸出。側載安裝的模型是另外存放的，請先在這裡下載 0.8B 模型。"
   }
 }

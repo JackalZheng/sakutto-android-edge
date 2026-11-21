@@ -1,11 +1,21 @@
 import type { EngineClient } from '@/background/engine-client';
 import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
+import { isAndroidEdgeRuntime } from '@/shared/mobile';
 import { loadQualitySample, saveQualitySample, type QualitySample } from '@/shared/quality';
 
 let pending: Promise<QualitySample | null> | null = null;
 
-/** Times one 0.8B paragraph after the model is loaded. Later calls reuse the stored sample. */
+/**
+ * Times one 0.8B paragraph after the model is loaded. Later calls reuse the stored sample.
+ *
+ * Edge for Android never measures. The sample only feeds the 2B suggestion and the built-in
+ * translator hint, and neither exists there, while the run itself is a 512-token generation
+ * that cannot be aborted mid-WASM. The popup asks for a sample every time it opens, so the
+ * run started right as the user tapped "Translate page" and held the single CPU slot for
+ * the whole paragraph before the first block could start.
+ */
 export function measureQuality(client: EngineClient): Promise<QualitySample | null> {
+  if (isAndroidEdgeRuntime()) return loadQualitySample();
   if (pending) return pending;
   pending = run(client).finally(() => {
     pending = null;

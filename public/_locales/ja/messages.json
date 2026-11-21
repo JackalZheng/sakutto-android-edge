@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU（1スレッド）"
+  },
+  "tierGpuMobileWarning": {
+    "message": "スマートフォンの GPU で WebGPU を使うと、翻訳結果が正しく出ないことがあります。文字化けした場合、Sakutto は自動で CPU に戻します。"
+  },
+  "fabEverywhereSetting": {
+    "message": "すべてのサイトに翻訳ボタンを表示"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "ボタンにはすべてのサイトへのアクセスが必要で、一度だけ確認します。翻訳しない設定のサイトには表示しません。"
+  },
+  "fabEverywhereGrant": {
+    "message": "すべてのサイトで翻訳ボタンを許可"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "サイトへのアクセスが許可されませんでした。ボタンは Sakutto を開いたページにだけ表示されます。"
+  },
+  "openGpuHarness": {
+    "message": "GPU ハーネスを開く"
+  },
+  "gpuHarnessHelp": {
+    "message": "固定の段落を CPU と WebGPU で実行し、出力を比較します。サイドロードした版はモデルを別に保存するため、まずここで 0.8B モデルをダウンロードしてください。"
   }
 }

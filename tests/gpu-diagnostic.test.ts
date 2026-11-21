@@ -126,6 +126,22 @@ describe('gpu diagnostic', () => {
     expect(wave.subgroupMaxSize).toBe(32);
   });
 
+  it('overlays missing subgroups for the no-subgroups profile', () => {
+    expect(isWebGpuDebugProfile('no-subgroups')).toBe(true);
+    setWebGpuDebugProfile('no-subgroups');
+    const overlay = applyDebugOverlay({
+      ...EMPTY_GPU_DIAGNOSTIC,
+      subgroups: true,
+      features: ['shader-f16', 'subgroups'],
+      subgroupMinSize: 64,
+      subgroupMaxSize: 128,
+    });
+    expect(overlay.subgroups).toBe(false);
+    expect(overlay.features).toEqual(['shader-f16']);
+    expect(overlay.subgroupMinSize).toBe(64);
+    expect(overlay.subgroupMaxSize).toBe(128);
+  });
+
   it('does not double the reject-max-limits description', () => {
     setWebGpuDebugProfile('reject-max-limits');
     const once = applyDebugOverlay({

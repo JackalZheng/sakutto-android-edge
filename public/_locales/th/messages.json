@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "WebGPU บน GPU ของโทรศัพท์อาจให้คำแปลที่ผิด หากข้อความออกมาเป็นอักขระเพี้ยน Sakutto จะสลับกลับไปใช้ CPU เอง"
+  },
+  "fabEverywhereSetting": {
+    "message": "แสดงปุ่มแปลในทุกเว็บไซต์"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "ปุ่มต้องการสิทธิ์เข้าถึงทุกเว็บไซต์ ซึ่งจะถามเพียงครั้งเดียว เว็บไซต์ที่ตั้งไว้ว่าไม่ต้องแปลจะถูกข้าม"
+  },
+  "fabEverywhereGrant": {
+    "message": "อนุญาตปุ่มแปลในทุกเว็บไซต์"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "ไม่ได้รับสิทธิ์เข้าถึงเว็บไซต์ ปุ่มจะแสดงเฉพาะในหน้าที่คุณเปิด Sakutto"
+  },
+  "openGpuHarness": {
+    "message": "เปิดเครื่องมือทดสอบ GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "รันย่อหน้าคงที่บน CPU และ WebGPU แล้วเปรียบเทียบผลลัพธ์ การติดตั้งแบบ sideload จะเก็บโมเดลแยกต่างหาก โปรดดาวน์โหลดโมเดล 0.8B ที่นี่ก่อน"
   }
 }

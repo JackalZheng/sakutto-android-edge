@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "WebGPU sur les GPU de téléphone peut produire des traductions erronées. Si le texte est illisible, Sakutto repasse tout seul sur le CPU."
+  },
+  "fabEverywhereSetting": {
+    "message": "Afficher le bouton de traduction sur tous les sites"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "Le bouton a besoin d’accéder à tous les sites, ce qui est demandé une seule fois. Les sites réglés pour ne jamais être traduits sont ignorés."
+  },
+  "fabEverywhereGrant": {
+    "message": "Autoriser le bouton de traduction sur tous les sites"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "L’accès aux sites n’a pas été accordé. Le bouton n’apparaît que sur les pages où vous ouvrez Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Ouvrir le test GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "Exécute un paragraphe fixe sur CPU et WebGPU, puis compare les résultats. Une installation chargée manuellement conserve sa propre copie du modèle : téléchargez d’abord ici le modèle 0,8 B."
   }
 }
