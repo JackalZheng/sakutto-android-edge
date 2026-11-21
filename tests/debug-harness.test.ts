@@ -14,8 +14,10 @@ import {
   PLAMO3_FULL_ATTENTION_LAYERS,
   POCO_F5_PRO_REFERENCE,
   recordIsolatedResult,
+  sameRun,
   verdictForRun,
   type HarnessRunResult,
+  type IsolatedRunState,
 } from '../src/engine/debug-harness';
 import { EngineError } from '../src/engine/errors';
 import type { BackendProbe } from '../src/engine/in-browser/backend';
@@ -386,5 +388,59 @@ describe('describeErrorChain', () => {
 
   it('handles plain strings', () => {
     expect(describeErrorChain('worker gone')).toBe('worker gone');
+  });
+});
+
+describe('model-aware isolated state', () => {
+  const run = (configId: string, modelId?: string): HarnessRunResult => ({
+    configId,
+    ...(modelId ? { modelId } : {}),
+    ok: true,
+    output: 'x',
+    firstToken: 'x',
+    ttftMs: 1,
+    totalMs: 2,
+    error: null,
+    gpuEvidence: null,
+    correctnessProbe: null,
+    correctnessProbeSubgroupSize: null,
+    correctnessProbeMs: null,
+    fellBackToCpu: false,
+  });
+
+  it('needs a CPU reference per model', () => {
+    const state = { ...emptyIsolatedState(), results: [run('cpu', 'a')] };
+    expect(planIsolatedQueue(['cpu', 'gpu-default'], ['gpu-default'], state, 'a')).toEqual([
+      'gpu-default',
+    ]);
+    expect(planIsolatedQueue(['cpu', 'gpu-default'], ['gpu-default'], state, 'b')).toEqual([
+      'cpu',
+      'gpu-default',
+    ]);
+  });
+
+  it('keeps results of the same config for different models', () => {
+    let state: IsolatedRunState = { ...emptyIsolatedState(), queue: ['cpu'], modelId: 'b' };
+    state = recordIsolatedResult({ ...state, results: [run('cpu', 'a')] }, run('cpu', 'b'), '');
+    expect(state.results.map((r) => r.modelId)).toEqual(['a', 'b']);
+    expect(state.modelId).toBe('b');
+    expect(sameRun(run('cpu', 'a'), 'cpu', 'a')).toBe(true);
+    expect(sameRun(run('cpu', 'a'), 'cpu', 'b')).toBe(false);
+  });
+
+  it('round-trips the queued model id', () => {
+    const raw = JSON.stringify({ ...emptyIsolatedState(), modelId: 'qwen3-0.6b-q4_k_m' });
+    expect(parseIsolatedState(raw)?.modelId).toBe('qwen3-0.6b-q4_k_m');
+  });
+
+  it('marks the layer-index override configs as PLaMo-only', () => {
+    const configs = buildHarnessConfigs(
+      { webgpu: true, hardwareConcurrency: 8, fastBatches: true, sharedMemory: true },
+      false,
+    );
+    expect(configs.filter((c) => c.plamoOnly).map((c) => c.id)).toEqual([
+      'gpu-swa-layers-only',
+      'gpu-full-attn-layers-only',
+    ]);
   });
 });

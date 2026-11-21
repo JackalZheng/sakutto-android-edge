@@ -11,6 +11,7 @@ import {
   parseIsolatedState,
   planIsolatedQueue,
   recordIsolatedResult,
+  sameRun,
   HARNESS_MAX_TOKENS,
   HARNESS_SOURCE_LANGUAGE,
   HARNESS_SOURCE_TEXT,
@@ -24,7 +25,21 @@ import {
   gpuEvidence,
   lastRuntimeLogTail,
   lastWebGpuLoadLog,
+  type LlamaRuntime,
 } from '@/engine/in-browser/runtime';
+import {
+  buildHarnessPrompt,
+  describeHarnessModel,
+  formatModelSize,
+  HARNESS_DEFAULT_MODEL_ID,
+  HARNESS_MODEL_DIRECTORY,
+  HARNESS_MODELS,
+  type HarnessModel,
+  harnessModel,
+  HarnessModelStore,
+  type HarnessPrompt,
+  isHarnessModelId,
+} from '@/engine/debug-models';
 import {
   formatNumber,
   isOpDiagnosticContextLine,
@@ -40,7 +55,6 @@ import { isEngineError } from '@/engine/errors';
 import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
 import { OpfsModelFileStore } from '@/engine/model/file-store';
 import { ModelManager } from '@/engine/model/manager';
-import { buildTranslationPrompt } from '@/engine/prompt/pfml3';
 import { probeCapabilities, probeWebGpuAdapter } from '@/shared/capabilities';
 import {
   parseWebGpuLog,
@@ -69,6 +83,51 @@ const opsButton = document.querySelector<HTMLButtonElement>('#run-ops')!;
 const opsProfileEl = document.querySelector<HTMLSelectElement>('#ops-profile')!;
 const opsBackendEl = document.querySelector<HTMLSelectElement>('#ops-backend')!;
 const opsEl = document.querySelector<HTMLElement>('#ops')!;
+const modelSelect = document.querySelector<HTMLSelectElement>('#model')!;
+const modelInfoEl = document.querySelector<HTMLElement>('#model-info')!;
+const modelStatusEl = document.querySelector<HTMLElement>('#model-status')!;
+const modelDownloadButton = document.querySelector<HTMLButtonElement>('#model-download')!;
+const modelDeleteButton = document.querySelector<HTMLButtonElement>('#model-delete')!;
+const modelCancelButton = document.querySelector<HTMLButtonElement>('#model-cancel')!;
+
+/** sessionStorage key for the model picked in the switcher. */
+const MODEL_CHOICE_KEY = 'sakuttoGpuHarnessModel';
+
+/** Loads one harness model for a selection; every config gets a fresh load. */
+interface ModelRunner {
+  readonly model: HarnessModel;
+  load(selection: BackendSelection): Promise<LlamaRuntime>;
+  unload(): Promise<void>;
+}
+
+/** The production model goes through ModelManager, as before the switcher. */
+function productionRunner(manager: ModelManager, model: HarnessModel): ModelRunner {
+  return {
+    model,
+    load: async (selection) => (await manager.ensureLoaded(DEFAULT_MODEL_ID, selection)).runtime,
+    unload: () => manager.unload(),
+  };
+}
+
+/** A harness-only model: read from its own OPFS directory into a fresh runtime. */
+function harnessRunner(store: HarnessModelStore, model: HarnessModel): ModelRunner {
+  let runtime: LlamaRuntime | null = null;
+  const unload = async (): Promise<void> => {
+    const current = runtime;
+    runtime = null;
+    if (current) await current.dispose();
+  };
+  return {
+    model,
+    async load(selection) {
+      await unload();
+      const blob = await store.read(model);
+      runtime = await createWllamaRuntime(blob, selection);
+      return runtime;
+    },
+    unload,
+  };
+}
 
 function log(line: string): void {
   logEl.textContent += `${line}\n`;
@@ -94,12 +153,12 @@ function reportFatal(error: unknown): void {
 
 /** Load one selection and run the fixed prompt through it, filling `result`. */
 async function runLoaded(
-  manager: ModelManager,
+  runner: ModelRunner,
   selection: BackendSelection,
-  prompt: string,
+  prompt: HarnessPrompt,
   result: HarnessRunResult,
 ): Promise<void> {
-  const loaded = await manager.ensureLoaded(DEFAULT_MODEL_ID, selection);
+  const runtime = await runner.load(selection);
   if (selection.backend === 'webgpu') {
     const lines = lastWebGpuLoadLog();
     result.gpuEvidence = gpuEvidence(lines);
@@ -116,8 +175,9 @@ async function runLoaded(
   const controller = new AbortController();
   const started = performance.now();
   let firstAt: number | null = null;
-  await loaded.runtime.complete({
-    prompt,
+  await runtime.complete({
+    prompt: prompt.prompt,
+    stop: prompt.stop,
     maxTokens: HARNESS_MAX_TOKENS,
     signal: controller.signal,
     onToken: (text) => {
@@ -138,13 +198,14 @@ async function runLoaded(
 }
 
 async function runConfig(
-  manager: ModelManager,
+  runner: ModelRunner,
   config: HarnessConfig,
-  prompt: string,
+  prompt: HarnessPrompt,
   cpuSelection: BackendSelection,
 ): Promise<HarnessRunResult> {
   const result: HarnessRunResult = {
     configId: config.id,
+    modelId: runner.model.id,
     ok: false,
     output: '',
     firstToken: '',
@@ -157,7 +218,7 @@ async function runConfig(
     correctnessProbeMs: null,
     fellBackToCpu: false,
   };
-  log(`--- ${config.label} ---`);
+  log(`--- ${runner.model.name}: ${config.label} ---`);
   log(
     `  selection: backend=${config.selection.backend} n_gpu_layers=${config.selection.nGpuLayers} ` +
       `n_parallel=${config.selection.nParallel} n_ctx=${config.selection.nCtx} ` +
@@ -169,9 +230,9 @@ async function runConfig(
     else resetWebGpuDebugProfile();
     // Force a fresh load per config: the debug profile is read when the
     // wllama worker is created, and two configs can share one selection.
-    await manager.unload();
+    await runner.unload();
     try {
-      await runLoaded(manager, config.selection, prompt, result);
+      await runLoaded(runner, config.selection, prompt, result);
     } catch (error) {
       if (config.fallbackToCpu && isEngineError(error) && error.code === 'gpu-unavailable') {
         // The no-f16 profile refuses the device on purpose: record the GPU
@@ -184,8 +245,8 @@ async function runConfig(
         for (const line of lines) {
           if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
         }
-        await manager.unload();
-        await runLoaded(manager, cpuSelection, prompt, result);
+        await runner.unload();
+        await runLoaded(runner, cpuSelection, prompt, result);
         result.fellBackToCpu = true;
       } else {
         throw error;
@@ -225,15 +286,19 @@ function renderResults(
   resultsEl.replaceChildren();
   const table = document.createElement('table');
   const head = document.createElement('tr');
-  for (const label of ['Config', 'First token', 'Output', 'TTFT', 'Total', 'Broken?']) {
+  for (const label of ['Model', 'Config', 'First token', 'Output', 'TTFT', 'Total', 'Broken?']) {
     const th = document.createElement('th');
     th.textContent = label;
     head.append(th);
   }
   table.append(head);
-  const cpu = results.find((r) => r.configId === 'cpu');
   for (const result of results) {
+    // Each model is compared with its own CPU run.
+    const cpu = results.find((r) => sameRun(r, 'cpu', result.modelId));
     const config = configs.find((c) => c.id === result.configId);
+    const modelName = result.modelId
+      ? (HARNESS_MODELS.find((m) => m.id === result.modelId)?.name ?? result.modelId)
+      : 'n/a';
     const row = document.createElement('tr');
     const comparison = cpu && result.configId !== 'cpu' ? compareRuns(cpu, result) : null;
     const broken =
@@ -243,6 +308,7 @@ function renderResults(
           : null
         : (comparison?.gpuLooksBroken ?? null);
     const cells = [
+      modelName,
       `${config?.label ?? result.configId}${result.fellBackToCpu ? ' (CPU fallback)' : ''}${result.ok ? '' : ` — FAILED: ${result.error ?? ''}`}`,
       result.firstToken,
       result.output,
@@ -260,7 +326,7 @@ function renderResults(
       const verdict = verdictForRun(cpu, result);
       const note = document.createElement('p');
       note.textContent =
-        `${config?.label ?? result.configId} vs CPU: first token ` +
+        `${modelName} · ${config?.label ?? result.configId} vs CPU: first token ` +
         `${comparison.firstTokenMatches ? 'matches' : 'DIFFERS'}, output ` +
         `${comparison.outputsIdentical ? 'identical' : 'differs'}, gpu evidence ` +
         `${describe(result.gpuEvidence)}${result.fellBackToCpu ? ' (ran on CPU fallback after WebGPU refused the device)' : ''}, correctness probe ${describe(result.correctnessProbe)} ` +
@@ -323,26 +389,136 @@ async function main(): Promise<void> {
     fastBatches: capabilities.gpuFastBatches === true,
     sharedMemory: capabilities.crossOriginIsolated,
   };
-  const configs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
-  const cpuConfig = configs.find((c) => c.id === 'cpu');
+  const allConfigs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
+  const cpuConfig = allConfigs.find((c) => c.id === 'cpu');
   if (!cpuConfig) throw new Error('harness has no CPU reference config');
 
   // The op diagnostics need no model file, so they are wired up first.
   setupOpDiagnostics();
 
+  // --- model switcher (harness only) -------------------------------------
+  const savedState = parseIsolatedState(sessionStorage.getItem(ISOLATED_STATE_KEY));
+  const storedChoice = sessionStorage.getItem(MODEL_CHOICE_KEY);
+  // A pending isolated queue keeps the model it was started with.
+  const modelId =
+    savedState && savedState.queue.length > 0 && isHarnessModelId(savedState.modelId)
+      ? savedState.modelId
+      : isHarnessModelId(storedChoice)
+        ? storedChoice
+        : HARNESS_DEFAULT_MODEL_ID;
+  const model = harnessModel(modelId);
+  for (const candidate of HARNESS_MODELS) {
+    const option = document.createElement('option');
+    option.value = candidate.id;
+    option.textContent = `${candidate.name} — ${formatModelSize(candidate.size)}`;
+    modelSelect.append(option);
+  }
+  modelSelect.value = model.id;
+  modelInfoEl.textContent = describeHarnessModel(model);
+  modelSelect.addEventListener('change', () => {
+    // The config list and runner depend on the model, so a switch reloads the page.
+    sessionStorage.setItem(MODEL_CHOICE_KEY, modelSelect.value);
+    location.reload();
+  });
+
   const store = await OpfsModelFileStore.open();
   const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
-  const modelStatus = await manager.status();
-  if (modelStatus.state !== 'ready' && modelStatus.state !== 'loaded') {
+  const harnessStore = new HarnessModelStore(
+    await OpfsModelFileStore.open(HARNESS_MODEL_DIRECTORY),
+  );
+
+  const isReady = async (): Promise<boolean> => {
+    if (model.production) {
+      const status = await manager.status();
+      return status.state === 'ready' || status.state === 'loaded';
+    }
+    return harnessStore.isDownloaded(model);
+  };
+  const refreshModelStatus = async (): Promise<boolean> => {
+    const ready = await isReady();
+    if (model.production) {
+      modelStatusEl.textContent = ready
+        ? 'Downloaded (managed by the options page).'
+        : 'Not downloaded. Download it from the options page.';
+      modelDownloadButton.hidden = true;
+      modelDeleteButton.hidden = true;
+      return ready;
+    }
+    const partial = ready ? 0 : await harnessStore.partialBytes(model);
+    modelStatusEl.textContent = ready
+      ? `Downloaded (${formatModelSize(model.size)}).`
+      : partial > 0
+        ? `Partly downloaded (${formatModelSize(partial)} of ${formatModelSize(model.size)}); Download resumes.`
+        : `Not downloaded (${formatModelSize(model.size)}).`;
+    modelDownloadButton.disabled = ready;
+    modelDeleteButton.disabled = !ready && partial === 0;
+    return ready;
+  };
+
+  let downloadController: AbortController | null = null;
+  modelDownloadButton.addEventListener('click', () => {
+    if (
+      !confirm(
+        `下載 ${model.name}？檔案大小 ${formatModelSize(model.size)}（${model.size.toLocaleString()} bytes）。`,
+      )
+    ) {
+      return;
+    }
+    void (async () => {
+      downloadController = new AbortController();
+      modelDownloadButton.disabled = true;
+      modelDeleteButton.disabled = true;
+      modelSelect.disabled = true;
+      modelCancelButton.hidden = false;
+      log(`download ${model.id}: ${model.url}`);
+      try {
+        await harnessStore.downloadFile(model, downloadController.signal, (progress) => {
+          modelStatusEl.textContent =
+            progress.phase === 'verify'
+              ? 'Verifying sha256…'
+              : `Downloading ${Math.floor(progress.ratio * 100)}% (${formatModelSize(progress.received)} of ${formatModelSize(progress.total)})`;
+        });
+        log(`download ${model.id}: done, sha256 verified`);
+        location.reload();
+      } catch (error) {
+        log(`download ${model.id} failed: ${describeErrorChain(error)}`);
+        await refreshModelStatus();
+      } finally {
+        downloadController = null;
+        modelSelect.disabled = false;
+        modelCancelButton.hidden = true;
+      }
+    })();
+  });
+  modelCancelButton.addEventListener('click', () => {
+    downloadController?.abort();
+  });
+  modelDeleteButton.addEventListener('click', () => {
+    if (!confirm(`刪除 ${model.name} 的下載檔（${formatModelSize(model.size)}）？`)) return;
+    void (async () => {
+      await harnessStore.remove(model);
+      log(`deleted ${model.id}`);
+      location.reload();
+    })();
+  });
+
+  if (!(await refreshModelStatus())) {
     statusEl.textContent =
-      `Model is not downloaded (state: ${modelStatus.state}). ` +
-      'Download the model from the options page first, then reopen this page. ' +
+      `${model.name} is not downloaded. ` +
+      (model.production
+        ? 'Download the model from the options page first, then reopen this page. '
+        : 'Use Download above. ') +
       'The op diagnostics below still work without it.';
     return;
   }
-  statusEl.textContent = 'Model ready. Keep other Sakutto pages closed while the harness runs.';
+  statusEl.textContent = `${model.name} ready. Keep other Sakutto pages closed while the harness runs.`;
 
-  const prompt = buildTranslationPrompt({
+  const runner = model.production
+    ? productionRunner(manager, model)
+    : harnessRunner(harnessStore, model);
+  // Layer-index tensor overrides follow the PLaMo 3 layout, so other models skip them.
+  const configs = allConfigs.filter((c) => !c.plamoOnly || model.format === 'plamo3');
+  const prompt = buildHarnessPrompt(model, {
     text: HARNESS_SOURCE_TEXT,
     src: HARNESS_SOURCE_LANGUAGE,
     tgt: HARNESS_TARGET_LANGUAGE,
@@ -351,17 +527,21 @@ async function main(): Promise<void> {
   const buttons = (): HTMLButtonElement[] => [
     runButton,
     runIsolatedButton,
+    modelDownloadButton,
+    modelDeleteButton,
     clearButton,
     opsButton,
     ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
   ];
   const setBusy = (busy: boolean): void => {
     for (const button of buttons()) button.disabled = busy;
+    modelSelect.disabled = busy;
+    if (!busy) void refreshModelStatus();
   };
 
   const logVerdict = (results: readonly HarnessRunResult[], config: HarnessConfig): void => {
-    const cpuResult = results.find((r) => r.configId === 'cpu');
-    const result = results.find((r) => r.configId === config.id);
+    const cpuResult = results.find((r) => sameRun(r, 'cpu', model.id));
+    const result = results.find((r) => sameRun(r, config.id, model.id));
     if (cpuResult && result && config.id !== 'cpu') {
       const verdict = verdictForRun(cpuResult, result);
       log(
@@ -382,8 +562,9 @@ async function main(): Promise<void> {
       configs.map((c) => c.id),
       requested,
       state,
+      model.id,
     );
-    writeState({ ...state, queue });
+    writeState({ ...state, queue, modelId: model.id });
     location.reload();
   };
 
@@ -415,7 +596,7 @@ async function main(): Promise<void> {
   const saved = readState();
   if (saved.results.length > 0 || saved.queue.length > 0) {
     logEl.textContent = `${saved.log}${logEl.textContent ?? ''}`;
-    renderResults(configs, saved.results);
+    renderResults(allConfigs, saved.results);
   }
   const next = saved.queue[0];
   if (next !== undefined) {
@@ -426,10 +607,15 @@ async function main(): Promise<void> {
       writeState({ ...saved, queue: saved.queue.slice(1) });
     } else {
       statusEl.textContent = `Isolated run: ${config.id} (${saved.queue.length} left in the queue)…`;
-      log(`=== isolated run (fresh page, fresh worker and WebGPU device): ${config.id} ===`);
-      const result = await runConfig(manager, config, prompt, cpuConfig.selection);
-      await manager.unload().catch(() => undefined);
-      const results = [...saved.results.filter((r) => r.configId !== result.configId), result];
+      log(
+        `=== isolated run (fresh page, fresh worker and WebGPU device): ${model.id} / ${config.id} ===`,
+      );
+      const result = await runConfig(runner, config, prompt, cpuConfig.selection);
+      await runner.unload().catch(() => undefined);
+      const results = [
+        ...saved.results.filter((r) => !sameRun(r, result.configId, result.modelId)),
+        result,
+      ];
       logVerdict(results, config);
       const chunk = (logEl.textContent ?? '').slice((before ?? '').length);
       writeState(recordIsolatedResult(saved, result, chunk));
@@ -443,7 +629,7 @@ async function main(): Promise<void> {
     }
     log('isolated run done');
     statusEl.textContent = 'Isolated run done. Results are kept until "Clear saved results".';
-    renderResults(configs, readState().results);
+    renderResults(allConfigs, readState().results);
   }
   setBusy(false);
 
@@ -452,15 +638,16 @@ async function main(): Promise<void> {
     void (async () => {
       setBusy(true);
       try {
+        log(`model: ${model.id} (${model.architecture})`);
         log(`source: ${HARNESS_SOURCE_TEXT}`);
         const results: HarnessRunResult[] = [];
         for (const config of configs) {
-          const result = await runConfig(manager, config, prompt, cpuConfig.selection);
+          const result = await runConfig(runner, config, prompt, cpuConfig.selection);
           results.push(result);
           logVerdict(results, config);
-          renderResults(configs, results);
+          renderResults(allConfigs, results);
         }
-        await manager.unload();
+        await runner.unload();
         log('done');
       } catch (error) {
         reportFatal(error);

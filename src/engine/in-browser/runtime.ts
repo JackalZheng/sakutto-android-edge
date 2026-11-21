@@ -10,6 +10,8 @@ export interface CompletionRequest {
   maxTokens: number;
   signal: AbortSignal;
   onToken: (text: string) => void;
+  /** Stop strings for this request; the PLaMo translation stops when omitted (debug harness only). */
+  stop?: readonly string[];
 }
 
 export interface LlamaRuntime {
@@ -274,7 +276,7 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
               // A finished request that asks for no reuse gives back its cells (patch 0005); cells
               // left by idle slots would widen every attention step of the requests still running.
               cache_prompt: selection.nParallel === 1,
-              stop: [...TRANSLATION_STOP_TOKENS],
+              stop: [...(request.stop ?? TRANSLATION_STOP_TOKENS)],
               stream: true,
               onData: (chunk) => {
                 forwardCompletionToken(request.signal, chunk.choices?.[0]?.text, request.onToken);
