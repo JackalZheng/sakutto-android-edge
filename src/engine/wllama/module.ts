@@ -43,6 +43,14 @@ export interface WllamaLoadParams {
    */
   swa_full?: boolean;
   flash_attn?: boolean;
+  /** Keep the KV cache in host memory, so attention runs on the CPU (debug harness only). */
+  no_kv_offload?: boolean;
+  /**
+   * GGUF metadata overrides as `TYPE:value` strings. The patched wllama (patch 0014) also
+   * reads the reserved key `sakutto.tensor_buft_overrides` as llama.cpp `-ot` rules
+   * (`regex=CPU,...`). Debug harness only.
+   */
+  kv_overrides?: Record<string, string>;
   use_mmap?: boolean;
   use_mlock?: boolean;
   warmup?: boolean;
@@ -76,6 +84,11 @@ export interface Wllama {
     },
   ): Promise<void>;
   exit(): Promise<void>;
+  /**
+   * Debug only: run llama.cpp's test-backend-ops (linked by patch 0016) in a throwaway worker.
+   * Output arrives through the logger. Older bundles do not have it.
+   */
+  testBackendOps?(args: string[]): Promise<{ retcode: number; success: boolean }>;
 }
 
 export interface WllamaModule {

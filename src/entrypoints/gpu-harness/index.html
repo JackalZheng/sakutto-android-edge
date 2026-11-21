@@ -61,6 +61,26 @@
         overflow-wrap: anywhere;
       }
 
+      button.small {
+        min-height: 36px;
+        padding: 4px 12px;
+        font-size: 14px;
+        margin: 4px 0;
+      }
+
+      select {
+        min-height: 36px;
+        font-size: 15px;
+      }
+
+      tr.bad td {
+        background: rgba(220, 38, 38, 0.15);
+      }
+
+      #configs div {
+        font-size: 13px;
+      }
+
       @media (prefers-color-scheme: dark) {
         body {
           background: #0e1218;
@@ -89,9 +109,41 @@
       <p id="status">Probing…</p>
       <h2>Adapter</h2>
       <pre id="adapter">…</pre>
+      <h2>Translation runs</h2>
+      <p>
+        "Run harness" runs every config on this page, one after another. "Run all isolated" reloads
+        the page for each config (fresh page, wllama worker and WebGPU device), so a config cannot
+        affect the next one; results are kept in this tab until cleared. "Run alone" does the same
+        for one config (plus the CPU reference if none is saved).
+      </p>
       <button id="run" type="button" disabled>Run harness</button>
+      <button id="run-isolated" type="button" disabled>Run all isolated</button>
+      <button id="clear-saved" type="button" disabled>Clear saved results</button>
+      <div id="configs"></div>
       <h2>Results</h2>
       <div id="results"></div>
+      <h2>Op diagnostics (WebGPU vs CPU, per op)</h2>
+      <p>
+        Runs llama.cpp test-backend-ops with the shapes and types PLaMo 3 Translate 0.8B uses, on
+        WebGPU and on the CPU reference, and reports NMSE, max abs error and NaN/Inf counts per
+        case. Each op group runs in its own worker and WebGPU device. Does not need the model.
+      </p>
+      <label
+        >Device profile
+        <select id="ops-profile">
+          <option value="default">default</option>
+          <option value="no-subgroups">no-subgroups</option>
+        </select>
+      </label>
+      <label
+        >Backend
+        <select id="ops-backend">
+          <option value="webgpu">WebGPU vs CPU</option>
+          <option value="CPU">CPU vs CPU reference (suite self-check)</option>
+        </select>
+      </label>
+      <button id="run-ops" type="button" disabled>Run op diagnostics</button>
+      <div id="ops"></div>
       <h2>Log</h2>
       <pre id="log"></pre>
     </main>

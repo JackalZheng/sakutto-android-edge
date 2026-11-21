@@ -52,6 +52,9 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'llama.cpp/tools/server/server-context.cpp',
     'task->is_stateless() || !task->params.cache_prompt',
   ],
+  ['cpp/wllama-context.h', 'sakutto.tensor_buft_overrides'],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-plamo3'],
+  ['scripts/docker-compose.yml', 'CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=ON"'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {

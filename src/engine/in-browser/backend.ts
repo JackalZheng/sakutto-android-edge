@@ -37,6 +37,15 @@ export interface BackendProbe {
   sharedMemory?: boolean;
 }
 
+export interface DebugLoadOverrides {
+  /** false turns flash attention off; unset keeps llama.cpp's auto choice. */
+  flashAttn?: boolean;
+  /** Keep the KV cache (and so attention) on the CPU while the weights are on the GPU. */
+  noKvOffload?: boolean;
+  /** llama.cpp `-ot` rules, e.g. `blk\.(7|15)\.=CPU`. */
+  tensorOverrides?: string;
+}
+
 export interface BackendSelection {
   tier: ComputeTier;
   backend: BackendKind;
@@ -47,6 +56,8 @@ export interface BackendSelection {
   /** Prompt batch size passed to llama.cpp; unset keeps the loader default. */
   nBatch?: number;
   sharedMemory?: boolean;
+  /** Debug harness only: extra llama.cpp load options. Production selections never set it. */
+  debugLoad?: DebugLoadOverrides;
 }
 
 function clampThreads(requested: number, hardwareConcurrency: number): number {
