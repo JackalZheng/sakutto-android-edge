@@ -85,6 +85,12 @@ export interface Settings {
   composeInstantReplace: boolean;
   /** Where the compose preview bar sits. Sites may override this from the bar menu. */
   composePlacement: ComposePlacement;
+  /**
+   * Touch runtimes (Edge for Android): put the floating translate button on every page
+   * the extension may access, without opening the popup there first. Sites set to "never"
+   * are skipped.
+   */
+  fabEverywhere: boolean;
 }
 
 export type SettingsPatch = Partial<
@@ -103,6 +109,7 @@ export type SettingsPatch = Partial<
     | 'composeTargetLanguage'
     | 'composeInstantReplace'
     | 'composePlacement'
+    | 'fabEverywhere'
   >
 > & {
   shortcutsEnabled?: Partial<ShortcutEnabled>;
@@ -124,6 +131,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   composeTargetLanguage: null,
   composeInstantReplace: false,
   composePlacement: 'above',
+  fabEverywhere: true,
 });
 
 export function createDefaultSettings(uiLanguage: string): Settings {
@@ -169,6 +177,7 @@ export function normalizeSettings(value: unknown, uiLanguage: string): Settings 
     composeTargetLanguage: normalizeComposeTarget(value.composeTargetLanguage),
     composeInstantReplace: value.composeInstantReplace === true,
     composePlacement: isComposePlacement(value.composePlacement) ? value.composePlacement : 'above',
+    fabEverywhere: value.fabEverywhere !== false,
   };
 }
 

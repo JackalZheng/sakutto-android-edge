@@ -1,6 +1,7 @@
 import { isRecord } from './object';
 
-export type WebGpuDebugProfile = 'off' | 'amd-rdna3' | 'intel-arc' | 'no-f16' | 'reject-max-limits';
+export type WebGpuDebugProfile =
+  'off' | 'amd-rdna3' | 'intel-arc' | 'no-f16' | 'reject-max-limits' | 'no-subgroups';
 
 export type CorrectnessProbeStatus = 'ok' | 'failed' | 'subgroups-disabled';
 
@@ -14,6 +15,7 @@ const DEBUG_PROFILES: ReadonlySet<string> = new Set<WebGpuDebugProfile>([
   'intel-arc',
   'no-f16',
   'reject-max-limits',
+  'no-subgroups',
 ]);
 
 const REJECT_MAX_NOTE = 'debug: reject adapter-max requestDevice';
@@ -522,6 +524,9 @@ export function applyDebugOverlay(diagnostic: GpuDiagnostic): GpuDiagnostic {
   } else if (profile === 'no-f16') {
     next.shaderF16 = false;
     next.features = next.features.filter((name) => name !== 'shader-f16');
+  } else if (profile === 'no-subgroups') {
+    next.subgroups = false;
+    next.features = next.features.filter((name) => name !== 'subgroups');
   } else if (profile === 'reject-max-limits') {
     if (!next.description?.includes(REJECT_MAX_NOTE)) {
       next.description = next.description

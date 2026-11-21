@@ -19,15 +19,15 @@ index cae07f6..51682a6 100644
        params.n_ctx_checkpoints = req.n_ctx_checkpoints.value;
      if (req.checkpoint_min_step.not_null())
 diff --git a/llama.cpp/tools/server/server-context.cpp b/llama.cpp/tools/server/server-context.cpp
-index a18b754..8671eb9 100644
+index f821ac6..88b5365 100644
 --- a/llama.cpp/tools/server/server-context.cpp
 +++ b/llama.cpp/tools/server/server-context.cpp
-@@ -595,7 +595,7 @@ struct server_slot {
+@@ -680,7 +680,7 @@ struct server_slot {
  
              // do not keep context of the child slots - the parent's context is enough
              // nor of the stateless slots - no task ever reuses it
--            if (task->is_child() || task->is_stateless()) {
-+            if (task->is_child() || task->is_stateless() || !task->params.cache_prompt) {
+-            if (task->is_child() || task->is_stateless() || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME) {
++            if (task->is_child() || task->is_stateless() || !task->params.cache_prompt || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME) {
                  prompt_clear();
              }
  

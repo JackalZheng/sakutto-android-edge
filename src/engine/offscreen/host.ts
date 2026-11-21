@@ -8,6 +8,8 @@ import { advanceModelStatus } from '@/shared/model-progress';
 import { loadSettings } from '@/shared/storage';
 import type { TierPreference } from '@/shared/settings';
 import { isAndroidEdgeRuntime } from '@/shared/mobile';
+import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
+import { looksLikeBrokenTranslation } from '../text/garbage';
 import { MemoryTranslationCacheStore, IndexedDbTranslationCacheStore } from '../cache/store';
 import { CachingEngine } from '../cache/caching-engine';
 import { TranslationCache } from '../cache/cache';
@@ -15,12 +17,12 @@ import { prewarmRequest } from '../cache/prewarm';
 import { ChromeTranslatorEngine } from '../chrome/translator';
 import { isAbortError, isEngineError } from '../errors';
 import {
-  applyMobileLimits,
+  cpuAfterBrokenOutput,
   cpuFallback,
   isGpuLoadFallback,
   lighterSelection,
+  resolveSelection,
   selectionAfterGpuLoss,
-  selectionForTier,
   type BackendSelection,
 } from '../in-browser/backend';
 import { LazyInBrowserEngine } from '../in-browser/lazy-engine';
@@ -229,10 +231,11 @@ export class EngineHost {
       sharedMemory: capabilities.crossOriginIsolated,
     };
     const stored = browser.storage?.local ? await loadSettings().catch(() => null) : null;
-    const initial = selectionForTier(stored?.tier ?? 'auto', probe);
-    // A phone's small cores and shared memory budget cannot use the desktop thread
-    // and batch sizes; the parallel width is untouched.
-    const selection = isAndroidEdgeRuntime() ? applyMobileLimits(initial) : initial;
+    // A phone's small cores and shared memory budget cannot use the desktop thread and
+    // batch sizes, and "auto" stays off WebGPU there; see `resolveSelection`.
+    const android = isAndroidEdgeRuntime();
+    const runtime = { android, gpuOutputBroken: android && (await loadGpuOutputBroken()) };
+    const selection = resolveSelection(stored?.tier ?? 'auto', probe, runtime);
     const selectionState = { current: selection };
     const store = await OpfsModelFileStore.open();
     const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
@@ -278,7 +281,24 @@ export class EngineHost {
       this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), this.gpuDiagnostic?.error);
       await manager.unload();
     };
-    const lazy = new LazyInBrowserEngine({ loadRuntime: load, onGpuLost });
+    // Only on the phone: a desktop GPU has not been seen to return garbage, and the check
+    // must never send a working desktop GPU to the CPU over an unusual translation.
+    const onBrokenOutput = async (): Promise<void> => {
+      selectionState.current = cpuAfterBrokenOutput(selectionState.current, runtime);
+      runtime.gpuOutputBroken = true;
+      this.gpuFallback = true;
+      await saveGpuOutputBroken(true);
+      // Short labels the check lets through may already be cached from the same GPU.
+      await cache.clear().catch(() => undefined);
+      await manager.unload();
+    };
+    const lazy = new LazyInBrowserEngine({
+      loadRuntime: load,
+      onGpuLost,
+      ...(android
+        ? { outputGuard: { isBroken: looksLikeBrokenTranslation, onBroken: onBrokenOutput } }
+        : {}),
+    });
 
     const chromeForCache = chrome.available ? new CachingEngine(chrome, cache, 'chrome') : null;
 
@@ -305,8 +325,12 @@ export class EngineHost {
       },
       clearCache: () => cache.clear(),
       setTier: async (tier: TierPreference) => {
-        const next = selectionForTier(tier, probe);
-        selectionState.current = isAndroidEdgeRuntime() ? applyMobileLimits(next) : next;
+        // Choosing WebGPU again is the way to retry it after broken output.
+        if (tier === 'g' && runtime.gpuOutputBroken) {
+          runtime.gpuOutputBroken = false;
+          await saveGpuOutputBroken(false);
+        }
+        selectionState.current = resolveSelection(tier, probe, runtime);
         this.gpuFallback = false;
         this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), null);
         lazy.reset();

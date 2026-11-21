@@ -1055,5 +1055,26 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "在手机 GPU 上使用 WebGPU 可能产生错误的翻译。如果出现乱码，Sakutto 会自动切回 CPU。"
+  },
+  "fabEverywhereSetting": {
+    "message": "在所有网站显示翻译按钮"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "按钮需要所有网站的访问权限，只会询问一次。设为从不翻译的网站不会显示。"
+  },
+  "fabEverywhereGrant": {
+    "message": "允许在所有网站显示翻译按钮"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "未获得网站访问权限。按钮只会出现在你打开过 Sakutto 的页面。"
+  },
+  "openGpuHarness": {
+    "message": "打开 GPU 测试工具"
+  },
+  "gpuHarnessHelp": {
+    "message": "用一段固定文字分别跑 CPU 与 WebGPU，再比对输出。侧载安装的模型是另外存放的，请先在这里下载 0.8B 模型。"
   }
 }

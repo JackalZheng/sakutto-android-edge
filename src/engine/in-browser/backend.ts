@@ -196,6 +196,43 @@ export function applyMobileLimits(selection: BackendSelection): BackendSelection
   };
 }
 
+export interface RuntimeContext {
+  /** Edge for Android: phone caps, and WebGPU only on an explicit choice. */
+  android: boolean;
+  /** WebGPU produced broken output on this device before; see `gpu-output.ts`. */
+  gpuOutputBroken?: boolean;
+}
+
+/**
+ * The selection for a settings choice on this runtime.
+ *
+ * On Edge for Android, "auto" never picks WebGPU. llama.cpp's WebGPU backend returned
+ * garbage on an Adreno 730 (POCO F5 Pro) while the CPU path translated correctly, and a
+ * phone cannot tell a wrong GPU from a right one before it has translated something. WebGPU
+ * stays available as an explicit choice, unless it already produced broken output here.
+ */
+export function resolveSelection(
+  preference: TierPreference,
+  probe: BackendProbe,
+  context: RuntimeContext,
+): BackendSelection {
+  if (!context.android) return selectionForTier(preference, probe);
+  const cpuOnly = preference === 'auto' || (preference === 'g' && context.gpuOutputBroken === true);
+  const selection = cpuOnly
+    ? selectionForTier('auto', { ...probe, webgpu: false })
+    : selectionForTier(preference, probe);
+  return applyMobileLimits(selection);
+}
+
+/** Where to run after WebGPU produced broken output: the CPU, with the phone caps. */
+export function cpuAfterBrokenOutput(
+  selection: BackendSelection,
+  context: RuntimeContext,
+): BackendSelection {
+  const cpu = cpuFallback(selection) ?? selection;
+  return context.android ? applyMobileLimits(cpu) : cpu;
+}
+
 /**
  * True when a WebGPU load ended on the CPU. A manual CPU choice is the same backend on
  * both sides, so it must not be reported as "WebGPU could not load the model".

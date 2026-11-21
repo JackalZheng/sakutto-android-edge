@@ -1,0 +1,65 @@
+Debug profile 5 'no-subgroups': request a WebGPU device without the
+Subgroups feature, so ggml-webgpu runs its workgroup-reduction shaders
+instead of the subgroup ones. Same wasm binary, same harness page: the
+profile selects the subgroup-free device per config, so a phone run can
+compare subgroup-on vs subgroup-off directly.
+
+The granted-device caps already re-derive supports_subgroups from the
+device (patch 0007), and the correctness probe only compiles its subgroup
+shader when subgroups are on, so no other change is needed: the probe
+logs subgroups=false and the shader lib picks USE_WORKGROUP_REDUCTION.
+
+Motivation: on the owner's POCO F5 Pro (Adreno 730) the Stage 0 bump did
+not fix the garble — CPU correct, all three WebGPU configs the identical
+deterministic garble from the first token — so subgroups are the top
+remaining suspect (llama.cpp b12558 disabled Vulkan subgroup arithmetic
+on Adreno for the same symptom class).
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -4863,7 +4863,7 @@
+     }
+ }
+ 
+-// 0 off, 1 amd-rdna3, 2 intel-arc, 3 no-f16, 4 reject-max-limits
++// 0 off, 1 amd-rdna3, 2 intel-arc, 3 no-f16, 4 reject-max-limits, 5 no-subgroups
+ // Never invent a subgroup size (including a "wave64" debug override): a wrong
+ // MAX_SUBGROUP_SIZE silently mistranslates.
+ static int ggml_webgpu_debug_profile_code() {
+@@ -4876,6 +4876,7 @@
+                if (v === 'intel-arc') return 2;
+                if (v === 'no-f16') return 3;
+                if (v === 'reject-max-limits') return 4;
++               if (v === 'no-subgroups') return 5;
+                return 0;
+            });
+ #else
+@@ -5243,15 +5244,25 @@
+     std::vector<wgpu::FeatureName> features_f16 = { wgpu::FeatureName::ShaderF16 };
+     std::vector<wgpu::FeatureName> features_full = features_f16;
+ 
++    // Debug profile 5: request a device without the Subgroups feature, so the
++    // workgroup-reduction shaders run instead of the subgroup ones. The
++    // granted-device caps re-derive supports_subgroups below, and the
++    // correctness probe skips its subgroup shader when subgroups are off.
++    const bool no_subgroups = debug_profile == 5;
++    if (no_subgroups) {
++        GGML_LOG_INFO("ggml_webgpu: debug profile no-subgroups: requesting a device without Subgroups\n");
++        ggml_webgpu_disable_subgroups(ctx->webgpu_global_ctx->capabilities);
++    }
++
+ #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+     features_f16.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
+     features_full.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
+-    if (ctx->webgpu_global_ctx->capabilities.supports_subgroup_matrix) {
++    if (!no_subgroups && ctx->webgpu_global_ctx->capabilities.supports_subgroup_matrix) {
+         features_full.push_back(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix);
+     }
+ #endif
+ 
+-    if (ctx->webgpu_global_ctx->capabilities.supports_subgroups) {
++    if (!no_subgroups && ctx->webgpu_global_ctx->capabilities.supports_subgroups) {
+         features_full.push_back(wgpu::FeatureName::Subgroups);
+     }
+ 

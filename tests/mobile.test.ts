@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MOBILE_MODEL_ID,
+  isAndroidEdgeRuntime,
   isAndroidEdgeUserAgent,
+  isAndroidRuntime,
+  isAndroidRuntimeUserAgent,
   isEdgeUserAgent,
   isMobileModelAllowed,
   warmBeforePageCommand,
@@ -48,6 +51,19 @@ describe('Edge for Android mobile target', () => {
     expect(isAndroidEdgeUserAgent(DESKTOP_EDGE_UA)).toBe(false);
     expect(isAndroidEdgeUserAgent(CHROME_ANDROID_UA)).toBe(false);
     expect(isEdgeUserAgent(DESKTOP_EDGE_UA)).toBe(true);
+  });
+
+  it('counts any Android browser (no EdgA, e.g. Quetta) as the Android runtime', () => {
+    expect(isAndroidRuntimeUserAgent(CHROME_ANDROID_UA)).toBe(true);
+    expect(isAndroidRuntimeUserAgent(EDGE_ANDROID_UA)).toBe(true);
+    expect(isAndroidRuntimeUserAgent(DESKTOP_EDGE_UA)).toBe(false);
+    expect(isAndroidRuntimeUserAgent(DESKTOP_EDGE_UA, { platform: 'Android' })).toBe(true);
+    vi.stubGlobal('navigator', { userAgent: CHROME_ANDROID_UA });
+    expect(isAndroidRuntime()).toBe(true);
+    expect(isAndroidEdgeRuntime()).toBe(true);
+    vi.stubGlobal('navigator', { userAgent: DESKTOP_EDGE_UA });
+    expect(isAndroidRuntime()).toBe(false);
+    expect(isAndroidEdgeRuntime()).toBe(false);
   });
 
   it('only allows the 0.8B model on mobile', () => {

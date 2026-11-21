@@ -30,10 +30,40 @@ export function isAndroidEdgeUserAgent(userAgent: string): boolean {
   return isAndroidUserAgent(userAgent) && isEdgeUserAgent(userAgent);
 }
 
-/** True at runtime inside Edge for Android (service worker, popup, page). */
-export function isAndroidEdgeRuntime(): boolean {
+/**
+ * True for a UA that belongs to an Android browser, with or without the
+ * EdgA token — Quetta's UA has none, so it still counts as Android.
+ * `userAgentData.platform` covers a UA that hides the OS token.
+ */
+export function isAndroidRuntimeUserAgent(
+  userAgent: string,
+  userAgentData?: { platform?: string } | null,
+): boolean {
+  return isAndroidUserAgent(userAgent) || userAgentData?.platform === 'Android';
+}
+
+type NavigatorWithUserAgentData = Navigator & {
+  userAgentData?: { platform?: string; mobile?: boolean };
+};
+
+/** True at runtime inside an Android browser running the extension. */
+export function isAndroidRuntime(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return isAndroidEdgeUserAgent(navigator.userAgent);
+  return isAndroidRuntimeUserAgent(
+    navigator.userAgent,
+    (navigator as NavigatorWithUserAgentData).userAgentData ?? null,
+  );
+}
+
+/**
+ * True at runtime inside Edge for Android — and, since the same phone caps,
+ * model restriction, and Auto→CPU guard apply to any Android browser running
+ * the extension (Quetta has no EdgA token), inside an Android browser
+ * generally. The strict EdgA check stays in `isAndroidEdgeUserAgent` for
+ * UA classification; this one answers "is this an Android runtime".
+ */
+export function isAndroidEdgeRuntime(): boolean {
+  return isAndroidRuntime();
 }
 
 export function isTouchRuntime(): boolean {

@@ -110,9 +110,10 @@ async function ensureCheckout(): Promise<void> {
 
   const linked = await git(['rev-parse', 'HEAD:llama.cpp']);
   if (linked !== LLAMA_CPP_COMMIT) {
-    throw new Error(
-      `wllama @${WLLAMA_COMMIT} expects llama.cpp ${LLAMA_CPP_COMMIT}, found ${linked}`,
-    );
+    // pins.ts deliberately moves llama.cpp ahead of the gitlink recorded in
+    // the wllama tree (Stage 0 of the Android WebGPU fix); the submodule is
+    // fetched and checked out at the pin below instead of failing here.
+    log(`llama.cpp pin ${LLAMA_CPP_COMMIT} overrides wllama gitlink ${linked}`);
   }
 
   if (!(await exists(join(CHECKOUT_DIR, 'llama.cpp', '.git')))) {
@@ -124,7 +125,24 @@ async function ensureCheckout(): Promise<void> {
     }
   }
 
-  const llamaCpp = await git(['rev-parse', 'HEAD'], join(CHECKOUT_DIR, 'llama.cpp'));
+  const llamaDir = join(CHECKOUT_DIR, 'llama.cpp');
+  let llamaCpp = await git(['rev-parse', 'HEAD'], llamaDir);
+  if (llamaCpp !== LLAMA_CPP_COMMIT) {
+    log(`checking out llama.cpp ${LLAMA_CPP_COMMIT}`);
+    const known = await git(['cat-file', '-e', `${LLAMA_CPP_COMMIT}^{commit}`], llamaDir).then(
+      () => true,
+      () => false,
+    );
+    if (!known) {
+      try {
+        await git(['fetch', '--depth', '1', 'origin', LLAMA_CPP_COMMIT], llamaDir);
+      } catch {
+        await git(['fetch', 'origin'], llamaDir);
+      }
+    }
+    await git(['checkout', '--detach', LLAMA_CPP_COMMIT], llamaDir);
+    llamaCpp = await git(['rev-parse', 'HEAD'], llamaDir);
+  }
   if (llamaCpp !== LLAMA_CPP_COMMIT) {
     throw new Error(`llama.cpp checkout is at ${llamaCpp}, expected ${LLAMA_CPP_COMMIT}`);
   }
