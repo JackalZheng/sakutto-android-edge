@@ -12,6 +12,8 @@ import {
   verdictForRun,
 } from '@/engine/debug-harness';
 import { createWllamaRuntime, gpuEvidence, lastWebGpuLoadLog } from '@/engine/in-browser/runtime';
+import type { BackendSelection } from '@/engine/in-browser/backend';
+import { isEngineError } from '@/engine/errors';
 import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
 import { OpfsModelFileStore } from '@/engine/model/file-store';
 import { ModelManager } from '@/engine/model/manager';
@@ -60,10 +62,56 @@ function reportFatal(error: unknown): void {
   log(`FATAL: ${detail}`);
 }
 
+/** Load one selection and run the fixed prompt through it, filling `result`. */
+async function runLoaded(
+  manager: ModelManager,
+  selection: BackendSelection,
+  prompt: string,
+  result: HarnessRunResult,
+): Promise<void> {
+  const loaded = await manager.ensureLoaded(DEFAULT_MODEL_ID, selection);
+  if (selection.backend === 'webgpu') {
+    const lines = lastWebGpuLoadLog();
+    result.gpuEvidence = gpuEvidence(lines);
+    const parsed = parseWebGpuLog(lines);
+    result.correctnessProbe = parsed.correctnessProbe;
+    result.correctnessProbeSubgroupSize = parsed.correctnessProbeSubgroupSize;
+    result.correctnessProbeMs = parsed.correctnessProbeMs;
+    log(`gpu evidence: ${result.gpuEvidence}`);
+    for (const line of lines) {
+      if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
+    }
+  }
+  const chunks: string[] = [];
+  const controller = new AbortController();
+  const started = performance.now();
+  let firstAt: number | null = null;
+  await loaded.runtime.complete({
+    prompt,
+    maxTokens: HARNESS_MAX_TOKENS,
+    signal: controller.signal,
+    onToken: (text) => {
+      if (firstAt === null) firstAt = performance.now();
+      chunks.push(text);
+    },
+  });
+  const ended = performance.now();
+  result.ok = true;
+  result.output = chunks.join('');
+  result.firstToken = firstStreamedToken(chunks);
+  result.ttftMs = firstAt === null ? null : Math.round(firstAt - started);
+  result.totalMs = Math.round(ended - started);
+  log(
+    `ok: ttft=${describe(result.ttftMs)}ms total=${result.totalMs}ms first token=${JSON.stringify(result.firstToken)}`,
+  );
+  log(`output: ${result.output}`);
+}
+
 async function runConfig(
   manager: ModelManager,
   config: HarnessConfig,
   prompt: string,
+  cpuSelection: BackendSelection,
 ): Promise<HarnessRunResult> {
   const result: HarnessRunResult = {
     configId: config.id,
@@ -77,6 +125,7 @@ async function runConfig(
     correctnessProbe: null,
     correctnessProbeSubgroupSize: null,
     correctnessProbeMs: null,
+    fellBackToCpu: false,
   };
   log(`--- ${config.label} ---`);
   try {
@@ -85,42 +134,27 @@ async function runConfig(
     // Force a fresh load per config: the debug profile is read when the
     // wllama worker is created, and two configs can share one selection.
     await manager.unload();
-    const loaded = await manager.ensureLoaded(DEFAULT_MODEL_ID, config.selection);
-    if (config.selection.backend === 'webgpu') {
-      const lines = lastWebGpuLoadLog();
-      result.gpuEvidence = gpuEvidence(lines);
-      const parsed = parseWebGpuLog(lines);
-      result.correctnessProbe = parsed.correctnessProbe;
-      result.correctnessProbeSubgroupSize = parsed.correctnessProbeSubgroupSize;
-      result.correctnessProbeMs = parsed.correctnessProbeMs;
-      log(`gpu evidence: ${result.gpuEvidence}`);
-      for (const line of lines) {
-        if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
+    try {
+      await runLoaded(manager, config.selection, prompt, result);
+    } catch (error) {
+      if (config.fallbackToCpu && isEngineError(error) && error.code === 'gpu-unavailable') {
+        // The no-f16 profile refuses the device on purpose: record the GPU
+        // evidence from the failed load, then run the same prompt on the CPU
+        // so the config reports whether the model still translates without
+        // shader-f16 instead of a load error.
+        const lines = lastWebGpuLoadLog();
+        result.gpuEvidence = gpuEvidence(lines);
+        log(`gpu evidence: ${result.gpuEvidence} — WebGPU refused the device, falling back to CPU`);
+        for (const line of lines) {
+          if (line.includes('ggml_webgpu') || line.includes('offload')) log(`  ${line}`);
+        }
+        await manager.unload();
+        await runLoaded(manager, cpuSelection, prompt, result);
+        result.fellBackToCpu = true;
+      } else {
+        throw error;
       }
     }
-    const chunks: string[] = [];
-    const controller = new AbortController();
-    const started = performance.now();
-    let firstAt: number | null = null;
-    await loaded.runtime.complete({
-      prompt,
-      maxTokens: HARNESS_MAX_TOKENS,
-      signal: controller.signal,
-      onToken: (text) => {
-        if (firstAt === null) firstAt = performance.now();
-        chunks.push(text);
-      },
-    });
-    const ended = performance.now();
-    result.ok = true;
-    result.output = chunks.join('');
-    result.firstToken = firstStreamedToken(chunks);
-    result.ttftMs = firstAt === null ? null : Math.round(firstAt - started);
-    result.totalMs = Math.round(ended - started);
-    log(
-      `ok: ttft=${describe(result.ttftMs)}ms total=${result.totalMs}ms first token=${JSON.stringify(result.firstToken)}`,
-    );
-    log(`output: ${result.output}`);
   } catch (error) {
     result.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     log(`FAILED: ${result.error}`);
@@ -132,9 +166,11 @@ async function runConfig(
     // copied from a phone may carry just the adapter section — so the
     // harness prints the probe verdict explicitly after every GPU run.
     log(
-      `correctness probe: ${describe(result.correctnessProbe)} ` +
-        `subgroup_size=${describe(result.correctnessProbeSubgroupSize)} ` +
-        `ms=${describe(result.correctnessProbeMs)}`,
+      result.fellBackToCpu
+        ? 'correctness probe: n/a (ran on CPU fallback)'
+        : `correctness probe: ${describe(result.correctnessProbe)} ` +
+            `subgroup_size=${describe(result.correctnessProbeSubgroupSize)} ` +
+            `ms=${describe(result.correctnessProbeMs)}`,
     );
   }
   return result;
@@ -165,7 +201,7 @@ function renderResults(
           : null
         : (comparison?.gpuLooksBroken ?? null);
     const cells = [
-      `${config?.label ?? result.configId}${result.ok ? '' : ` — FAILED: ${result.error ?? ''}`}`,
+      `${config?.label ?? result.configId}${result.fellBackToCpu ? ' (CPU fallback)' : ''}${result.ok ? '' : ` — FAILED: ${result.error ?? ''}`}`,
       result.firstToken,
       result.output,
       result.ttftMs === null ? 'n/a' : `${result.ttftMs} ms`,
@@ -185,7 +221,7 @@ function renderResults(
         `${config?.label ?? result.configId} vs CPU: first token ` +
         `${comparison.firstTokenMatches ? 'matches' : 'DIFFERS'}, output ` +
         `${comparison.outputsIdentical ? 'identical' : 'differs'}, gpu evidence ` +
-        `${describe(result.gpuEvidence)}, correctness probe ${describe(result.correctnessProbe)} ` +
+        `${describe(result.gpuEvidence)}${result.fellBackToCpu ? ' (ran on CPU fallback after WebGPU refused the device)' : ''}, correctness probe ${describe(result.correctnessProbe)} ` +
         `subgroup_size=${describe(result.correctnessProbeSubgroupSize)} — verdict: ` +
         `${verdict.pass ? 'PASS' : `FAIL (${verdict.reasons.join('; ')})`} ` +
         '(verdict uses the output diff only; the built-in probe is recorded, not trusted).';
@@ -258,6 +294,8 @@ async function main(): Promise<void> {
           sharedMemory: capabilities.crossOriginIsolated,
         };
         const configs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
+        const cpuConfig = configs.find((c) => c.id === 'cpu');
+        if (!cpuConfig) throw new Error('harness has no CPU reference config');
         const prompt = buildTranslationPrompt({
           text: HARNESS_SOURCE_TEXT,
           src: HARNESS_SOURCE_LANGUAGE,
@@ -266,7 +304,7 @@ async function main(): Promise<void> {
         log(`source: ${HARNESS_SOURCE_TEXT}`);
         const results: HarnessRunResult[] = [];
         for (const config of configs) {
-          const result = await runConfig(manager, config, prompt);
+          const result = await runConfig(manager, config, prompt, cpuConfig.selection);
           results.push(result);
           const cpuResult = results.find((r) => r.configId === 'cpu');
           if (cpuResult && config.id !== 'cpu') {

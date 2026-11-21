@@ -13,7 +13,14 @@ import type { GpuDiagnostic } from '@/shared/gpu-diagnostic';
  * One fixed prompt is run through the CPU backend (the reference) and through
  * several WebGPU configurations. The phone's job is to produce the numbers
  * that decide whether the llama.cpp bump fixed the Adreno/Vulkan corruption
- * and, if not, which knob (slots, context size, shader-f16) changes it.
+ * and, if not, which knob (slots, context size, shader-f16, subgroups,
+ * offloaded layers) changes it.
+ *
+ * Stage 2 (the bump did not fix it — the device run showed CPU correct and
+ * three WebGPU configs the identical deterministic garble from the first
+ * token) adds: a no-subgroups profile (patch 0013), partial-offload
+ * comparisons (n_gpu_layers 1 and 8), and a CPU fallback for the no-f16
+ * config so it reports an outcome instead of an error.
  *
  * This module is the pure part: configuration building and output comparison.
  * The page that drives the real runtimes lives in
@@ -33,11 +40,19 @@ export interface HarnessConfig {
   selection: BackendSelection;
   /**
    * ggml debug profile to set on the harness page before this load, or null.
-   * Only 'no-f16' is used: the patched ggml treats the adapter as lacking
-   * shader-f16, refuses the device, and the load degrades to CPU inside the
-   * worker — the harness reports that through the load log's GPU evidence.
+   * 'no-f16': the patched ggml treats the adapter as lacking shader-f16,
+   * refuses the device, and the load degrades to CPU inside the worker.
+   * 'no-subgroups' (patch 0013): the patched ggml requests a device without
+   * the Subgroups feature, so the workgroup-reduction shaders run.
    */
-  debugProfile: 'no-f16' | null;
+  debugProfile: 'no-f16' | 'no-subgroups' | null;
+  /**
+   * When the WebGPU load refuses the device (EngineError 'gpu-unavailable'),
+   * rerun this config on the CPU selection and report the fallback outcome
+   * instead of a load error. Only the no-f16 config sets this: its point is
+   * to show the model still translates without shader-f16.
+   */
+  fallbackToCpu?: boolean;
 }
 
 export function buildHarnessConfigs(probe: BackendProbe, android: boolean): HarnessConfig[] {
@@ -71,6 +86,25 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
       label: 'WebGPU (no shader-f16 profile)',
       selection: gpu,
       debugProfile: 'no-f16',
+      fallbackToCpu: true,
+    },
+    {
+      id: 'gpu-no-subgroups',
+      label: 'WebGPU (no subgroups profile)',
+      selection: gpu,
+      debugProfile: 'no-subgroups',
+    },
+    {
+      id: 'gpu-layers-1',
+      label: 'WebGPU (1 GPU layer)',
+      selection: { ...gpu, nGpuLayers: 1 },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-layers-8',
+      label: 'WebGPU (8 GPU layers)',
+      selection: { ...gpu, nGpuLayers: 8 },
+      debugProfile: null,
     },
   );
   return configs;
@@ -93,6 +127,8 @@ export interface HarnessRunResult {
   correctnessProbeSubgroupSize: number | null;
   /** Correctness-probe duration from the load log, when reported. */
   correctnessProbeMs: number | null;
+  /** True when the run fell back to the CPU after WebGPU refused the device. */
+  fellBackToCpu: boolean;
 }
 
 export function firstStreamedToken(chunks: readonly string[]): string {

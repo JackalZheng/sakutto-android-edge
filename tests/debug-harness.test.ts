@@ -31,6 +31,7 @@ function run(partial: Partial<HarnessRunResult>): HarnessRunResult {
     correctnessProbe: null,
     correctnessProbeSubgroupSize: null,
     correctnessProbeMs: null,
+    fellBackToCpu: false,
     ...partial,
   };
 }
@@ -44,7 +45,16 @@ describe('buildHarnessConfigs', () => {
 
   it('adds the GPU configurations when WebGPU is available', () => {
     const ids = buildHarnessConfigs(GPU_PROBE, false).map((c) => c.id);
-    expect(ids).toEqual(['cpu', 'gpu-default', 'gpu-1-slot', 'gpu-nctx-2048', 'gpu-no-f16']);
+    expect(ids).toEqual([
+      'cpu',
+      'gpu-default',
+      'gpu-1-slot',
+      'gpu-nctx-2048',
+      'gpu-no-f16',
+      'gpu-no-subgroups',
+      'gpu-layers-1',
+      'gpu-layers-8',
+    ]);
   });
 
   it('omits the GPU configurations when WebGPU is unavailable', () => {
@@ -66,10 +76,36 @@ describe('buildHarnessConfigs', () => {
     expect(ctx?.selection.nParallel).toBe(def?.selection.nParallel);
   });
 
-  it('marks only the no-f16 config with the debug profile', () => {
+  it('marks only the profile configs with a debug profile', () => {
     const configs = buildHarnessConfigs(GPU_PROBE, false);
     for (const config of configs) {
-      expect(config.debugProfile).toBe(config.id === 'gpu-no-f16' ? 'no-f16' : null);
+      expect(config.debugProfile).toBe(
+        config.id === 'gpu-no-f16'
+          ? 'no-f16'
+          : config.id === 'gpu-no-subgroups'
+            ? 'no-subgroups'
+            : null,
+      );
+    }
+  });
+
+  it('offloads 1 and 8 layers for the partial-offload configs', () => {
+    const configs = buildHarnessConfigs(GPU_PROBE, false);
+    const def = configs.find((c) => c.id === 'gpu-default');
+    const one = configs.find((c) => c.id === 'gpu-layers-1');
+    const eight = configs.find((c) => c.id === 'gpu-layers-8');
+    expect(one?.selection.nGpuLayers).toBe(1);
+    expect(eight?.selection.nGpuLayers).toBe(8);
+    expect(one?.selection.nParallel).toBe(def?.selection.nParallel);
+    expect(one?.selection.nCtx).toBe(def?.selection.nCtx);
+    expect(eight?.selection.nParallel).toBe(def?.selection.nParallel);
+    expect(eight?.selection.nCtx).toBe(def?.selection.nCtx);
+  });
+
+  it('falls back to CPU only for the no-f16 config', () => {
+    const configs = buildHarnessConfigs(GPU_PROBE, false);
+    for (const config of configs) {
+      expect(config.fallbackToCpu ?? false).toBe(config.id === 'gpu-no-f16');
     }
   });
 
