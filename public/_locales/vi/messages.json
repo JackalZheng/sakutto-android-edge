@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "Chưa được cấp quyền truy cập trang web. Nút chỉ hiện trên các trang mà bạn mở Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Mở công cụ kiểm tra GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "Chạy một đoạn văn cố định trên CPU và WebGPU rồi so sánh kết quả. Bản cài đặt sideload lưu trữ mô hình riêng, vì vậy hãy tải xuống mô hình 0.8B tại đây trước."
   }
 }

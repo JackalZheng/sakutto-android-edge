@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "Site access was not granted. The button appears only on pages where you open Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Open GPU harness"
+  },
+  "gpuHarnessHelp": {
+    "message": "Runs a fixed paragraph through the CPU and WebGPU backends and compares the outputs. A sideloaded install keeps its own model copy, so download the 0.8B model here first."
   }
 }

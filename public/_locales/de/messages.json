@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "Der Websitezugriff wurde nicht gewährt. Die Schaltfläche erscheint nur auf Seiten, auf denen du Sakutto öffnest."
+  },
+  "openGpuHarness": {
+    "message": "GPU-Harness öffnen"
+  },
+  "gpuHarnessHelp": {
+    "message": "Lässt einen festen Absatz auf CPU und WebGPU laufen und vergleicht die Ausgaben. Eine per Sideload installierte Version speichert ihr Modell separat – lade zuerst hier das 0,8B-Modell herunter."
   }
 }

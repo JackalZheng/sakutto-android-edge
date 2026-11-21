@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "사이트 접근 권한을 받지 못했습니다. 버튼은 Sakutto를 연 페이지에만 표시됩니다."
+  },
+  "openGpuHarness": {
+    "message": "GPU 하네스 열기"
+  },
+  "gpuHarnessHelp": {
+    "message": "고정된 문단을 CPU와 WebGPU로 실행해 출력을 비교합니다. 사이드로드 설치본은 모델을 따로 저장하므로, 먼저 여기서 0.8B 모델을 다운로드하세요."
   }
 }

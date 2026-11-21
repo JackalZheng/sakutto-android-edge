@@ -22,6 +22,7 @@
   import type { IdleMinutes, Settings, SettingsPatch, TierPreference } from '@/shared/settings';
   import { isIdleMinutes, isTierPreference } from '@/shared/settings';
   import { isAndroidEdgeRuntime } from '@/shared/mobile';
+  import { webGpuDebugProfileFromUrl } from '@/shared/gpu-diagnostic';
   import type { TargetLanguage } from '@/shared/languages';
   import { loadSettings, saveSettings, subscribeSettings } from '@/shared/storage';
   import EngineStatusView from '@/ui/EngineStatus.svelte';
@@ -47,6 +48,12 @@
   const projectLinks = PROJECT_LINKS;
   /** Edge for Android has no keyboard, so this panel shows gestures, not shortcuts. */
   const androidEdge = isAndroidEdgeRuntime();
+  /**
+   * The GPU harness is a debug tool with no address-bar entry on phones: show
+   * its button on Android Edge, or on desktop when the settings page was opened
+   * with a WebGPU debug profile (?webgpuDebug=…), the same signal the engine uses.
+   */
+  const showGpuHarness = androidEdge || webGpuDebugProfileFromUrl(location.href) !== null;
 
   let settings = $state<Settings | null>(null);
   let settingsError = $state<SettingsError>(null);
@@ -62,6 +69,7 @@
   let quality = $state<QualitySample | null>(null);
   let cacheState = $state<CacheState>(null);
   let actionFailed = $state(false);
+  let harnessOpenFailed = $state(false);
   let allSites = $state<boolean | null>(null);
   let allSitesFailed = $state(false);
 
@@ -206,6 +214,15 @@
       await browser.tabs.create({ url: browser.runtime.getURL('/typed.html') });
     } catch {
       actionFailed = true;
+    }
+  }
+
+  async function openGpuHarness() {
+    harnessOpenFailed = false;
+    try {
+      await browser.tabs.create({ url: browser.runtime.getURL('/gpu-harness.html') });
+    } catch {
+      harnessOpenFailed = true;
     }
   }
 
@@ -458,6 +475,15 @@
     <p class="muted help">{t('diagRateHint')}</p>
     <EngineStatusView {capabilities} failed={capabilitiesFailed} detailed />
     <GpuDiagnosticView diagnostic={engine?.gpuDiagnostic} />
+    {#if showGpuHarness}
+      <button class="button secondary" type="button" onclick={openGpuHarness}>
+        {t('openGpuHarness')}
+      </button>
+      <p class="muted help">{t('gpuHarnessHelp')}</p>
+      {#if harnessOpenFailed}
+        <p class="error" role="alert">{t('errorAction')}</p>
+      {/if}
+    {/if}
   </section>
 
   <section class="panel">

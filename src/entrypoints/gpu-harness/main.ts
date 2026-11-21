@@ -46,6 +46,20 @@ function describe(value: unknown): string {
   return value === null || value === undefined ? 'n/a' : String(value);
 }
 
+/**
+ * The harness runs on a phone with no devtools, so a startup or run failure
+ * has to be visible on the page itself — otherwise the page just sits at
+ * "Probing…" with the failure only in the console.
+ */
+function reportFatal(error: unknown): void {
+  const detail =
+    error instanceof Error
+      ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+      : String(error);
+  statusEl.textContent = `Harness failed: ${detail.split('\n')[0] ?? detail}`;
+  log(`FATAL: ${detail}`);
+}
+
 async function runConfig(
   manager: ModelManager,
   config: HarnessConfig,
@@ -265,6 +279,8 @@ async function main(): Promise<void> {
         }
         await manager.unload();
         log('done');
+      } catch (error) {
+        reportFatal(error);
       } finally {
         runButton.disabled = false;
       }
@@ -272,4 +288,4 @@ async function main(): Promise<void> {
   });
 }
 
-void main();
+void main().catch(reportFatal);

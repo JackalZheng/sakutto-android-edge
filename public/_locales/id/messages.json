@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "Akses situs tidak diberikan. Tombol hanya muncul di halaman tempat Anda membuka Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Buka harness GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "Menjalankan satu paragraf tetap di CPU dan WebGPU lalu membandingkan hasilnya. Pemasangan sideload menyimpan salinan modelnya sendiri, jadi unduh dulu model 0.8B di sini."
   }
 }

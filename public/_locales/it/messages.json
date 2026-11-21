@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "L’accesso ai siti non è stato concesso. Il pulsante appare solo nelle pagine in cui apri Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Apri l'harness GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "Esegue un paragrafo fisso su CPU e WebGPU e confronta i risultati. Un'installazione caricata manualmente conserva una propria copia del modello: scarica prima qui il modello 0,8B."
   }
 }

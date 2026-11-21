@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "未获得网站访问权限。按钮只会出现在你打开过 Sakutto 的页面。"
+  },
+  "openGpuHarness": {
+    "message": "打开 GPU 测试工具"
+  },
+  "gpuHarnessHelp": {
+    "message": "用一段固定文字分别跑 CPU 与 WebGPU，再比对输出。侧载安装的模型是另外存放的，请先在这里下载 0.8B 模型。"
   }
 }

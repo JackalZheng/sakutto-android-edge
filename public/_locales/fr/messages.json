@@ -1070,5 +1070,11 @@
   },
   "fabEverywhereGrantFailed": {
     "message": "L’accès aux sites n’a pas été accordé. Le bouton n’apparaît que sur les pages où vous ouvrez Sakutto."
+  },
+  "openGpuHarness": {
+    "message": "Ouvrir le test GPU"
+  },
+  "gpuHarnessHelp": {
+    "message": "Exécute un paragraphe fixe sur CPU et WebGPU, puis compare les résultats. Une installation chargée manuellement conserve sa propre copie du modèle : téléchargez d’abord ici le modèle 0,8 B."
   }
 }
