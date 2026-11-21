@@ -109,6 +109,22 @@
       <p id="status">Probing…</p>
       <h2>Adapter</h2>
       <pre id="adapter">…</pre>
+      <h2>Model</h2>
+      <p>
+        Harness only: the translation product keeps its own model. Each model is downloaded from a
+        pinned Hugging Face commit (size and sha256 checked), stored separately, and runs with its
+        own prompt format; decoding is greedy with the same token limit for every model. The PLaMo 3
+        0.8B file is the one the options page manages.
+      </p>
+      <label
+        >Model
+        <select id="model"></select
+      ></label>
+      <p id="model-info"></p>
+      <p id="model-status">…</p>
+      <button id="model-download" type="button" disabled>Download</button>
+      <button id="model-delete" type="button" disabled>Delete</button>
+      <button id="model-cancel" type="button" hidden>Cancel download</button>
       <h2>Translation runs</h2>
       <p>
         "Run harness" runs every config on this page, one after another. "Run all isolated" reloads

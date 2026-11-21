@@ -85,6 +85,11 @@ export interface HarnessConfig {
    * to show the model still translates without shader-f16.
    */
   fallbackToCpu?: boolean;
+  /**
+   * The config is built from the PLaMo 3 0.8B layer layout (tensor overrides
+   * by layer index); the model switcher hides it for other models.
+   */
+  plamoOnly?: true;
 }
 
 export function buildHarnessConfigs(probe: BackendProbe, android: boolean): HarnessConfig[] {
@@ -134,7 +139,7 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
     },
     ...[2, 3, 4].map((layers): HarnessConfig => ({
       id: `gpu-layers-${layers}`,
-      label: `WebGPU (${layers} GPU layers: output + layer ${offloadedRepeatingLayers(layers).join(',')})`,
+      label: `WebGPU (${layers} GPU layers: output + last ${layers - 1}; PLaMo 3: layer ${offloadedRepeatingLayers(layers).join(',')})`,
       selection: { ...gpu, nGpuLayers: layers },
       debugProfile: null,
     })),
@@ -164,12 +169,14 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
         debugLoad: { tensorOverrides: layersOnCpuOverride(PLAMO3_FULL_ATTENTION_LAYERS) },
       },
       debugProfile: null,
+      plamoOnly: true,
     },
     {
       id: 'gpu-full-attn-layers-only',
       label: `WebGPU (only full-attention layers ${PLAMO3_FULL_ATTENTION_LAYERS.join(',')} weights on GPU)`,
       selection: { ...gpu, debugLoad: { tensorOverrides: layersOnCpuOverride(plamo3SwaLayers()) } },
       debugProfile: null,
+      plamoOnly: true,
     },
   );
   return configs;
@@ -177,6 +184,8 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
 
 export interface HarnessRunResult {
   configId: string;
+  /** Harness model the run used (model switcher); absent in results saved before it. */
+  modelId?: string;
   ok: boolean;
   output: string;
   /** First streamed chunk; the closest thing to a first-token comparison the runtime exposes. */
@@ -337,6 +346,8 @@ export interface IsolatedRunState {
   queue: string[];
   results: HarnessRunResult[];
   log: string;
+  /** Model the queued configs run with (model switcher). */
+  modelId?: string;
 }
 
 export function emptyIsolatedState(): IsolatedRunState {
@@ -352,13 +363,14 @@ export function planIsolatedQueue(
   configIds: readonly string[],
   requested: readonly string[],
   state: IsolatedRunState,
+  modelId?: string,
 ): string[] {
   const known = new Set(configIds);
   const queue: string[] = [];
   for (const id of requested) {
     if (known.has(id) && !queue.includes(id)) queue.push(id);
   }
-  const haveCpu = state.results.some((r) => r.configId === 'cpu' && r.ok);
+  const haveCpu = state.results.some((r) => r.configId === 'cpu' && r.ok && r.modelId === modelId);
   const withoutCpu = queue.filter((id) => id !== 'cpu');
   return haveCpu && !requested.includes('cpu') ? withoutCpu : ['cpu', ...withoutCpu];
 }
@@ -381,6 +393,7 @@ export function parseIsolatedState(raw: string | null): IsolatedRunState | null 
       queue: value.queue.filter((id): id is string => typeof id === 'string'),
       results: value.results,
       log: value.log,
+      ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
     };
   } catch {
     return null;
@@ -395,11 +408,17 @@ export function recordIsolatedResult(
 ): IsolatedRunState {
   const log = `${state.log}${logChunk}`;
   return {
+    ...state,
     version: 1,
     queue: state.queue.filter((id, index) => !(index === 0 && id === result.configId)),
-    results: [...state.results.filter((r) => r.configId !== result.configId), result],
+    results: [...state.results.filter((r) => !sameRun(r, result.configId, result.modelId)), result],
     log: log.length > ISOLATED_LOG_LIMIT ? log.slice(log.length - ISOLATED_LOG_LIMIT) : log,
   };
+}
+
+/** Whether `result` is the run of `configId` with `modelId`. */
+export function sameRun(result: HarnessRunResult, configId: string, modelId?: string): boolean {
+  return result.configId === configId && result.modelId === modelId;
 }
 
 /** Error text including the cause chain (the wasm abort message lives in the cause). */
