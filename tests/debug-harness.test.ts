@@ -67,6 +67,12 @@ describe('buildHarnessConfigs', () => {
       'gpu-adreno-upstream',
       'gpu-adreno-matvec',
       'gpu-adreno-sg-tiled',
+      'gpu-adreno-tiled',
+      'gpu-adreno-submit-64',
+      'gpu-matvec-1-slot',
+      'gpu-matvec-no-fa',
+      'gpu-matvec-small-batch-64',
+      'gpu-matvec-small-batch-32',
       'gpu-layers-1',
       'gpu-layers-2',
       'gpu-layers-3',
@@ -107,6 +113,12 @@ describe('buildHarnessConfigs', () => {
         'gpu-adreno-upstream': 'adreno-subgroups',
         'gpu-adreno-matvec': 'adreno-matvec',
         'gpu-adreno-sg-tiled': 'adreno-sg-tiled',
+        'gpu-adreno-tiled': 'no-matvec',
+        'gpu-adreno-submit-64': 'adreno-submit-64',
+        'gpu-matvec-1-slot': 'adreno-matvec',
+        'gpu-matvec-no-fa': 'adreno-matvec',
+        'gpu-matvec-small-batch-64': 'adreno-matvec',
+        'gpu-matvec-small-batch-32': 'adreno-matvec',
       };
       expect(config.debugProfile).toBe(expected[config.id] ?? null);
     }
@@ -307,11 +319,10 @@ describe('debug load configs', () => {
     expect(byId('gpu-layers-2')?.label).toContain('layer 15');
   });
 
-  it('turns flash attention off only for the flash-attention config', () => {
+  it('turns flash attention off only for the flash-attention configs', () => {
+    const off = new Set(['gpu-no-flash-attn', 'gpu-matvec-no-fa']);
     for (const config of configs) {
-      expect(config.selection.debugLoad?.flashAttn).toBe(
-        config.id === 'gpu-no-flash-attn' ? false : undefined,
-      );
+      expect(config.selection.debugLoad?.flashAttn).toBe(off.has(config.id) ? false : undefined);
     }
   });
 
@@ -459,8 +470,40 @@ describe('Adreno mat-vec profiles (patch 0017)', () => {
     expect(byId.get('gpu-adreno-upstream')?.debugProfile).toBe('adreno-subgroups');
     expect(byId.get('gpu-adreno-matvec')?.debugProfile).toBe('adreno-matvec');
     expect(byId.get('gpu-adreno-sg-tiled')?.debugProfile).toBe('adreno-sg-tiled');
-    for (const id of ['gpu-adreno-upstream', 'gpu-adreno-matvec', 'gpu-adreno-sg-tiled']) {
+    expect(byId.get('gpu-adreno-tiled')?.debugProfile).toBe('no-matvec');
+    expect(byId.get('gpu-adreno-submit-64')?.debugProfile).toBe('adreno-submit-64');
+    for (const id of [
+      'gpu-adreno-upstream',
+      'gpu-adreno-matvec',
+      'gpu-adreno-sg-tiled',
+      'gpu-adreno-tiled',
+      'gpu-adreno-submit-64',
+    ]) {
       expect(byId.get(id)?.selection.backend).toBe('webgpu');
+    }
+  });
+
+  it('varies one load option per device-lost bisection config, on the mat-vec default', () => {
+    const configs = buildHarnessConfigs(
+      { webgpu: true, hardwareConcurrency: 8, fastBatches: true, sharedMemory: true },
+      true,
+    );
+    const byId = new Map(configs.map((c) => [c.id, c]));
+    const def = byId.get('gpu-default')!;
+    const oneSlot = byId.get('gpu-matvec-1-slot')!;
+    expect(oneSlot.selection.nParallel).toBe(1);
+    expect(oneSlot.selection.nCtx).toBe(1024);
+    expect(byId.get('gpu-matvec-no-fa')?.selection.debugLoad).toEqual({ flashAttn: false });
+    expect(byId.get('gpu-matvec-small-batch-64')?.selection.nBatch).toBe(64);
+    expect(byId.get('gpu-matvec-small-batch-32')?.selection.nBatch).toBe(32);
+    for (const id of [
+      'gpu-matvec-no-fa',
+      'gpu-matvec-small-batch-64',
+      'gpu-matvec-small-batch-32',
+    ]) {
+      expect(byId.get(id)?.selection.nParallel).toBe(def.selection.nParallel);
+      expect(byId.get(id)?.selection.nCtx).toBe(def.selection.nCtx);
+      expect(byId.get(id)?.debugProfile).toBe('adreno-matvec');
     }
   });
 });

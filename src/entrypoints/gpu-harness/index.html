@@ -140,19 +140,23 @@
       <div id="results"></div>
       <h2>Op diagnostics (WebGPU vs CPU, per op)</h2>
       <p>
-        Runs llama.cpp test-backend-ops with the shapes and types PLaMo 3 Translate 0.8B uses, on
-        WebGPU and on the CPU reference, and reports NMSE, max abs error and NaN/Inf counts per
-        case. Each op group runs in its own worker and WebGPU device. Does not need the model.
+        Runs llama.cpp test-backend-ops with the shapes and types PLaMo 3 Translate 0.8B, Qwen3 0.6B
+        and Gemma 3 1B use, on WebGPU and on the CPU reference, and reports NMSE, max abs error and
+        NaN/Inf counts per case. Each op group runs in its own worker and WebGPU device. Does not
+        need the model.
       </p>
       <label
         >Device profile
         <select id="ops-profile">
-          <option value="default">default (Adreno: subgroups off, mat-vec → tiled)</option>
+          <option value="default">default (Adreno: subgroups off, mat-vec on)</option>
           <option value="adreno-subgroups">adreno-subgroups (upstream; reproduces the bug)</option>
-          <option value="adreno-matvec">adreno-matvec (subgroups off, mat-vec on)</option>
+          <option value="adreno-matvec">adreno-matvec (= Adreno default)</option>
           <option value="adreno-sg-tiled">adreno-sg-tiled (subgroups on, mat-vec → tiled)</option>
           <option value="no-subgroups">no-subgroups</option>
-          <option value="no-matvec">no-matvec (any GPU)</option>
+          <option value="no-matvec">no-matvec (Adreno: previous default, mat-vec → tiled)</option>
+          <option value="adreno-submit-64">
+            adreno-submit-64 (Adreno default, 64 kernels/submit)
+          </option>
         </select>
       </label>
       <label
@@ -164,6 +168,12 @@
       </label>
       <button id="run-ops" type="button" disabled>Run op diagnostics</button>
       <button id="run-ops-matrix" type="button" disabled>Run MUL_MAT × Adreno profiles</button>
+      <button class="run-ops-all" data-profile="adreno-matvec" type="button" disabled>
+        Run all ops × adreno-matvec
+      </button>
+      <button class="run-ops-all" data-profile="adreno-sg-tiled" type="button" disabled>
+        Run all ops × adreno-sg-tiled
+      </button>
       <div id="ops"></div>
       <h2>Log</h2>
       <pre id="log"></pre>

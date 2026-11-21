@@ -1,10 +1,11 @@
 /**
  * Op-level WebGPU vs CPU comparison for the debug GPU harness.
  *
- * The patched wllama links llama.cpp's test-backend-ops (patch 0016) with a
- * PLaMo 3 Translate 0.8B op suite (patch 0015, flag `--sakutto-plamo3`): the
- * Q4_K/Q6_K matmul shapes, F16 attention matmuls, norms, RoPE, softmax,
- * flash attention etc. the model actually runs, each evaluated on WebGPU and
+ * The patched wllama links llama.cpp's test-backend-ops (patch 0016) with an
+ * op suite of the harness models (flag `--sakutto-plamo3`; PLaMo 3 Translate
+ * 0.8B from patch 0015, Qwen3 0.6B and Gemma 3 1B from patch 0020): the weight
+ * matmul shapes, F16 attention matmuls, norms, RoPE, softmax, flash attention,
+ * GLU etc. the models actually run, each evaluated on WebGPU and
  * on the CPU reference. Every compared node prints a `SAKUTTO_OPSTAT` line and
  * every case a `SAKUTTO_OPRESULT` line; this module turns those lines into
  * rows. Thresholds are test-backend-ops' own per-op NMSE limits, and the
@@ -32,13 +33,26 @@ export const PLAMO3_OP_GROUPS: readonly OpGroup[] = [
     op: 'MUL_MAT',
     params: 'type_a=f16',
   },
-  { id: 'flash_attn', label: 'FLASH_ATTN_EXT', op: 'FLASH_ATTN_EXT' },
-  { id: 'soft_max', label: 'SOFT_MAX (masked, scaled)', op: 'SOFT_MAX' },
+  {
+    id: 'mul_mat-q5_0',
+    label: 'MUL_MAT Q5_0 weights (Gemma 3)',
+    op: 'MUL_MAT',
+    params: 'type_a=q5_0',
+  },
+  {
+    id: 'mul_mat-q8_0',
+    label: 'MUL_MAT Q8_0 weights (Gemma 3)',
+    op: 'MUL_MAT',
+    params: 'type_a=q8_0',
+  },
+  { id: 'flash_attn', label: 'FLASH_ATTN_EXT (head dim 128 / 256)', op: 'FLASH_ATTN_EXT' },
+  { id: 'soft_max', label: 'SOFT_MAX (masked, scaled, sinks)', op: 'SOFT_MAX' },
   { id: 'rope', label: 'ROPE (NEOX, YaRN / plain)', op: 'ROPE' },
   { id: 'rms_norm', label: 'RMS_NORM', op: 'RMS_NORM' },
   { id: 'add', label: 'ADD (incl. fused RMS_NORM+MUL+ADD)', op: 'ADD' },
   { id: 'mul', label: 'MUL (norm weight broadcast)', op: 'MUL' },
-  { id: 'swiglu', label: 'SWIGLU (GLU)', op: 'SWIGLU' },
+  { id: 'swiglu', label: 'SWIGLU (GLU; packed and split)', op: 'SWIGLU' },
+  { id: 'geglu', label: 'GEGLU (GLU, Gemma 3)', op: 'GEGLU' },
   { id: 'get_rows', label: 'GET_ROWS', op: 'GET_ROWS' },
   { id: 'set_rows', label: 'SET_ROWS (KV cache write)', op: 'SET_ROWS' },
   { id: 'cpy', label: 'CPY F32->F16', op: 'CPY' },
@@ -229,18 +243,32 @@ export function withOpGroupTimeout<T>(
 }
 
 /** The MUL_MAT groups, run under every Adreno profile by "Run MUL_MAT × Adreno profiles". */
-export const MUL_MAT_GROUP_IDS: readonly string[] = ['mul_mat-q6_k', 'mul_mat-q4_k', 'mul_mat-f16'];
+export const MUL_MAT_GROUP_IDS: readonly string[] = [
+  'mul_mat-q6_k',
+  'mul_mat-q4_k',
+  'mul_mat-f16',
+  'mul_mat-q5_0',
+  'mul_mat-q8_0',
+];
 
 /**
- * Profiles for the Adreno matrix run (patch 0017): the default (subgroups off, mat-vec routed
- * to the tiled matmul), upstream behaviour, and each half turned back on.
+ * Profiles for the Adreno MUL_MAT matrix run (patch 0017): the default (subgroups off, mat-vec
+ * on), upstream behaviour, subgroups on with mat-vec routed to the tiled matmul, and the
+ * previous default (no-matvec on Adreno: subgroups off, mat-vec routed to the tiled matmul).
  */
 export const ADRENO_OP_PROFILES: ReadonlyArray<string | null> = [
   null,
   'adreno-subgroups',
-  'adreno-matvec',
   'adreno-sg-tiled',
+  'no-matvec',
 ];
+
+/**
+ * Profiles with their own "Run all ops" button: the Adreno default spelled out (every op
+ * group the models use, with subgroups off), and subgroups on with mat-vec routed to the
+ * tiled matmul, to find which other subgroup shader garbles Gemma 3 on Adreno.
+ */
+export const ALL_OPS_PROFILES: readonly string[] = ['adreno-matvec', 'adreno-sg-tiled'];
 
 export interface OpGroupSummary {
   ok: number;

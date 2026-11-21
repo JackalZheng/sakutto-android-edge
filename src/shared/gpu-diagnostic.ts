@@ -2,13 +2,14 @@ import { isRecord } from './object';
 
 /**
  * ggml-webgpu debug profiles (wllama patches 0007, 0008, 0013, 0017). The Adreno ones only
- * change anything on a Qualcomm adapter, where patch 0017 turns subgroups off and routes
- * mat-vec to the tiled matmul by default:
+ * change anything on a Qualcomm adapter, where patch 0017 by default turns subgroups off,
+ * keeps the mat-vec shader (workgroup reduction) and submits 16 kernels per command buffer:
  * - 'adreno-subgroups': upstream behaviour (subgroups and mat-vec on), reproduces the bug;
- * - 'adreno-matvec': subgroups off, mat-vec on (workgroup reduction);
- * - 'adreno-sg-tiled': subgroups on, mat-vec routed to the tiled matmul.
- * 'no-matvec' routes mat-vec to the tiled matmul and 'as-adreno' applies the Adreno
- * defaults on any adapter.
+ * - 'adreno-matvec': subgroups off, mat-vec on (the same as the Adreno default);
+ * - 'adreno-sg-tiled': subgroups on, mat-vec routed to the tiled matmul;
+ * - 'adreno-submit-64': the Adreno default with upstream's 64 kernels per submit.
+ * 'no-matvec' routes mat-vec to the tiled matmul (on Adreno: the previous default) and
+ * 'as-adreno' applies the Adreno defaults on any adapter.
  */
 export type WebGpuDebugProfile =
   | 'off'
@@ -20,6 +21,7 @@ export type WebGpuDebugProfile =
   | 'adreno-subgroups'
   | 'adreno-matvec'
   | 'adreno-sg-tiled'
+  | 'adreno-submit-64'
   | 'no-matvec'
   | 'as-adreno';
 
@@ -39,6 +41,7 @@ const DEBUG_PROFILES: ReadonlySet<string> = new Set<WebGpuDebugProfile>([
   'adreno-subgroups',
   'adreno-matvec',
   'adreno-sg-tiled',
+  'adreno-submit-64',
   'no-matvec',
   'as-adreno',
 ]);

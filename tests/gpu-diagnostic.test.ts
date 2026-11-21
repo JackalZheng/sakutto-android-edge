@@ -131,6 +131,7 @@ describe('gpu diagnostic', () => {
       'adreno-subgroups',
       'adreno-matvec',
       'adreno-sg-tiled',
+      'adreno-submit-64',
       'no-matvec',
       'as-adreno',
     ]) {

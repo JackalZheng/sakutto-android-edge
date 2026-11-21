@@ -57,11 +57,16 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ['scripts/docker-compose.yml', 'CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=ON"'],
   ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'bool disable_mat_vec = false;'],
   [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'command_submit_batch_size = WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE;',
+  ],
+  [
     'llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec_acc.tmpl',
     'let d = load_f16_as_f32_at_src0(block_byte_base + 208u);',
   ],
   ['cpp/wllama-context.h', 'data_json.dump_safe()'],
   ['llama.cpp/tests/test-backend-ops.cpp', 'struct test_mul_mat_small_weights'],
+  ['llama.cpp/tests/test-backend-ops.cpp', 'Sakutto (patch 0020): the other harness models'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {

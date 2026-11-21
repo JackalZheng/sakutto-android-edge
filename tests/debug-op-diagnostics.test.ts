@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { isWebGpuDebugProfile } from '../src/shared/gpu-diagnostic';
 import {
   ADRENO_OP_PROFILES,
+  ALL_OPS_PROFILES,
   formatNumber,
   MUL_MAT_GROUP_IDS,
   OpGroupTimeoutError,
@@ -212,11 +214,41 @@ describe('withOpGroupTimeout', () => {
   it('lists every MUL_MAT group and the Adreno profiles for the matrix run', () => {
     const ids = PLAMO3_OP_GROUPS.map((group) => group.id);
     for (const id of MUL_MAT_GROUP_IDS) expect(ids).toContain(id);
-    expect(ADRENO_OP_PROFILES).toEqual([
-      null,
-      'adreno-subgroups',
-      'adreno-matvec',
-      'adreno-sg-tiled',
+    expect(ADRENO_OP_PROFILES).toEqual([null, 'adreno-subgroups', 'adreno-sg-tiled', 'no-matvec']);
+    expect(ALL_OPS_PROFILES).toEqual(['adreno-matvec', 'adreno-sg-tiled']);
+    for (const profile of [...ADRENO_OP_PROFILES, ...ALL_OPS_PROFILES]) {
+      if (profile !== null) expect(isWebGpuDebugProfile(profile)).toBe(true);
+    }
+  });
+
+  it('has an op group for every op the harness models run', () => {
+    const ops = new Set(PLAMO3_OP_GROUPS.map((group) => group.op));
+    for (const op of [
+      'MUL_MAT',
+      'FLASH_ATTN_EXT',
+      'SOFT_MAX',
+      'ROPE',
+      'RMS_NORM',
+      'SWIGLU',
+      'GEGLU',
+      'GET_ROWS',
+      'SET_ROWS',
+      'CPY',
+      'SCALE',
+      'ADD',
+      'MUL',
+    ]) {
+      expect(ops).toContain(op);
+    }
+    const ids = PLAMO3_OP_GROUPS.map((group) => group.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(opGroupArgs(PLAMO3_OP_GROUPS.find((g) => g.id === 'mul_mat-q5_0')!)).toEqual([
+      'test',
+      '--sakutto-plamo3',
+      '-o',
+      'MUL_MAT',
+      '-p',
+      'type_a=q5_0',
     ]);
   });
 });

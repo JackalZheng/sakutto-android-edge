@@ -42,6 +42,7 @@ import {
 } from '@/engine/debug-models';
 import {
   ADRENO_OP_PROFILES,
+  ALL_OPS_PROFILES,
   formatNumber,
   isOpDiagnosticContextLine,
   MUL_MAT_GROUP_IDS,
@@ -87,6 +88,7 @@ const clearButton = document.querySelector<HTMLButtonElement>('#clear-saved')!;
 const configsEl = document.querySelector<HTMLElement>('#configs')!;
 const opsButton = document.querySelector<HTMLButtonElement>('#run-ops')!;
 const opsMatrixButton = document.querySelector<HTMLButtonElement>('#run-ops-matrix')!;
+const opsAllButtons = [...document.querySelectorAll<HTMLButtonElement>('.run-ops-all')];
 const opsProfileEl = document.querySelector<HTMLSelectElement>('#ops-profile')!;
 const opsBackendEl = document.querySelector<HTMLSelectElement>('#ops-backend')!;
 const opsEl = document.querySelector<HTMLElement>('#ops')!;
@@ -539,6 +541,7 @@ async function main(): Promise<void> {
     clearButton,
     opsButton,
     opsMatrixButton,
+    ...opsAllButtons,
     ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
   ];
   const setBusy = (busy: boolean): void => {
@@ -672,14 +675,16 @@ async function main(): Promise<void> {
  * that loses the WebGPU device only takes itself down.
  */
 function setupOpDiagnostics(): void {
-  opsButton.disabled = false;
-  opsMatrixButton.disabled = false;
+  const opButtons = [opsButton, opsMatrixButton, ...opsAllButtons];
+  const setOpsBusy = (busy: boolean): void => {
+    for (const button of opButtons) button.disabled = busy;
+  };
+  setOpsBusy(false);
   const run = async (
     plan: ReadonlyArray<{ group: OpGroup; profile: WebGpuDebugProfile | null }>,
     title: string,
   ): Promise<void> => {
-    opsButton.disabled = true;
-    opsMatrixButton.disabled = true;
+    setOpsBusy(true);
     opsEl.replaceChildren();
     const backend = opsBackendEl.value === 'CPU' ? 'CPU' : undefined;
     log(`=== op diagnostics (${title}, backend: ${backend ?? 'WebGPU'}) ===`);
@@ -695,8 +700,7 @@ function setupOpDiagnostics(): void {
     } catch (error) {
       reportFatal(error);
     } finally {
-      opsButton.disabled = false;
-      opsMatrixButton.disabled = false;
+      setOpsBusy(false);
     }
   };
   opsButton.addEventListener('click', () => {
@@ -716,6 +720,16 @@ function setupOpDiagnostics(): void {
     );
     void run(plan, 'MUL_MAT × Adreno profiles');
   });
+  for (const button of opsAllButtons) {
+    const profile = button.dataset.profile ?? '';
+    if (!isWebGpuDebugProfile(profile) || !ALL_OPS_PROFILES.includes(profile)) continue;
+    button.addEventListener('click', () => {
+      void run(
+        PLAMO3_OP_GROUPS.map((group) => ({ group, profile })),
+        `all ops × ${profile}`,
+      );
+    });
+  }
 }
 
 async function runOpGroup(

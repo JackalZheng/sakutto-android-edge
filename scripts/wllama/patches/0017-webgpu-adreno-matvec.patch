@@ -1,33 +1,43 @@
-Adreno: correct WebGPU MUL_MAT at decode (n <= 4), and f32 block scales in
-the mat-vec shaders.
+Adreno: correct WebGPU decode, shorter command buffers, and f32 block scales
+in the mat-vec shaders.
 
 On the owner's POCO F5 Pro (Adreno 730, subgroups 64-128) the op diagnostics
-showed every Q6_K MUL_MAT with n = 1 or 2 wrong (NMSE 0.74-0.84) while n = 41
-was exact. n <= 4 runs the mat-vec shader, n > 4 the tiled matmul. The
-mat-vec shader reduces each row with subgroupAdd() right after a block loop
-whose trip count differs between threads (divergent control flow). The
-Qualcomm driver is known to return wrong subgroupAdd() sums after divergent
-code: ggml-vulkan turns subgroup arithmetic off on the Qualcomm proprietary
-driver for that reason. The same shader passes on lavapipe (subgroup size 8)
-and on every desktop GPU, and nothing in upstream llama.cpp after our pin
-touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
+showed every mat-vec MUL_MAT (n = 1, 2; q6_K, q4_K and f16) wrong with NMSE
+~0.8 while n = 41 (tiled matmul) was exact. The device matrix then showed:
+subgroups on + mat-vec: FAIL; subgroups off + mat-vec: PASS; subgroups on +
+mat-vec routed to the tiled matmul: PASS. So the bug is the subgroup reduction
+(subgroupAdd right after a block loop whose trip count differs per thread).
+The Qualcomm driver is known to return wrong subgroupAdd() sums after
+divergent code: ggml-vulkan turns subgroup arithmetic off on the Qualcomm
+proprietary driver for that reason. Gemma 3 with subgroups on and mat-vec
+routed to the tiled matmul still produced garbage, so another subgroup shader
+(flash attention is the only other one these models reach) is affected too.
+Nothing in upstream llama.cpp after our pin touches these shaders.
 
 1. On Qualcomm/Adreno adapters (vendor "qualcomm" or an "adreno*"
    architecture), by default:
    - request the device without Subgroups, so every shader that reduces
      with subgroups takes its workgroup-reduction variant (same path as debug
-     profile 5, no-subgroups); and
-   - route MUL_MAT with n <= 4 to the tiled matmul instead of the mat-vec
-     shader (the tiled path is the one that passed on the device). The MMVQ
-     paths are skipped too.
+     profile 5, no-subgroups). FLASH_ATTN_EXT needs subgroups and is reported
+     unsupported, so llama.cpp's flash_attn auto turns it off;
+   - keep the mat-vec shader (workgroup reduction): on the device it decodes
+     ~3x faster than routing n <= 4 to the tiled matmul (Gemma 3 1B: 19.8 s vs
+     61.8 s for one paragraph);
+   - submit 16 kernels per command buffer instead of 64. PLaMo 3 and Qwen3
+     lost the device (VK_ERROR_DEVICE_LOST at vkQueueSubmit) with the tiled
+     decode; a command buffer that runs too long trips the kernel driver's GPU
+     hang detection, and 64 kernels are several layers of these models.
    Debug profiles to diagnose on the device:
    6 adreno-subgroups  upstream behaviour (subgroups and mat-vec on)
-   7 adreno-matvec     subgroups off, mat-vec on (workgroup reduction)
+   7 adreno-matvec     subgroups off, mat-vec on (same as the Adreno default)
    10 adreno-sg-tiled  subgroups on, mat-vec routed to the tiled matmul
+   11 adreno-submit-64 Adreno defaults with the upstream 64 kernels per submit
    8 no-matvec         any device: route mat-vec to the tiled matmul
+                       (on Adreno: the previous default, with 16 per submit)
    9 as-adreno         any device: apply the Adreno defaults
-   Native builds read the profile name from SAKUTTO_WEBGPU_DEBUG, so the
-   profiles can be validated with a desktop test-backend-ops.
+   Native builds read the profile name from SAKUTTO_WEBGPU_DEBUG (and
+   SAKUTTO_WEBGPU_AS_ADRENO=1 treats any adapter as Adreno), so the profiles
+   can be validated with a desktop test-backend-ops / llama-completion.
 
 2. Mat-vec shaders read f16 block scales as f32 (load_f16_as_f32_at_src0)
    instead of f32(load_f16_at_src0()). Upstream #32140 (in our pin) made this
@@ -37,19 +47,28 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
 
 --- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -235,6 +235,11 @@
+@@ -89,6 +89,8 @@
+ /* Constants */
+ 
+ #define WEBGPU_DEFAULT_COMMAND_SUBMIT_BATCH_SIZE 64u
++// Sakutto patch 0017: shorter command buffers on Adreno (GPU timeout per submission).
++#define WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE 16u
+ #define WEBGPU_NUM_PARAM_SLOT_SAFETY_MARGIN      10u
+ #define WEBGPU_RUNTIME_WAIT_TIMEOUT_MS           30000u
+ #define WEBGPU_RUNTIME_WAIT_TIMEOUT_NS           (WEBGPU_RUNTIME_WAIT_TIMEOUT_MS * 1e6)
+@@ -235,6 +237,11 @@
  
      std::string vendor;
  
 +    // Route every MUL_MAT through the tiled matrix shader instead of the mat-vec shader
-+    // (n <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS). Set on Qualcomm Adreno by default (see
-+    // create_webgpu_device) and by the Sakutto debug profile "no-matvec".
++    // (n <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS). Set by the Sakutto debug profiles "no-matvec"
++    // and "adreno-sg-tiled" (see create_webgpu_device).
 +    bool disable_mat_vec = false;
 +
      // TODO: We should rework the CPU profiling time handling to make it more useful. ref: https://github.com/ggml-org/llama.cpp/pull/22050
  #ifdef GGML_WEBGPU_CPU_PROFILE
      // Profiling: labeled CPU time in ms (total)
-@@ -1869,7 +1874,7 @@
+@@ -1869,7 +1876,7 @@
      // The vector shader takes up to four columns and also loops over batches. A wider output
      // runs through it as batches of four columns and one batch for the rest, not through the
      // much slower tiled matrix shader. The columns of a batch share one read of the weights.
@@ -58,7 +77,7 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
          ggml_webgpu_can_use_mmvq(src0, src1, src1->ne[1], ctx->global_ctx->capabilities.supports_dot_product,
                                   ctx->global_ctx->vendor)) {
          std::vector<webgpu_dispatch_desc> dispatches;
-@@ -1884,11 +1889,12 @@
+@@ -1884,11 +1891,12 @@
      }
  
      // Determine if this is a mat-vec operation
@@ -74,21 +93,22 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
  
      ggml_webgpu_shader_lib_context shader_lib_ctx = {};
  
-@@ -4863,7 +4869,12 @@
+@@ -4863,7 +4871,13 @@
      }
  }
  
 -// 0 off, 1 amd-rdna3, 2 intel-arc, 3 no-f16, 4 reject-max-limits, 5 no-subgroups
 +// 0 off, 1 amd-rdna3, 2 intel-arc, 3 no-f16, 4 reject-max-limits, 5 no-subgroups,
 +// 6 adreno-subgroups (upstream behaviour on Adreno: subgroups + mat-vec),
-+// 7 adreno-matvec (Adreno: subgroups off, mat-vec on with workgroup reduction),
++// 7 adreno-matvec (Adreno: subgroups off, mat-vec on with workgroup reduction; the Adreno default),
 +// 8 no-matvec (any device: route mat-vec to the tiled matmul),
 +// 9 as-adreno (any device: apply the Adreno defaults, to validate them off-device),
-+// 10 adreno-sg-tiled (Adreno: subgroups on, mat-vec routed to the tiled matmul)
++// 10 adreno-sg-tiled (Adreno: subgroups on, mat-vec routed to the tiled matmul),
++// 11 adreno-submit-64 (Adreno defaults, but the upstream 64 kernels per queue submit)
  // Never invent a subgroup size (including a "wave64" debug override): a wrong
  // MAX_SUBGROUP_SIZE silently mistranslates.
  static int ggml_webgpu_debug_profile_code() {
-@@ -4877,9 +4888,31 @@
+@@ -4877,9 +4891,33 @@
                 if (v === 'no-f16') return 3;
                 if (v === 'reject-max-limits') return 4;
                 if (v === 'no-subgroups') return 5;
@@ -97,6 +117,7 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
 +               if (v === 'no-matvec') return 8;
 +               if (v === 'as-adreno') return 9;
 +               if (v === 'adreno-sg-tiled') return 10;
++               if (v === 'adreno-submit-64') return 11;
                 return 0;
             });
  #else
@@ -117,10 +138,11 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
 +    if (name == "no-matvec") return 8;
 +    if (name == "as-adreno") return 9;
 +    if (name == "adreno-sg-tiled") return 10;
++    if (name == "adreno-submit-64") return 11;
      return 0;
  #endif
  }
-@@ -5248,11 +5281,41 @@
+@@ -5248,11 +5286,65 @@
      // workgroup-reduction shaders run instead of the subgroup ones. The
      // granted-device caps re-derive supports_subgroups below, and the
      // correctness probe skips its subgroup shader when subgroups are off.
@@ -129,19 +151,28 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
 +    //
 +    // Qualcomm Adreno (Sakutto patch 0017): subgroupAdd() after divergent control flow returns
 +    // wrong sums on the Adreno driver (ggml-vulkan disables subgroup arithmetic on the
-+    // Qualcomm proprietary driver for the same reason). The mat-vec shader reduces with
-+    // subgroupAdd right after a per-thread block loop whose trip count differs between
-+    // threads, and on an Adreno 730 every mat-vec case (n <= 4) came back wrong (NMSE ~0.8)
-+    // while the tiled matmul was exact. So on Adreno: request no Subgroups (every shader takes
-+    // its workgroup-reduction variant) and route mat-vec to the tiled matmul, which was
-+    // verified on the device. Profiles 6 (both), 7 (mat-vec) and 10 (subgroups) turn them
-+    // back on for diagnosis.
++    // Qualcomm proprietary driver for the same reason). On an Adreno 730 every mat-vec case
++    // (n <= 4; q6_K, q4_K and f16) came back wrong (NMSE ~0.8) with subgroups on, and exact
++    // with subgroups off (the mat-vec shader then reduces through workgroup memory). Gemma 3
++    // with subgroups on and mat-vec routed to the tiled matmul still produced garbage, so
++    // another subgroup shader is affected too. So on Adreno: request no Subgroups (every
++    // shader takes its workgroup-reduction variant) and keep the mat-vec shader (3x faster
++    // decode than the tiled matmul on the device). Profiles 6 (subgroups on) and 10
++    // (subgroups on, mat-vec -> tiled) turn subgroups back on for diagnosis; profile 8
++    // (no-matvec) on Adreno gives the previous default (subgroups off, mat-vec -> tiled).
 +    const std::string adapter_arch(info.architecture);
-+    const bool        is_adreno =
++    bool              is_adreno =
 +        debug_profile == 9 || ctx->webgpu_global_ctx->vendor == "qualcomm" || adapter_arch.rfind("adreno", 0) == 0;
++#ifndef __EMSCRIPTEN__
++    // Native validation: SAKUTTO_WEBGPU_AS_ADRENO=1 treats any adapter as Adreno, so every
++    // Adreno profile (e.g. no-matvec, the previous Adreno default) can be run on a desktop.
++    if (const char * as_adreno = getenv("SAKUTTO_WEBGPU_AS_ADRENO"); as_adreno && as_adreno[0] == '1') {
++        is_adreno = true;
++    }
++#endif
 +    const bool adreno_safe = is_adreno && debug_profile != 6;
 +    const bool no_subgroups = debug_profile == 5 || (adreno_safe && debug_profile != 10);
-+    ctx->webgpu_global_ctx->disable_mat_vec = debug_profile == 8 || (adreno_safe && debug_profile != 7);
++    ctx->webgpu_global_ctx->disable_mat_vec = debug_profile == 8 || (adreno_safe && debug_profile == 10);
 +    if (debug_profile == 5) {
          GGML_LOG_INFO("ggml_webgpu: debug profile no-subgroups: requesting a device without Subgroups\n");
 +    } else if (adreno_safe && debug_profile == 10) {
@@ -155,11 +186,26 @@ touches the mat-vec shaders. No upstream WebGPU fix exists to backport.
 +    if (no_subgroups) {
          ggml_webgpu_disable_subgroups(ctx->webgpu_global_ctx->capabilities);
      }
++    // Adreno: a command buffer that runs too long trips the kernel driver's GPU hang detection
++    // (KGSL; on the order of seconds per submission), and the device is lost
++    // (VK_ERROR_DEVICE_LOST at the next vkQueueSubmit). Upstream records 64 kernels per command
++    // buffer, several layers of a 0.6-1B model; with a prompt batch on the tiled matmul one
++    // such submit can run for seconds on a phone GPU. Submit 16 kernels at a time instead (a
++    // few more queue submits per token, each a quarter as long). Profile 11 keeps 64.
++    if (is_adreno && debug_profile != 11) {
++        ctx->webgpu_global_ctx->command_submit_batch_size = WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE;
++    }
++    if (is_adreno) {
++        GGML_LOG_INFO("ggml_webgpu: adreno: %u kernels per queue submit%s\n",
++                      ctx->webgpu_global_ctx->command_submit_batch_size,
++                      debug_profile == 11 ? " (debug profile adreno-submit-64)" : "");
++    }
 +    if (ctx->webgpu_global_ctx->disable_mat_vec) {
 +        GGML_LOG_INFO("ggml_webgpu: mat-vec disabled: MUL_MAT with n <= %d uses the tiled matmul%s\n",
-+                      GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS, debug_profile == 8 ? " (debug profile no-matvec)" : " (adreno)");
-+    } else if (is_adreno && debug_profile == 7) {
-+        GGML_LOG_INFO("ggml_webgpu: debug profile adreno-matvec: mat-vec on, workgroup reduction\n");
++                      GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS,
++                      debug_profile == 8 ? " (debug profile no-matvec)" : " (debug profile adreno-sg-tiled)");
++    } else if (adreno_safe) {
++        GGML_LOG_INFO("ggml_webgpu: adreno: mat-vec on, workgroup reduction\n");
 +    }
  
  #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
