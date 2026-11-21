@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { isWebGpuDebugProfile } from '../src/shared/gpu-diagnostic';
 import {
+  ADRENO_OP_PROFILES,
+  ALL_OPS_PROFILES,
   formatNumber,
+  MUL_MAT_GROUP_IDS,
+  OpGroupTimeoutError,
+  withOpGroupTimeout,
   isOpDiagnosticContextLine,
   formatOpRow,
   opGroupArgs,
@@ -159,5 +165,90 @@ describe('isOpDiagnosticContextLine', () => {
     expect(isOpDiagnosticContextLine('  Skipping CPU backend')).toBe(true);
     expect(isOpDiagnosticContextLine('ggml_webgpu: Device lost! Reason: 2')).toBe(true);
     expect(isOpDiagnosticContextLine('  ROPE(type=f32): OK')).toBe(false);
+  });
+});
+
+describe('withOpGroupTimeout', () => {
+  function manualTimers() {
+    const pending = new Map<number, () => void>();
+    let next = 0;
+    return {
+      timers: {
+        set: (fn: () => void) => {
+          next += 1;
+          pending.set(next, fn);
+          return next;
+        },
+        clear: (id: unknown) => {
+          pending.delete(id as number);
+        },
+      },
+      fire: () => {
+        for (const fn of pending.values()) fn();
+      },
+      pending,
+    };
+  }
+
+  it('passes a result through and clears its timer', async () => {
+    const clock = manualTimers();
+    await expect(withOpGroupTimeout(Promise.resolve(7), 1000, clock.timers)).resolves.toBe(7);
+    expect(clock.pending.size).toBe(0);
+  });
+
+  it('rejects a group that never answers, so the runner can move on', async () => {
+    const clock = manualTimers();
+    const hung = withOpGroupTimeout(new Promise<never>(() => undefined), 180_000, clock.timers);
+    clock.fire();
+    await expect(hung).rejects.toBeInstanceOf(OpGroupTimeoutError);
+    await expect(hung).rejects.toThrow(/180 s/u);
+  });
+
+  it('keeps the rejection of a group that crashed', async () => {
+    const clock = manualTimers();
+    await expect(
+      withOpGroupTimeout(Promise.reject(new Error('Device lost')), 1000, clock.timers),
+    ).rejects.toThrow('Device lost');
+  });
+
+  it('lists every MUL_MAT group and the Adreno profiles for the matrix run', () => {
+    const ids = PLAMO3_OP_GROUPS.map((group) => group.id);
+    for (const id of MUL_MAT_GROUP_IDS) expect(ids).toContain(id);
+    expect(ADRENO_OP_PROFILES).toEqual([null, 'adreno-subgroups', 'adreno-sg-tiled', 'no-matvec']);
+    expect(ALL_OPS_PROFILES).toEqual(['adreno-matvec', 'adreno-sg-tiled']);
+    for (const profile of [...ADRENO_OP_PROFILES, ...ALL_OPS_PROFILES]) {
+      if (profile !== null) expect(isWebGpuDebugProfile(profile)).toBe(true);
+    }
+  });
+
+  it('has an op group for every op the harness models run', () => {
+    const ops = new Set(PLAMO3_OP_GROUPS.map((group) => group.op));
+    for (const op of [
+      'MUL_MAT',
+      'FLASH_ATTN_EXT',
+      'SOFT_MAX',
+      'ROPE',
+      'RMS_NORM',
+      'SWIGLU',
+      'GEGLU',
+      'GET_ROWS',
+      'SET_ROWS',
+      'CPY',
+      'SCALE',
+      'ADD',
+      'MUL',
+    ]) {
+      expect(ops).toContain(op);
+    }
+    const ids = PLAMO3_OP_GROUPS.map((group) => group.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(opGroupArgs(PLAMO3_OP_GROUPS.find((g) => g.id === 'mul_mat-q5_0')!)).toEqual([
+      'test',
+      '--sakutto-plamo3',
+      '-o',
+      'MUL_MAT',
+      '-p',
+      'type_a=q5_0',
+    ]);
   });
 });

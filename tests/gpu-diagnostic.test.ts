@@ -126,6 +126,19 @@ describe('gpu diagnostic', () => {
     expect(wave.subgroupMaxSize).toBe(32);
   });
 
+  it('accepts the Adreno mat-vec profiles of patch 0017', () => {
+    for (const profile of [
+      'adreno-subgroups',
+      'adreno-matvec',
+      'adreno-sg-tiled',
+      'adreno-submit-64',
+      'no-matvec',
+      'as-adreno',
+    ]) {
+      expect(isWebGpuDebugProfile(profile)).toBe(true);
+    }
+  });
+
   it('overlays missing subgroups for the no-subgroups profile', () => {
     expect(isWebGpuDebugProfile('no-subgroups')).toBe(true);
     setWebGpuDebugProfile('no-subgroups');

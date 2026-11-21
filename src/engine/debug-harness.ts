@@ -5,7 +5,7 @@ import {
   type BackendSelection,
 } from './in-browser/backend';
 import { looksLikeBrokenTranslation } from './text/garbage';
-import type { GpuDiagnostic } from '@/shared/gpu-diagnostic';
+import type { GpuDiagnostic, WebGpuDebugProfile } from '@/shared/gpu-diagnostic';
 
 /**
  * Stage 1 debug harness for the Android WebGPU garbage-output investigation.
@@ -77,7 +77,7 @@ export interface HarnessConfig {
    * 'no-subgroups' (patch 0013): the patched ggml requests a device without
    * the Subgroups feature, so the workgroup-reduction shaders run.
    */
-  debugProfile: 'no-f16' | 'no-subgroups' | null;
+  debugProfile: Exclude<WebGpuDebugProfile, 'off'> | null;
   /**
    * When the WebGPU load refuses the device (EngineError 'gpu-unavailable'),
    * rerun this config on the CPU selection and report the fallback outcome
@@ -105,7 +105,12 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
 
   const gpu = limit(selectionForTier('g', probe));
   configs.push(
-    { id: 'gpu-default', label: 'WebGPU (default)', selection: gpu, debugProfile: null },
+    {
+      id: 'gpu-default',
+      label: 'WebGPU (default; Adreno: subgroups off, mat-vec on, 16 kernels per submit)',
+      selection: gpu,
+      debugProfile: null,
+    },
     {
       id: 'gpu-1-slot',
       label: 'WebGPU (1 slot, n_ctx 1024)',
@@ -131,6 +136,57 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
       selection: gpu,
       debugProfile: 'no-subgroups',
     },
+    // Patch 0017 profiles. On Adreno the default is subgroups off, mat-vec on and 16 kernels
+    // per queue submit; these turn each part back (no effect on other GPUs).
+    {
+      id: 'gpu-adreno-upstream',
+      label: 'WebGPU (Adreno: upstream subgroups + mat-vec; expected to garble)',
+      selection: gpu,
+      debugProfile: 'adreno-subgroups',
+    },
+    {
+      id: 'gpu-adreno-matvec',
+      label: 'WebGPU (Adreno: subgroups off, mat-vec on; = Adreno default)',
+      selection: gpu,
+      debugProfile: 'adreno-matvec',
+    },
+    {
+      id: 'gpu-adreno-sg-tiled',
+      label: 'WebGPU (Adreno: subgroups on, mat-vec routed to tiled matmul)',
+      selection: gpu,
+      debugProfile: 'adreno-sg-tiled',
+    },
+    {
+      id: 'gpu-adreno-tiled',
+      label: 'WebGPU (Adreno: previous default, mat-vec routed to tiled matmul; 16 per submit)',
+      selection: gpu,
+      debugProfile: 'no-matvec',
+    },
+    {
+      id: 'gpu-adreno-submit-64',
+      label: 'WebGPU (Adreno default with 64 kernels per submit, as upstream)',
+      selection: gpu,
+      debugProfile: 'adreno-submit-64',
+    },
+    // Device-lost bisection on Adreno (PLaMo 3 / Qwen3), all on the mat-vec default.
+    {
+      id: 'gpu-matvec-1-slot',
+      label: 'WebGPU (Adreno mat-vec; 1 slot, n_ctx 1024)',
+      selection: { ...gpu, nParallel: 1, nCtx: 1024 },
+      debugProfile: 'adreno-matvec',
+    },
+    {
+      id: 'gpu-matvec-no-fa',
+      label: 'WebGPU (Adreno mat-vec; flash attention off)',
+      selection: { ...gpu, debugLoad: { flashAttn: false } },
+      debugProfile: 'adreno-matvec',
+    },
+    ...[64, 32].map((nBatch): HarnessConfig => ({
+      id: `gpu-matvec-small-batch-${nBatch}`,
+      label: `WebGPU (Adreno mat-vec; n_batch ${nBatch})`,
+      selection: { ...gpu, nBatch },
+      debugProfile: 'adreno-matvec',
+    })),
     {
       id: 'gpu-layers-1',
       label: 'WebGPU (1 GPU layer)',

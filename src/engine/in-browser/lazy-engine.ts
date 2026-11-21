@@ -1,4 +1,4 @@
-import { abortError, EngineError, isEngineError } from '../errors';
+import { abortError, EngineError, isEngineError, isGarbledOutputError } from '../errors';
 import type {
   IdentifiedEngine,
   TranslateOptions,
@@ -93,7 +93,12 @@ export class LazyInBrowserEngine implements IdentifiedEngine {
         }
         return;
       } catch (error) {
-        if (error instanceof BrokenOutputError && !options.signal.aborted) {
+        // Garbled output that made the worker fail (invalid UTF-8) is broken output, not a
+        // lost device: with an output guard it takes the same recovery as flagged output.
+        const brokenOutput =
+          error instanceof BrokenOutputError ||
+          (isGarbledOutputError(error) && this.guards(engine) !== null);
+        if (brokenOutput && !options.signal.aborted) {
           if (recoveries >= MAX_GPU_RECOVERIES) throw new EngineError('gpu-lost', error.message);
           await this.recoverBroken(engine);
           continue;

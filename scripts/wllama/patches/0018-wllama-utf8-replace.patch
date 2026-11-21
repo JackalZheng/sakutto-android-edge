@@ -1,0 +1,23 @@
+wllama: never abort on invalid UTF-8 in a completion result.
+
+Garbled GPU output (e.g. the Adreno mat-vec bug, patch 0017) can decode to
+byte sequences that are not valid UTF-8. common_json::dump() throws
+type_error 316 on them; the exception aborts the wasm module, and the
+extension reported "GPU stopped working" ("invalid UTF-8 byte",
+"Invalid typed array length") instead of garbage output. Dump with
+common_json::dump_safe() (invalid bytes become U+FFFD), the text reaches
+the output guard, and the guard classifies it as broken output.
+
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -967,7 +967,9 @@
+ 
+     res.success.value = true;
+     res.has_more.value = has_more;
+-    res.data_json.value = result ? data_json.dump() : "";
++    // Garbled GPU output can decode to invalid UTF-8; dump() would throw (and abort the
++    // module), so invalid bytes become U+FFFD and the garbage reaches the output guard.
++    res.data_json.value = result ? data_json.dump_safe() : "";
+     res.is_error.value = is_error;
+ 
+     if (!has_more)

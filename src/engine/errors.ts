@@ -36,6 +36,17 @@ export function isEngineError(value: unknown): value is EngineError {
   return value instanceof EngineError;
 }
 
+/**
+ * `EngineError.detail` of a 'gpu-lost' error whose real cause is garbled GPU output: the
+ * tokens decoded to invalid UTF-8 and the worker failed on them. Recovery treats it like
+ * output the guard flagged as broken, not like a lost device.
+ */
+export const GARBLED_OUTPUT_DETAIL = 'garbled-output';
+
+export function isGarbledOutputError(value: unknown): value is EngineError {
+  return isEngineError(value) && value.detail === GARBLED_OUTPUT_DETAIL;
+}
+
 const ENGINE_ERROR_CODES: ReadonlySet<string> = new Set<EngineErrorCode>([
   'invalid-input',
   'unsupported-language',

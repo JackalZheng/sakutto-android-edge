@@ -1,0 +1,120 @@
+Debug harness: Qwen3 0.6B and Gemma 3 1B shapes in the op suite.
+
+Extends the --sakutto-plamo3 test-backend-ops suite (patch 0015) with the
+other harness models, so an op that misbehaves only at their shapes shows up
+in the op diagnostics: Qwen3 0.6B (Q4_K/Q6_K weights at n = 1, 2, 41, the
+tied Q6_K output 151936 x 1024 that fits a 128 MiB binding and so runs on the
+GPU, Q6_K GET_ROWS, Q/K RMS_NORM over 16/8 heads, SWIGLU with separate
+gate/up, NEOX RoPE base 1e6, attention with 8 KV heads at KV 256 and 4096:
+FLASH_ATTN_EXT, F16 KQ/KQV MUL_MAT, masked SOFT_MAX, SET_ROWS) and Gemma 3 1B
+(Q5_0/Q8_0/Q4_K/Q6_K weights, head dim 256 RMS_NORM / RoPE (bases 1e6 and
+1e4) / attention, GEGLU, embedding SCALE), plus PLaMo 3 attention at the
+extension's n_ctx 4096 for decode and SOFT_MAX with attention sinks.
+
+--- a/llama.cpp/tests/test-backend-ops.cpp
++++ b/llama.cpp/tests/test-backend-ops.cpp
+@@ -14724,6 +14724,104 @@
+         test_cases.emplace_back(new test_cont(GGML_TYPE_F32, {head_dim, n_head, n, 1}, false, {0, 2, 1, 3}));
+         test_cases.emplace_back(new test_scale(GGML_TYPE_F32, {n_embd, n, 1, 1}, kq_scale));
+     }
++
++    // Sakutto (patch 0020): the other harness models, so an op that misbehaves only at their
++    // shapes (head dim, GQA ratio, vocab, weight types) shows up in the op diagnostics too.
++    // Qwen3 0.6B: n_embd 1024, 16 query / 8 KV heads of 128, ffn 3072 (separate gate/up),
++    // Q4_K/Q6_K, tied Q6_K output (151936 x 1024, 127.6 MB: fits a 128 MiB binding, so it
++    // runs on the GPU), NEOX RoPE base 1e6.
++    {
++        const int64_t q_embd = 1024, q_head = 16, q_kv = 8, q_ff = 3072;
++        const weight_shape q_weights[] = {
++            { GGML_TYPE_Q4_K, q_head*head_dim, q_embd          }, // attn_q
++            { GGML_TYPE_Q4_K, q_kv*head_dim,   q_embd          }, // attn_k
++            { GGML_TYPE_Q6_K, q_kv*head_dim,   q_embd          }, // attn_v
++            { GGML_TYPE_Q4_K, q_embd,          q_head*head_dim }, // attn_output
++            { GGML_TYPE_Q4_K, q_ff,            q_embd          }, // ffn_gate / ffn_up
++            { GGML_TYPE_Q6_K, q_embd,          q_ff            }, // ffn_down
++        };
++        for (const auto & w : q_weights) {
++            for (int64_t n : { (int64_t) 1, (int64_t) 2, (int64_t) 41 }) {
++                test_cases.emplace_back(new test_mul_mat(w.type, GGML_TYPE_F32, w.m, n, w.k, {1, 1}, {1, 1}));
++            }
++        }
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 151936, 1, q_embd, {1, 1}, {1, 1})); // output
++        for (int64_t n : { (int64_t) 1, (int64_t) 41 }) {
++            test_cases.emplace_back(new test_get_rows(GGML_TYPE_Q6_K, q_embd, 4096, (int) n)); // token_embd
++            test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {head_dim, q_head, n, 1}, false, 1e-6f));
++            test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {head_dim, q_kv,   n, 1}, false, 1e-6f));
++            test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {q_embd, n, 1, 1}, 1e-6f, false, false));
++            test_cases.emplace_back(new test_glu_split(GGML_GLU_OP_SWIGLU, GGML_TYPE_F32, {q_ff, n, 1, 1}));
++            for (int64_t heads : { q_head, q_kv }) {
++                test_cases.emplace_back(new test_rope(GGML_TYPE_F32, {head_dim, heads, n, 1}, (int) head_dim, GGML_ROPE_TYPE_NEOX,
++                                                      4096, 1.0f, 0.0f, 1.0f, false, 0, true, false, 0, 4096, 1000000.0f, 32.0f, false));
++            }
++        }
++        const float scale = 1.0f/sqrtf((float) head_dim);
++        for (int64_t kv : { (int64_t) 256, (int64_t) 4096 }) {
++            for (int64_t n : { (int64_t) 1, (int64_t) 41 }) {
++                test_cases.emplace_back(new test_flash_attn_ext(head_dim, head_dim, q_kv, {2, 1}, kv, n, true, false, 0.0f, 0.0f,
++                                                                GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, kv, n, head_dim, {q_kv, 1}, {2, 1}));
++                test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {kv, n, q_head, 1}, true, false, GGML_TYPE_F16, {1, 1}, scale, 0.0f));
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, head_dim, n, kv, {q_kv, 1}, {2, 1}));
++            }
++            test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_I64, {q_kv*head_dim, kv, 1, 1}, {1, 1}, 41));
++            test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_I64, {q_kv*head_dim, kv, 1, 1}, {1, 1}, 1));
++        }
++    }
++    // Gemma 3 1B: n_embd 1152, 4 query heads / 1 KV head of 256, ffn 6912 (GEGLU), Q5_0 /
++    // Q8_0 / Q4_K / Q6_K weights (the Q8_0 output, 262144 rows, exceeds 128 MiB: CPU),
++    // embedding scale, NEOX RoPE base 1e6 (global) / 1e4 (local, 512-token window).
++    {
++        const int64_t g_embd = 1152, g_hd = 256, g_head = 4, g_ff = 6912;
++        const weight_shape g_weights[] = {
++            { GGML_TYPE_Q5_0, g_head*g_hd, g_embd      }, // attn_q
++            { GGML_TYPE_Q5_0, g_hd,        g_embd      }, // attn_k
++            { GGML_TYPE_Q8_0, g_hd,        g_embd      }, // attn_v
++            { GGML_TYPE_Q4_K, g_embd,      g_head*g_hd }, // attn_output
++            { GGML_TYPE_Q5_0, g_ff,        g_embd      }, // ffn_gate / ffn_up
++            { GGML_TYPE_Q6_K, g_embd,      g_ff        }, // ffn_down
++        };
++        for (const auto & w : g_weights) {
++            for (int64_t n : { (int64_t) 1, (int64_t) 2, (int64_t) 41 }) {
++                test_cases.emplace_back(new test_mul_mat(w.type, GGML_TYPE_F32, w.m, n, w.k, {1, 1}, {1, 1}));
++            }
++        }
++        for (int64_t n : { (int64_t) 1, (int64_t) 41 }) {
++            test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {g_hd, g_head, n, 1}, false, 1e-6f));
++            test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {g_hd, 1,      n, 1}, false, 1e-6f));
++            test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {g_embd, n, 1, 1}, 1e-6f, false, false));
++            test_cases.emplace_back(new test_glu_split(GGML_GLU_OP_GEGLU, GGML_TYPE_F32, {g_ff, n, 1, 1}));
++            test_cases.emplace_back(new test_scale(GGML_TYPE_F32, {g_embd, n, 1, 1}, sqrtf((float) g_embd)));
++            for (float base : { 1000000.0f, 10000.0f }) {
++                test_cases.emplace_back(new test_rope(GGML_TYPE_F32, {g_hd, g_head, n, 1}, (int) g_hd, GGML_ROPE_TYPE_NEOX,
++                                                      4096, 1.0f, 0.0f, 1.0f, false, 0, true, false, 0, 4096, base, 32.0f, false));
++            }
++        }
++        const float scale = 1.0f/sqrtf((float) g_hd);
++        for (int64_t kv : { (int64_t) 256, (int64_t) 4096 }) {
++            for (int64_t n : { (int64_t) 1, (int64_t) 41 }) {
++                test_cases.emplace_back(new test_flash_attn_ext(g_hd, g_hd, 1, {g_head, 1}, kv, n, true, false, 0.0f, 0.0f,
++                                                                GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, kv, n, g_hd, {1, 1}, {g_head, 1}));
++                test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {kv, n, g_head, 1}, true, false, GGML_TYPE_F16, {1, 1}, scale, 0.0f));
++                test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, g_hd, n, kv, {1, 1}, {g_head, 1}));
++            }
++        }
++    }
++    // PLaMo 3 at the extension's KV size (n_ctx 4096, decode) and softmax with attention sinks.
++    {
++        const float kq_scale_4k = 1.0f/sqrtf((float) head_dim);
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 4096, 1, head_dim, {1, 1}, {n_head, 1}));
++        test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {4096, 1, n_head, 1}, true, false, GGML_TYPE_F16, {1, 1}, kq_scale_4k, 0.0f));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, head_dim, 1, 4096, {1, 1}, {n_head, 1}));
++        test_cases.emplace_back(new test_flash_attn_ext(head_dim, head_dim, 1, {n_head, 1}, 4096, 1, true, false, 0.0f, 0.0f,
++                                                        GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16));
++        for (int64_t n : { (int64_t) 1, (int64_t) 41 }) {
++            test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {256, n, n_head, 1}, true, true, GGML_TYPE_F16, {1, 1}, kq_scale_4k, 0.0f));
++        }
++    }
+     return test_cases;
+ }
+ 
