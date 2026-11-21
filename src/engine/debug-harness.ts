@@ -4,6 +4,7 @@ import {
   type BackendProbe,
   type BackendSelection,
 } from './in-browser/backend';
+import type { ModelId } from './model/catalog';
 import { looksLikeBrokenTranslation } from './text/garbage';
 import type { GpuDiagnostic } from '@/shared/gpu-diagnostic';
 
@@ -112,6 +113,8 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
 
 export interface HarnessRunResult {
   configId: string;
+  /** The model this run used — the results table shows one model per run. */
+  modelId: ModelId;
   ok: boolean;
   output: string;
   /** First streamed chunk; the closest thing to a first-token comparison the runtime exposes. */

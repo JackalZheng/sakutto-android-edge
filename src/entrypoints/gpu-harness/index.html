@@ -37,6 +37,61 @@
         margin: 12px 0;
       }
 
+      button:disabled {
+        opacity: 0.55;
+      }
+
+      .muted {
+        color: #5b6b7d;
+      }
+
+      ul.models {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      ul.models > li {
+        border: 1px solid #c3ccd6;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+      }
+
+      ul.models > li.selected {
+        border-color: #2563eb;
+        border-width: 2px;
+      }
+
+      ul.models input[type='radio'] {
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+
+      ul.models p {
+        margin: 6px 0;
+      }
+
+      ul.models .actions button {
+        margin: 4px 8px 4px 0;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .muted {
+          color: #9aa7b8;
+        }
+
+        ul.models > li {
+          border-color: #39424f;
+        }
+
+        ul.models > li.selected {
+          border-color: #60a5fa;
+        }
+      }
+
       pre {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
@@ -83,10 +138,17 @@
       <h1>GPU harness <span class="warn">(debug tool)</span></h1>
       <p>
         Runs one fixed English paragraph through the CPU backend and several WebGPU configurations
-        of the on-device model, then compares the outputs. Used to diagnose garbled WebGPU output on
-        Android. This page is not part of the translation product.
+        of the selected model, then compares the outputs. Used to diagnose garbled WebGPU output on
+        Android and to A/B-compare translation quality and speed across models. This page is not
+        part of the translation product.
       </p>
       <p id="status">Probing…</p>
+      <h2>模型（依檔案大小排序）</h2>
+      <p class="muted">
+        選一個模型測試：每個模型分開下載、各自快取、可單獨刪除。下載前會先顯示大小、請你確認。
+        PLaMo-3 是現行對照組；Qwen3 兩個模型已關閉思考模式；Hy-MT2 是重點候選。
+      </p>
+      <div id="models"></div>
       <h2>Adapter</h2>
       <pre id="adapter">…</pre>
       <button id="run" type="button" disabled>Run harness</button>

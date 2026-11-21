@@ -21,6 +21,7 @@ const GPU_PROBE: BackendProbe = {
 function run(partial: Partial<HarnessRunResult>): HarnessRunResult {
   return {
     configId: 'gpu-default',
+    modelId: 'plamo-3-translate-0.8b-q4_k_m',
     ok: true,
     output: '',
     firstToken: '',
