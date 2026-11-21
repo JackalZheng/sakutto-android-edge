@@ -172,21 +172,52 @@ export const INTEGRATED_GPU_HINT =
   'Windows Chrome ignores powerPreference (crbug 369219127). If this adapter looks integrated, try chrome://flags/#force-high-performance-gpu.';
 
 let profileOverride: WebGpuDebugProfile | null = null;
+let tuningTokens: string[] = [];
 let storageTask: Promise<WebGpuDebugProfile> | null = null;
 
 function debugGlobal(): { __SAKUTTO_WEBGPU_DEBUG__?: unknown } {
   return globalThis as { __SAKUTTO_WEBGPU_DEBUG__?: unknown };
 }
 
+/**
+ * Tokens ggml-webgpu (patch 0021) reads after the profile name, joined with `+`:
+ * `sub8|sub16|sub32|sub64` kernels per submit, `mvwg64|mvwg128|mvwg256` and `mvo1|mvo2|mvo4|mvo8`
+ * mat-vec workgroup size / outputs per workgroup, `perf` per-graph stats, `perfops` per-op timing.
+ */
+export const WEBGPU_TUNING_TOKEN_PATTERN =
+  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|perf|perfops)$/u;
+
+/** The string the worker hands ggml-webgpu: the profile, then any tuning tokens. */
+export function composeWebGpuDebugString(
+  profile: WebGpuDebugProfile | null,
+  tokens: readonly string[],
+): string | null {
+  const valid = tokens.filter((token) => WEBGPU_TUNING_TOKEN_PATTERN.test(token));
+  if (valid.length === 0) return profile && profile !== 'off' ? profile : null;
+  return [profile ?? 'off', ...valid].join('+');
+}
+
+function applyDebugGlobal(): void {
+  const target = debugGlobal();
+  const value = composeWebGpuDebugString(profileOverride, tuningTokens);
+  if (value) target.__SAKUTTO_WEBGPU_DEBUG__ = value;
+  else delete target.__SAKUTTO_WEBGPU_DEBUG__;
+}
+
 export function setWebGpuDebugProfile(profile: WebGpuDebugProfile | null): void {
   profileOverride = profile;
-  const target = debugGlobal();
-  if (profile && profile !== 'off') target.__SAKUTTO_WEBGPU_DEBUG__ = profile;
-  else delete target.__SAKUTTO_WEBGPU_DEBUG__;
+  applyDebugGlobal();
+}
+
+/** Debug harness only: tuning tokens for the next WebGPU device (see composeWebGpuDebugString). */
+export function setWebGpuDebugTuning(tokens: readonly string[]): void {
+  tuningTokens = tokens.filter((token) => WEBGPU_TUNING_TOKEN_PATTERN.test(token));
+  applyDebugGlobal();
 }
 
 export function resetWebGpuDebugProfile(): void {
   profileOverride = null;
+  tuningTokens = [];
   delete debugGlobal().__SAKUTTO_WEBGPU_DEBUG__;
   storageTask = null;
 }
@@ -194,7 +225,8 @@ export function resetWebGpuDebugProfile(): void {
 export function webGpuDebugProfile(): WebGpuDebugProfile {
   if (profileOverride) return profileOverride;
   const fromGlobal = debugGlobal().__SAKUTTO_WEBGPU_DEBUG__;
-  return isWebGpuDebugProfile(fromGlobal) ? fromGlobal : 'off';
+  const base = typeof fromGlobal === 'string' ? fromGlobal.split('+')[0] : fromGlobal;
+  return isWebGpuDebugProfile(base) ? base : 'off';
 }
 
 export function webGpuDebugProfileFromUrl(href: string): WebGpuDebugProfile | null {

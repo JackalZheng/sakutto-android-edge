@@ -44,6 +44,8 @@ export interface DebugLoadOverrides {
   noKvOffload?: boolean;
   /** llama.cpp `-ot` rules, e.g. `blk\.(7|15)\.=CPU`. */
   tensorOverrides?: string;
+  /** llama.cpp `n_ubatch` (physical batch); unset keeps llama.cpp's default (min(n_batch, 512)). */
+  nUbatch?: number;
 }
 
 export interface BackendSelection {

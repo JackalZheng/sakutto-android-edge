@@ -26,7 +26,33 @@ import {
   lastRuntimeLogTail,
   lastWebGpuLoadLog,
   type LlamaRuntime,
+  setRuntimeLogListener,
 } from '@/engine/in-browser/runtime';
+import {
+  buildPerfConfigs,
+  crashedPerfResult,
+  describeSelection,
+  emptyPerfState,
+  formatPerfReport,
+  HARNESS_MODEL_LAYERS,
+  parseGpuOpsLine,
+  parseGpuStatLine,
+  parsePerfState,
+  perfBreakdownQueue,
+  type PerfConfig,
+  perfDebugString,
+  type PerfResult,
+  type PerfRunMetrics,
+  PERF_STATE_KEY,
+  type PerfSweepState,
+  perfSweepQueue,
+  recordPerfResult,
+  resolvePerfConfig,
+  summarizeGpuOps,
+  summarizeGpuStats,
+  withPerfTimeout,
+} from '@/engine/debug-perf';
+import type { WllamaCompletionTimings } from '@/engine/wllama/module';
 import {
   buildHarnessPrompt,
   describeHarnessModel,
@@ -66,6 +92,7 @@ import {
   parseWebGpuLog,
   resetWebGpuDebugProfile,
   setWebGpuDebugProfile,
+  setWebGpuDebugTuning,
   type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 import { isAndroidEdgeRuntime } from '@/shared/mobile';
@@ -98,6 +125,12 @@ const modelStatusEl = document.querySelector<HTMLElement>('#model-status')!;
 const modelDownloadButton = document.querySelector<HTMLButtonElement>('#model-download')!;
 const modelDeleteButton = document.querySelector<HTMLButtonElement>('#model-delete')!;
 const modelCancelButton = document.querySelector<HTMLButtonElement>('#model-cancel')!;
+const perfConfigEl = document.querySelector<HTMLSelectElement>('#perf-config')!;
+const perfRunButton = document.querySelector<HTMLButtonElement>('#run-perf')!;
+const perfSweepButton = document.querySelector<HTMLButtonElement>('#run-perf-sweep')!;
+const perfCopyButton = document.querySelector<HTMLButtonElement>('#perf-copy')!;
+const perfClearButton = document.querySelector<HTMLButtonElement>('#perf-clear')!;
+const perfReportEl = document.querySelector<HTMLElement>('#perf-report')!;
 
 /** sessionStorage key for the model picked in the switcher. */
 const MODEL_CHOICE_KEY = 'sakuttoGpuHarnessModel';
@@ -288,6 +321,113 @@ async function runConfig(
   return result;
 }
 
+/** One timed completion with the prompt cache off, so every run evaluates the whole prompt. */
+async function timedPerfRun(runtime: LlamaRuntime, prompt: HarnessPrompt): Promise<PerfRunMetrics> {
+  const chunks: string[] = [];
+  let timings: WllamaCompletionTimings | null = null;
+  const started = performance.now();
+  let firstAt: number | null = null;
+  await runtime.complete({
+    prompt: prompt.prompt,
+    stop: prompt.stop,
+    maxTokens: HARNESS_MAX_TOKENS,
+    signal: new AbortController().signal,
+    cachePrompt: false,
+    onToken: (text) => {
+      if (firstAt === null) firstAt = performance.now();
+      chunks.push(text);
+    },
+    onTimings: (value) => {
+      timings = value;
+    },
+  });
+  const ended = performance.now();
+  const t = timings as WllamaCompletionTimings | null;
+  return {
+    ttftMs: firstAt === null ? null : Math.round(firstAt - started),
+    totalMs: ended - started,
+    promptTokens: t?.prompt_n ?? null,
+    promptMs: t?.prompt_ms ?? null,
+    predictedTokens: t?.predicted_n ?? null,
+    predictedMs: t?.predicted_ms ?? null,
+    output: chunks.join(''),
+  };
+}
+
+const PERF_NOTE_PATTERN =
+  /ggml_webgpu: (adreno|tuning|perf diagnostics|device ready)|offloaded \d+\/\d+ layers|flash_attn|n_ubatch|n_batch/iu;
+
+async function runPerfConfig(
+  runner: ModelRunner,
+  config: PerfConfig,
+  prompt: HarnessPrompt,
+): Promise<PerfResult> {
+  const result: PerfResult = {
+    configId: config.id,
+    modelId: runner.model.id,
+    label: config.label,
+    selectionText: describeSelection(config.selection),
+    debugString: config.selection.backend === 'webgpu' ? perfDebugString(config) : null,
+    ok: false,
+    error: null,
+    loadMs: null,
+    gpuEvidence: null,
+    runs: [],
+    gpuStats: null,
+    gpuOps: null,
+    notes: [],
+  };
+  log(`--- perf ${runner.model.name}: ${config.id} (${config.label}) ---`);
+  log(`  ${result.selectionText} debug=${result.debugString ?? 'none'}`);
+  const statLines: string[] = [];
+  let capturing = false;
+  setRuntimeLogListener((line) => {
+    if (capturing && /SAKUTTO_GPU(STAT|OPS) /u.test(line)) statLines.push(line);
+  });
+  try {
+    if (config.selection.backend === 'webgpu') {
+      setWebGpuDebugProfile(config.debugProfile);
+      setWebGpuDebugTuning(config.tuning);
+    } else {
+      resetWebGpuDebugProfile();
+    }
+    await runner.unload();
+    const loadStarted = performance.now();
+    const runtime = await runner.load(config.selection);
+    result.loadMs = performance.now() - loadStarted;
+    log(`  load: ${Math.round(result.loadMs)} ms (threads ${runtime.threads})`);
+    if (config.selection.backend === 'webgpu') {
+      const lines = lastWebGpuLoadLog();
+      result.gpuEvidence = gpuEvidence(lines);
+      result.notes = lines.filter((line) => PERF_NOTE_PATTERN.test(line)).slice(0, 12);
+    }
+    for (let run = 0; run < 2; run += 1) {
+      capturing = run === 1;
+      const metrics = await timedPerfRun(runtime, prompt);
+      result.runs.push(metrics);
+      log(
+        `  run ${run + 1}: ttft ${metrics.ttftMs ?? 'n/a'} ms, total ${Math.round(metrics.totalMs)} ms, ` +
+          `prompt ${metrics.promptTokens ?? 'n/a'} tok / ${Math.round(metrics.promptMs ?? 0)} ms, ` +
+          `decode ${metrics.predictedTokens ?? 'n/a'} tok / ${Math.round(metrics.predictedMs ?? 0)} ms`,
+      );
+    }
+    capturing = false;
+    result.gpuStats = summarizeGpuStats(
+      statLines.map(parseGpuStatLine).filter((line) => line !== null),
+    );
+    result.gpuOps = summarizeGpuOps(statLines.map(parseGpuOpsLine).filter((line) => line !== null));
+    result.ok = true;
+  } catch (error) {
+    result.error = describeErrorChain(error);
+    log(`  FAILED: ${result.error}`);
+    for (const line of lastRuntimeLogTail().slice(-8)) result.notes.push(`runtime: ${line}`);
+  } finally {
+    setRuntimeLogListener(null);
+    resetWebGpuDebugProfile();
+  }
+  return result;
+}
+
 function renderResults(
   configs: readonly HarnessConfig[],
   results: readonly HarnessRunResult[],
@@ -409,12 +549,15 @@ async function main(): Promise<void> {
   const savedState = parseIsolatedState(sessionStorage.getItem(ISOLATED_STATE_KEY));
   const storedChoice = sessionStorage.getItem(MODEL_CHOICE_KEY);
   // A pending isolated queue keeps the model it was started with.
+  const savedPerf = parsePerfState(sessionStorage.getItem(PERF_STATE_KEY));
   const modelId =
     savedState && savedState.queue.length > 0 && isHarnessModelId(savedState.modelId)
       ? savedState.modelId
-      : isHarnessModelId(storedChoice)
-        ? storedChoice
-        : HARNESS_DEFAULT_MODEL_ID;
+      : savedPerf && savedPerf.queue.length > 0 && isHarnessModelId(savedPerf.modelId)
+        ? savedPerf.modelId
+        : isHarnessModelId(storedChoice)
+          ? storedChoice
+          : HARNESS_DEFAULT_MODEL_ID;
   const model = harnessModel(modelId);
   for (const candidate of HARNESS_MODELS) {
     const option = document.createElement('option');
@@ -542,6 +685,9 @@ async function main(): Promise<void> {
     opsButton,
     opsMatrixButton,
     ...opsAllButtons,
+    perfRunButton,
+    perfSweepButton,
+    perfClearButton,
     ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
   ];
   const setBusy = (busy: boolean): void => {
@@ -560,6 +706,120 @@ async function main(): Promise<void> {
       );
     }
   };
+
+  // --- GPU perf breakdown / sweep: one config per page load -----------------
+  const perfConfigs = buildPerfConfigs(
+    probe,
+    isAndroidEdgeRuntime(),
+    HARNESS_MODEL_LAYERS[model.id] ?? null,
+  );
+  for (const config of perfConfigs) {
+    const option = document.createElement('option');
+    option.value = config.id;
+    option.textContent = `${config.id}: ${config.label}`;
+    perfConfigEl.append(option);
+  }
+  perfConfigEl.value = perfConfigs.some((c) => c.id === 'gpu-mv') ? 'gpu-mv' : 'cpu';
+  const readPerf = (): PerfSweepState =>
+    parsePerfState(sessionStorage.getItem(PERF_STATE_KEY)) ?? emptyPerfState(model.id);
+  const writePerf = (state: PerfSweepState): void => {
+    sessionStorage.setItem(PERF_STATE_KEY, JSON.stringify(state));
+  };
+  const perfHeader = (): string[] => [
+    `model: ${model.name} (${model.id})`,
+    `date: ${new Date().toISOString()}`,
+    `adapter: vendor=${describe(diag.vendor)} architecture=${describe(diag.architecture)} description=${describe(diag.description)}`,
+    `subgroups=${describe(diag.subgroups)} shader-f16=${describe(diag.shaderF16)} maxStorageBufferBindingSize=${describe(diag.maxStorageBufferBindingSize)}`,
+    `hardwareConcurrency=${capabilities.hardwareConcurrency} crossOriginIsolated=${capabilities.crossOriginIsolated} android=${isAndroidEdgeRuntime()}`,
+    `prompt: harness paragraph (${HARNESS_SOURCE_TEXT.length} chars), max ${HARNESS_MAX_TOKENS} tokens, greedy, prompt cache off`,
+  ];
+  const renderPerf = (): void => {
+    const state = readPerf();
+    perfReportEl.textContent =
+      state.results.length > 0 ? formatPerfReport(perfHeader(), state.results) : '';
+    perfCopyButton.disabled = state.results.length === 0;
+  };
+  const startPerf = (queue: readonly string[]): void => {
+    const state = readPerf();
+    writePerf({
+      modelId: model.id,
+      queue: [...queue],
+      running: null,
+      results: state.modelId === model.id ? state.results : [],
+    });
+    location.reload();
+  };
+  perfRunButton.addEventListener('click', () => {
+    startPerf(perfBreakdownQueue(perfConfigs, perfConfigEl.value));
+  });
+  perfSweepButton.addEventListener('click', () => {
+    startPerf(perfSweepQueue(perfConfigs));
+  });
+  perfClearButton.addEventListener('click', () => {
+    sessionStorage.removeItem(PERF_STATE_KEY);
+    renderPerf();
+    log('saved perf results cleared');
+  });
+  perfCopyButton.addEventListener('click', () => {
+    const text = perfReportEl.textContent ?? '';
+    void navigator.clipboard.writeText(text).then(
+      () => log('perf report copied'),
+      () => {
+        const range = document.createRange();
+        range.selectNodeContents(perfReportEl);
+        const selection = getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        log('clipboard blocked: the report is selected, copy it from the page');
+      },
+    );
+  });
+  renderPerf();
+  const perfState = readPerf();
+  if (perfState.running !== null) {
+    // The page died during that config (crash, out of memory, device loss, or the timeout reload).
+    writePerf(
+      recordPerfResult(
+        perfState,
+        crashedPerfResult(perfState.running, perfState.modelId, 'page reloaded or crashed mid-run'),
+      ),
+    );
+    renderPerf();
+  }
+  const nextPerf = readPerf().queue[0];
+  if (nextPerf !== undefined) {
+    setBusy(true);
+    const config = resolvePerfConfig(perfConfigs, nextPerf);
+    const current = readPerf();
+    if (!config) {
+      writePerf({ ...current, queue: current.queue.slice(1) });
+    } else {
+      statusEl.textContent = `GPU perf: ${config.id} (${current.queue.length} left in the queue)…`;
+      writePerf({ ...current, running: config.id });
+      let result: PerfResult;
+      try {
+        result = await withPerfTimeout(runPerfConfig(runner, config, prompt));
+      } catch (error) {
+        result = crashedPerfResult(config.id, model.id, describeErrorChain(error));
+        result.label = config.label;
+      }
+      writePerf(recordPerfResult(readPerf(), result));
+      renderPerf();
+      if (result.ok) await runner.unload().catch(() => undefined);
+    }
+    const remaining = readPerf().queue.length;
+    statusEl.textContent =
+      remaining > 0
+        ? `GPU perf: reloading for the next config (${remaining} left)…`
+        : 'GPU perf done. Copy the report below.';
+    if (remaining > 0) {
+      // A fresh page per config: a timed-out or crashed run leaves its worker behind.
+      await new Promise((resolve) => setTimeout(resolve, ISOLATED_RELOAD_DELAY_MS));
+      location.reload();
+      return;
+    }
+    log('GPU perf done');
+  }
 
   // --- isolated mode: one config per page load ---------------------------
   const readState = (): IsolatedRunState =>

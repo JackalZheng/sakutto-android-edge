@@ -1,0 +1,336 @@
+ggml-webgpu: opt-in perf diagnostics and tuning tokens for the debug harness.
+
+The debug profile string may carry "+"-separated tokens after the profile
+name (e.g. "adreno-matvec+sub32+perf"); the profile itself is the first
+token. All tokens are off unless the debug harness sets them:
+
+  sub8|sub16|sub32|sub64   kernels per queue submit
+  mvwg64|mvwg128|mvwg256   mat-vec (non-MMVQ) workgroup size
+  mvo1|mvo2|mvo4|mvo8      mat-vec outputs per workgroup
+  perf                     one SAKUTTO_GPUSTAT line per graph: nodes, kernels,
+                           submits, CPU encode time, time since the previous
+                           graph and time spent waiting in buffer maps
+  perfops                  also submit + wait after every op and log per-op
+                           wall times (SAKUTTO_GPUOPS), plus the round trip of
+                           an empty submit as sync_ms
+
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -18,6 +18,8 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
++#include <cstdio>
+ #include <cstdint>
+ #include <cstring>
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+@@ -242,6 +244,18 @@
+     // and "adreno-sg-tiled" (see create_webgpu_device).
+     bool disable_mat_vec = false;
+ 
++    // Sakutto patch 0021: opt-in perf diagnostics (debug-profile tokens "perf" / "perfops").
++    // "perf": one SAKUTTO_GPUSTAT log line per graph (nodes, kernels, submits, CPU encode
++    // time, time since the previous graph, time spent waiting for readbacks).
++    // "perfops": also submit and wait after every op and log per-op wall times
++    // (SAKUTTO_GPUOPS); much slower, for the breakdown only.
++    bool     sakutto_perf          = false;
++    bool     sakutto_perf_ops      = false;
++    double   perf_readback_ms      = 0.0;
++    uint32_t perf_readbacks        = 0;
++    uint64_t perf_graphs           = 0;
++    double   perf_last_graph_start = 0.0;
++
+     // TODO: We should rework the CPU profiling time handling to make it more useful. ref: https://github.com/ggml-org/llama.cpp/pull/22050
+ #ifdef GGML_WEBGPU_CPU_PROFILE
+     // Profiling: labeled CPU time in ms (total)
+@@ -576,6 +590,11 @@
+                                           "Queue wait", "Queue work", callback_message.c_str());
+ }
+ 
++// Sakutto patch 0021: wall clock for the opt-in perf diagnostics.
++static double ggml_webgpu_sakutto_now_ms() {
++    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
++}
++
+ static void ggml_backend_webgpu_map_buffer(webgpu_global_context & ctx,
+                                            wgpu::Buffer &          buffer,
+                                            wgpu::MapMode           mode,
+@@ -583,6 +602,8 @@
+                                            size_t                  size) {
+     wgpu::MapAsyncStatus callback_status = wgpu::MapAsyncStatus::Error;
+     std::string          callback_message;
++    const bool           perf     = ctx->sakutto_perf;
++    const double         perf_t0  = perf ? ggml_webgpu_sakutto_now_ms() : 0.0;
+ 
+     const wgpu::WaitStatus wait_status = ctx->instance.WaitAny(
+         buffer.MapAsync(mode, offset, size, wgpu::CallbackMode::AllowSpontaneous,
+@@ -594,6 +615,10 @@
+ 
+     ggml_backend_webgpu_check_wait_status(wait_status, callback_status, wgpu::MapAsyncStatus::Success,
+                                           "Buffer map wait", "Buffer map", callback_message.c_str());
++    if (perf) {
++        ctx->perf_readback_ms += ggml_webgpu_sakutto_now_ms() - perf_t0;
++        ctx->perf_readbacks++;
++    }
+ }
+ 
+ static void ggml_backend_webgpu_submit_commands(webgpu_context &          ctx,
+@@ -3989,6 +4014,32 @@
+     std::vector<std::string> profile_pipeline_names;
+ #endif
+ 
++    // Sakutto patch 0021: opt-in perf diagnostics.
++    const bool perf     = ctx->global_ctx->sakutto_perf;
++    const bool perf_ops = ctx->global_ctx->sakutto_perf_ops;
++    const double perf_start      = perf ? ggml_webgpu_sakutto_now_ms() : 0.0;
++    uint32_t     perf_kernels    = 0;
++    uint32_t     perf_submits    = 0;
++    int64_t      perf_max_n      = 0;
++    double       perf_sync_ms    = 0.0;
++    double       perf_ops_ms     = 0.0;
++    std::vector<std::pair<std::string, double>> perf_op_times;
++    if (perf) {
++        for (int i = 0; i < cgraph->n_nodes; i++) {
++            if (cgraph->nodes[i]->op == GGML_OP_MUL_MAT) {
++                perf_max_n = std::max<int64_t>(perf_max_n, cgraph->nodes[i]->ne[1]);
++            }
++        }
++    }
++    if (perf_ops) {
++        // Round trip of an empty submit: the fixed cost inside every per-op time below.
++        wgpu::CommandBuffer empty = ctx->global_ctx->device.CreateCommandEncoder().Finish();
++        const double        t0    = ggml_webgpu_sakutto_now_ms();
++        ctx->global_ctx->queue.Submit(1, &empty);
++        ggml_backend_webgpu_wait_queue(ctx->global_ctx);
++        perf_sync_ms = ggml_webgpu_sakutto_now_ms() - t0;
++    }
++
+     ctx->active_command_encoder = ctx->global_ctx->device.CreateCommandEncoder();
+     if (ctx->batch_compute_passes) {
+         ctx->active_compute_pass = ctx->active_command_encoder.BeginComputePass();
+@@ -4001,10 +4052,55 @@
+         if (auto cmd = ggml_webgpu_encode(ctx, cgraph, node_idx, num_encoded_ops)) {
+             commands.push_back(*cmd);
+             num_batched_kernels += cmd.value().num_kernels;
++            perf_kernels += cmd.value().num_kernels;
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+             profile_pipeline_names.insert(profile_pipeline_names.end(), cmd->pipeline_names.begin(),
+                                           cmd->pipeline_names.end());
+ #endif
++            if (perf_ops) {
++                // Sakutto patch 0021: run this op alone and time it (submit + wait).
++                const ggml_tensor * node = cgraph->nodes[node_idx];
++                std::string key = std::string(ggml_op_desc(node));
++                if (node->src[0] != nullptr) {
++                    key += ":";
++                    key += ggml_type_name(node->src[0]->type);
++                }
++                if (node->op == GGML_OP_MUL_MAT) {
++                    key += node->ne[1] <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS ? ":n<=4" : ":n>4";
++                }
++                if (num_encoded_ops > 1) {
++                    key += "+fused";
++                }
++                if (ctx->active_compute_pass) {
++                    ctx->active_compute_pass.End();
++                }
++                wgpu::CommandBuffer op_commands = ctx->active_command_encoder.Finish();
++                const double        t0          = ggml_webgpu_sakutto_now_ms();
++                ggml_backend_webgpu_submit_commands(ctx, op_commands, num_inflight_batches);
++                ggml_backend_webgpu_wait_queue(ctx->global_ctx);
++                const double dt = ggml_webgpu_sakutto_now_ms() - t0;
++                num_inflight_batches = 0;
++                perf_submits++;
++                perf_ops_ms += dt;
++                bool found = false;
++                for (auto & entry : perf_op_times) {
++                    if (entry.first == key) {
++                        entry.second += dt;
++                        found = true;
++                        break;
++                    }
++                }
++                if (!found) {
++                    perf_op_times.emplace_back(key, dt);
++                }
++                num_batched_kernels         = 0;
++                ctx->active_command_encoder = ctx->global_ctx->device.CreateCommandEncoder();
++                if (ctx->batch_compute_passes) {
++                    ctx->active_compute_pass = ctx->active_command_encoder.BeginComputePass();
++                }
++                ctx->param_arena.reset();
++                commands.clear();
++            }
+         }
+ 
+         if (num_batched_kernels >= ctx->global_ctx->command_submit_batch_size) {
+@@ -4014,6 +4110,7 @@
+             num_batched_kernels                = 0;
+             wgpu::CommandBuffer batch_commands = ctx->active_command_encoder.Finish();
+             ggml_backend_webgpu_submit_commands(ctx, batch_commands, num_inflight_batches);
++            perf_submits++;
+ 
+             // reset state for next batch
+             ctx->active_command_encoder = ctx->global_ctx->device.CreateCommandEncoder();
+@@ -4048,9 +4145,39 @@
+         ggml_backend_webgpu_submit_commands(ctx, batch_commands, num_inflight_batches);
+         ctx->param_arena.reset();
+         commands.clear();
++        perf_submits++;
+     }
+     ctx->active_command_encoder = nullptr;
+ 
++    if (perf) {
++        // Sakutto patch 0021. readback_ms is the time spent waiting in buffer maps since the
++        // previous graph (llama.cpp reads the previous graph's output before building this one),
++        // i.e. mostly waiting for the GPU to finish the previous graph.
++        webgpu_global_context & g      = ctx->global_ctx;
++        const double            now    = ggml_webgpu_sakutto_now_ms();
++        const double            cycle  = g->perf_graphs > 0 ? perf_start - g->perf_last_graph_start : 0.0;
++        g->perf_last_graph_start       = perf_start;
++        GGML_LOG_INFO(
++            "SAKUTTO_GPUSTAT g=%llu n=%lld nodes=%d kernels=%u submits=%u encode_ms=%.3f cycle_ms=%.3f "
++            "readback_ms=%.3f readbacks=%u\n",
++            (unsigned long long) g->perf_graphs, (long long) perf_max_n, cgraph->n_nodes, perf_kernels, perf_submits,
++            now - perf_start, cycle, g->perf_readback_ms, g->perf_readbacks);
++        g->perf_readback_ms = 0.0;
++        g->perf_readbacks   = 0;
++        if (perf_ops) {
++            std::string ops;
++            for (const auto & entry : perf_op_times) {
++                char buf[160];
++                snprintf(buf, sizeof(buf), "%s%s=%.3f", ops.empty() ? "" : ",", entry.first.c_str(), entry.second);
++                ops += buf;
++            }
++            GGML_LOG_INFO("SAKUTTO_GPUOPS g=%llu n=%lld ops_ms=%.3f sync_ms=%.3f %s\n",
++                          (unsigned long long) g->perf_graphs, (long long) perf_max_n, perf_ops_ms, perf_sync_ms,
++                          ops.c_str());
++        }
++        g->perf_graphs++;
++    }
++
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+     ggml_backend_webgpu_collect_profile_results(ctx, profile_pipeline_names, num_inflight_batches);
+ #endif
+@@ -4884,7 +5011,7 @@
+ #ifdef __EMSCRIPTEN__
+     return EM_ASM_INT({
+                var v = (typeof globalThis !== 'undefined' && globalThis.__SAKUTTO_WEBGPU_DEBUG__) ?
+-                           String(globalThis.__SAKUTTO_WEBGPU_DEBUG__) :
++                           String(globalThis.__SAKUTTO_WEBGPU_DEBUG__).split('+')[0] :
+                            '';
+                if (v === 'amd-rdna3') return 1;
+                if (v === 'intel-arc') return 2;
+@@ -4906,7 +5033,8 @@
+     if (v == nullptr) {
+         return 0;
+     }
+-    const std::string name(v);
++    std::string name(v);
++    name = name.substr(0, name.find('+'));
+     if (name == "amd-rdna3") return 1;
+     if (name == "intel-arc") return 2;
+     if (name == "no-f16") return 3;
+@@ -4925,6 +5053,36 @@
+ // D3D12 on AMD and Intel commonly grants 2 GiB - 4. Keep a conservative cap
+ // for the retry ladder and for debug profiles; requesting <= adapter limits
+ // should succeed per spec (the first try is still adapter-max).
++// Sakutto patch 0021: tuning / diagnostics tokens after the profile name, e.g.
++// "adreno-matvec+sub32+perf". Returns whether `token` is one of them.
++static bool ggml_webgpu_debug_has_token(const char * token) {
++#ifdef __EMSCRIPTEN__
++    return EM_ASM_INT(
++               {
++                   var v = (typeof globalThis !== 'undefined' && globalThis.__SAKUTTO_WEBGPU_DEBUG__) ?
++                               String(globalThis.__SAKUTTO_WEBGPU_DEBUG__) :
++                               '';
++                   return v.split('+').slice(1).indexOf(UTF8ToString($0)) >= 0 ? 1 : 0;
++               },
++               token) != 0;
++#else
++    const char * v = getenv("SAKUTTO_WEBGPU_DEBUG");
++    if (v == nullptr) {
++        return false;
++    }
++    std::string rest(v);
++    size_t      pos = rest.find('+');
++    while (pos != std::string::npos) {
++        const size_t next = rest.find('+', pos + 1);
++        if (rest.substr(pos + 1, next == std::string::npos ? std::string::npos : next - pos - 1) == token) {
++            return true;
++        }
++        pos = next;
++    }
++    return false;
++#endif
++}
++
+ static void ggml_webgpu_cap_storage_limits(wgpu::Limits & limits) {
+     const uint64_t cap = 2147483644ull;
+     if (limits.maxStorageBufferBindingSize > cap) {
+@@ -5333,6 +5491,35 @@
+     if (is_adreno && debug_profile != 11) {
+         ctx->webgpu_global_ctx->command_submit_batch_size = WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE;
+     }
++    // Sakutto patch 0021: tuning tokens (debug harness perf sweep), all off by default.
++    for (const uint32_t n : { 8u, 16u, 32u, 64u }) {
++        const std::string token = "sub" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ctx->webgpu_global_ctx->command_submit_batch_size = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: %u kernels per queue submit\n", n);
++        }
++    }
++    for (const uint32_t n : { 64u, 128u, 256u }) {
++        const std::string token = "mvwg" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_mv_wg_size = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: mat-vec workgroup size %u\n", n);
++        }
++    }
++    for (const uint32_t n : { 1u, 2u, 4u, 8u }) {
++        const std::string token = "mvo" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_mv_outputs_per_wg = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: mat-vec outputs per workgroup %u\n", n);
++        }
++    }
++    ctx->webgpu_global_ctx->sakutto_perf_ops = ggml_webgpu_debug_has_token("perfops");
++    ctx->webgpu_global_ctx->sakutto_perf =
++        ctx->webgpu_global_ctx->sakutto_perf_ops || ggml_webgpu_debug_has_token("perf");
++    if (ctx->webgpu_global_ctx->sakutto_perf) {
++        GGML_LOG_INFO("ggml_webgpu: perf diagnostics on%s\n",
++                      ctx->webgpu_global_ctx->sakutto_perf_ops ? " (per-op submit+wait timing)" : "");
++    }
+     if (is_adreno) {
+         GGML_LOG_INFO("ggml_webgpu: adreno: %u kernels per queue submit%s\n",
+                       ctx->webgpu_global_ctx->command_submit_batch_size,
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -52,6 +52,10 @@
+ 
+ // Matrix-vector multiplication parameters
+ #define WEBGPU_MUL_MAT_VEC_WG_SIZE 256
++// Sakutto patch 0021: debug-harness overrides for the (non-MMVQ) mat-vec shader; 0 keeps the
++// defaults above. Set once per device from the debug profile tokens mvwg*/mvo*.
++inline uint32_t ggml_webgpu_sakutto_mv_wg_size        = 0;
++inline uint32_t ggml_webgpu_sakutto_mv_outputs_per_wg = 0;
+ 
+ #define WEBGPU_MUL_MAT_VEC_FLOAT_OUTPUTS_PER_WG    4
+ #define WEBGPU_MUL_MAT_VEC_LEGACY_Q_OUTPUTS_PER_WG 4
+@@ -2322,6 +2326,15 @@
+         if (key.use_mmvq) {
+             defines.push_back("MMVQ");
+             defines.push_back("Q8_1_T");
++        } else {
++            if (ggml_webgpu_sakutto_mv_wg_size != 0) {
++                wg_size = ggml_webgpu_sakutto_mv_wg_size;
++                variant += "_wg" + std::to_string(wg_size);
++            }
++            if (ggml_webgpu_sakutto_mv_outputs_per_wg != 0) {
++                outputs_per_wg = ggml_webgpu_sakutto_mv_outputs_per_wg;
++                variant += "_o" + std::to_string(outputs_per_wg);
++            }
+         }
+ 
+         if (key.src_overlap) {

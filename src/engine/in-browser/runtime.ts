@@ -2,7 +2,7 @@ import { abortError, EngineError, GARBLED_OUTPUT_DETAIL, isAbortError } from '..
 import { gpuFailureExcerpt } from '@/shared/gpu-diagnostic';
 import { TRANSLATION_STOP_TOKENS } from '../prompt/pfml3';
 import { createWllama } from '../wllama';
-import type { WllamaConfig } from '../wllama/module';
+import type { WllamaCompletionTimings, WllamaConfig } from '../wllama/module';
 import type { BackendKind, BackendSelection } from './backend';
 
 export interface CompletionRequest {
@@ -12,6 +12,10 @@ export interface CompletionRequest {
   onToken: (text: string) => void;
   /** Stop strings for this request; the PLaMo translation stops when omitted (debug harness only). */
   stop?: readonly string[];
+  /** llama.cpp's timings for this request, when the worker sends them (debug harness only). */
+  onTimings?: (timings: WllamaCompletionTimings) => void;
+  /** Overrides prompt-cache reuse; a perf run turns it off to time a warm prompt eval. */
+  cachePrompt?: boolean;
 }
 
 export interface LlamaRuntime {
@@ -125,6 +129,16 @@ export function lastRuntimeLogTail(): readonly string[] {
   return runtimeTailLines;
 }
 
+let perfLogListener: ((line: string) => void) | null = null;
+
+/**
+ * Debug harness only: receives every llama.cpp log line printed after a load finished, so the
+ * perf breakdown can read ggml-webgpu's SAKUTTO_GPUSTAT / SAKUTTO_GPUOPS lines (patch 0021).
+ */
+export function setRuntimeLogListener(listener: ((line: string) => void) | null): void {
+  perfLogListener = listener;
+}
+
 const RUNTIME_TAIL_LINES = 200;
 const RUNTIME_TAIL_PATTERN = /ggml_webgpu|webgpu|device|lost|abort|error|warn|fail/iu;
 
@@ -181,6 +195,7 @@ function loadLog(): { lines: string[]; logger: Required<WllamaConfig>['logger'];
   const note = (...data: unknown[]): void => {
     const line = data.map((value) => String(value)).join(' ');
     if (!open) {
+      perfLogListener?.(line);
       if (runtimeTailLines.length < RUNTIME_TAIL_LINES && RUNTIME_TAIL_PATTERN.test(line)) {
         runtimeTailLines.push(line);
       }
@@ -244,6 +259,7 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
       log_level: LOG_LEVEL_INFO,
       ...(debugLoad?.flashAttn === undefined ? {} : { flash_attn: debugLoad.flashAttn }),
       ...(debugLoad?.noKvOffload === true ? { no_kv_offload: true } : {}),
+      ...(debugLoad?.nUbatch === undefined ? {} : { n_ubatch: debugLoad.nUbatch }),
       ...(debugLoad?.tensorOverrides
         ? { kv_overrides: { 'sakutto.tensor_buft_overrides': debugLoad.tensorOverrides } }
         : {}),
@@ -296,11 +312,12 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
               temperature: 0,
               // A finished request that asks for no reuse gives back its cells (patch 0005); cells
               // left by idle slots would widen every attention step of the requests still running.
-              cache_prompt: selection.nParallel === 1,
+              cache_prompt: request.cachePrompt ?? selection.nParallel === 1,
               stop: [...(request.stop ?? TRANSLATION_STOP_TOKENS)],
               stream: true,
               onData: (chunk) => {
                 forwardCompletionToken(request.signal, chunk.choices?.[0]?.text, request.onToken);
+                if (chunk.timings && request.onTimings) request.onTimings(chunk.timings);
               },
             }),
           ]);

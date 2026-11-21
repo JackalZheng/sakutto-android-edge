@@ -67,6 +67,14 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ['cpp/wllama-context.h', 'data_json.dump_safe()'],
   ['llama.cpp/tests/test-backend-ops.cpp', 'struct test_mul_mat_small_weights'],
   ['llama.cpp/tests/test-backend-ops.cpp', 'Sakutto (patch 0020): the other harness models'],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'static bool ggml_webgpu_debug_has_token(const char * token) {',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp',
+    'inline uint32_t ggml_webgpu_sakutto_mv_wg_size',
+  ],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {
