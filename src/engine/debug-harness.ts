@@ -107,7 +107,8 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
   configs.push(
     {
       id: 'gpu-default',
-      label: 'WebGPU (default; Adreno: subgroups off, mat-vec on, 16 kernels per submit)',
+      label:
+        'WebGPU (default; Adreno: subgroups off, mat-vec WG 64, new soft_max, 16 kernels per submit)',
       selection: gpu,
       debugProfile: null,
     },

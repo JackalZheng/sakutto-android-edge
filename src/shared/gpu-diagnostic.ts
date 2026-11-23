@@ -182,10 +182,11 @@ function debugGlobal(): { __SAKUTTO_WEBGPU_DEBUG__?: unknown } {
 /**
  * Tokens ggml-webgpu (patch 0021) reads after the profile name, joined with `+`:
  * `sub8|sub16|sub32|sub64` kernels per submit, `mvwg64|mvwg128|mvwg256` and `mvo1|mvo2|mvo4|mvo8`
- * mat-vec workgroup size / outputs per workgroup, `perf` per-graph stats, `perfops` per-op timing.
+ * mat-vec workgroup size / outputs per workgroup, `rwg64..1024` SOFT_MAX / fused RMS_NORM workgroup
+ * size, `smnc` / `smup` new / upstream SOFT_MAX shader, `perf` per-graph stats, `perfops` per-op timing.
  */
 export const WEBGPU_TUNING_TOKEN_PATTERN =
-  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|perf|perfops)$/u;
+  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|rwg(64|128|256|512|1024)|smnc|smup|perf|perfops)$/u;
 
 /** The string the worker hands ggml-webgpu: the profile, then any tuning tokens. */
 export function composeWebGpuDebugString(

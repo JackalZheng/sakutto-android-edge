@@ -318,6 +318,9 @@ describe('webgpu tuning tokens (patch 0021)', () => {
       'adreno-matvec+sub32+perf',
     );
     expect(composeWebGpuDebugString(null, ['perf'])).toBe('off+perf');
+    expect(composeWebGpuDebugString('adreno-matvec', ['rwg128', 'smup', 'smnc', 'rwg7'])).toBe(
+      'adreno-matvec+rwg128+smup+smnc',
+    );
     expect(composeWebGpuDebugString('adreno-matvec', ['bogus', 'sub7'])).toBe('adreno-matvec');
     expect(composeWebGpuDebugString('off', [])).toBeNull();
   });

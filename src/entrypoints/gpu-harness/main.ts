@@ -357,14 +357,10 @@ async function timedPerfRun(runtime: LlamaRuntime, prompt: HarnessPrompt): Promi
 const PERF_NOTE_PATTERN =
   /ggml_webgpu: (adreno|tuning|perf diagnostics|device ready)|offloaded \d+\/\d+ layers|flash_attn|n_ubatch|n_batch/iu;
 
-async function runPerfConfig(
-  runner: ModelRunner,
-  config: PerfConfig,
-  prompt: HarnessPrompt,
-): Promise<PerfResult> {
-  const result: PerfResult = {
+function newPerfResult(config: PerfConfig, modelId: string): PerfResult {
+  return {
     configId: config.id,
-    modelId: runner.model.id,
+    modelId,
     label: config.label,
     selectionText: describeSelection(config.selection),
     debugString: config.selection.backend === 'webgpu' ? perfDebugString(config) : null,
@@ -377,6 +373,28 @@ async function runPerfConfig(
     gpuOps: null,
     notes: [],
   };
+}
+
+/** Device-lost / error lines logged during the runs (also kept when the config times out). */
+function runtimeProblemLines(): string[] {
+  return lastRuntimeLogTail()
+    .filter((line) => !/SAKUTTO_GPU(STAT|OPS) /u.test(line))
+    .slice(-8)
+    .map((line) => `runtime: ${line}`);
+}
+
+/**
+ * Fills `result` as it goes and calls `progress` after the load and after each run, so a config
+ * that hangs or kills the page still reports what it got to (round 3: a timed-out config showed
+ * no selection and no debug string).
+ */
+async function runPerfConfig(
+  runner: ModelRunner,
+  config: PerfConfig,
+  prompt: HarnessPrompt,
+  result: PerfResult,
+  progress: (result: PerfResult) => void,
+): Promise<PerfResult> {
   log(`--- perf ${runner.model.name}: ${config.id} (${config.label}) ---`);
   log(`  ${result.selectionText} debug=${result.debugString ?? 'none'}`);
   const statLines: string[] = [];
@@ -396,6 +414,7 @@ async function runPerfConfig(
     const runtime = await runner.load(config.selection);
     result.loadMs = performance.now() - loadStarted;
     log(`  load: ${Math.round(result.loadMs)} ms (threads ${runtime.threads})`);
+    progress(result);
     if (config.selection.backend === 'webgpu') {
       const lines = lastWebGpuLoadLog();
       result.gpuEvidence = gpuEvidence(lines);
@@ -405,6 +424,7 @@ async function runPerfConfig(
       capturing = run === 1;
       const metrics = await timedPerfRun(runtime, prompt);
       result.runs.push(metrics);
+      progress(result);
       log(
         `  run ${run + 1}: ttft ${metrics.ttftMs ?? 'n/a'} ms, total ${Math.round(metrics.totalMs)} ms, ` +
           `prompt ${metrics.promptTokens ?? 'n/a'} tok / ${Math.round(metrics.promptMs ?? 0)} ms, ` +
@@ -416,11 +436,12 @@ async function runPerfConfig(
       statLines.map(parseGpuStatLine).filter((line) => line !== null),
     );
     result.gpuOps = summarizeGpuOps(statLines.map(parseGpuOpsLine).filter((line) => line !== null));
+    result.notes.push(...runtimeProblemLines());
     result.ok = true;
   } catch (error) {
     result.error = describeErrorChain(error);
     log(`  FAILED: ${result.error}`);
-    for (const line of lastRuntimeLogTail().slice(-8)) result.notes.push(`runtime: ${line}`);
+    result.notes.push(...runtimeProblemLines());
   } finally {
     setRuntimeLogListener(null);
     resetWebGpuDebugProfile();
@@ -745,6 +766,7 @@ async function main(): Promise<void> {
       modelId: model.id,
       queue: [...queue],
       running: null,
+      partial: null,
       results: state.modelId === model.id ? state.results : [],
     });
     location.reload();
@@ -781,7 +803,17 @@ async function main(): Promise<void> {
     writePerf(
       recordPerfResult(
         perfState,
-        crashedPerfResult(perfState.running, perfState.modelId, 'page reloaded or crashed mid-run'),
+        perfState.partial?.configId === perfState.running
+          ? {
+              ...perfState.partial,
+              ok: false,
+              error: 'page reloaded or crashed mid-run',
+            }
+          : crashedPerfResult(
+              perfState.running,
+              perfState.modelId,
+              'page reloaded or crashed mid-run',
+            ),
       ),
     );
     renderPerf();
@@ -795,13 +827,23 @@ async function main(): Promise<void> {
       writePerf({ ...current, queue: current.queue.slice(1) });
     } else {
       statusEl.textContent = `GPU perf: ${config.id} (${current.queue.length} left in the queue)…`;
-      writePerf({ ...current, running: config.id });
+      const partial = newPerfResult(config, model.id);
+      writePerf({ ...current, running: config.id, partial });
       let result: PerfResult;
       try {
-        result = await withPerfTimeout(runPerfConfig(runner, config, prompt));
+        result = await withPerfTimeout(
+          runPerfConfig(runner, config, prompt, partial, (value) => {
+            writePerf({ ...readPerf(), partial: value });
+          }),
+        );
       } catch (error) {
-        result = crashedPerfResult(config.id, model.id, describeErrorChain(error));
-        result.label = config.label;
+        // Timed out: keep what the config got to, plus any device-lost lines.
+        result = {
+          ...partial,
+          ok: false,
+          error: describeErrorChain(error),
+          notes: [...partial.notes, ...runtimeProblemLines()],
+        };
       }
       writePerf(recordPerfResult(readPerf(), result));
       renderPerf();

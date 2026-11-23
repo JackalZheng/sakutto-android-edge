@@ -70,49 +70,56 @@ export function buildPerfConfigs(
     debugProfile: 'adreno-matvec',
     tuning: [...tuning, 'perf'],
   });
-  configs.push(
-    mv('gpu-mv', 'adreno-matvec (Adreno default: 16 per submit)', gpu),
-    mv('gpu-mv-sub32', 'adreno-matvec, 32 kernels per submit', gpu, ['sub32']),
-    mv('gpu-mv-sub64', 'adreno-matvec, 64 kernels per submit', gpu, ['sub64']),
-    mv('gpu-mv-1-slot', 'adreno-matvec, 1 slot, n_ctx 1024', { ...gpu, nParallel: 1, nCtx: 1024 }),
-    mv('gpu-mv-b512-ub256', 'adreno-matvec, n_batch 512 / n_ubatch 256', {
-      ...gpu,
-      nBatch: 512,
-      debugLoad: { ...gpu.debugLoad, nUbatch: 256 },
-    }),
-    mv('gpu-mv-b512-ub512', 'adreno-matvec, n_batch 512 / n_ubatch 512', {
-      ...gpu,
-      nBatch: 512,
-      debugLoad: { ...gpu.debugLoad, nUbatch: 512 },
-    }),
-    mv('gpu-mv-wg64', 'adreno-matvec, mat-vec workgroup 64', gpu, ['mvwg64']),
-    mv('gpu-mv-wg128-o8', 'adreno-matvec, mat-vec workgroup 128, 8 outputs/WG', gpu, [
-      'mvwg128',
-      'mvo8',
-    ]),
-  );
-  if (modelLayers !== null && modelLayers > 1) {
-    const layers = Math.floor(modelLayers / 2) + 1;
-    configs.push(
-      mv(
-        'gpu-mv-half-layers',
-        `adreno-matvec, hybrid: n_gpu_layers ${layers} (output + last ${layers - 1} of ${modelLayers} layers on GPU)`,
-        { ...gpu, nGpuLayers: layers },
-      ),
-    );
-  }
+  // Round 4 (patch 0022): the Adreno default is now mat-vec workgroup 64, SOFT_MAX without the
+  // private cache and 256-wide SOFT_MAX / fused RMS_NORM workgroups. `gpu-r3` is the round-3
+  // default, `gpu-mv-repeat` reruns the baseline at the end to show thermal drift.
+  const half = modelLayers !== null && modelLayers > 1 ? Math.floor(modelLayers / 2) + 1 : null;
   configs.push(
     mv(
-      'gpu-mv-sub64-1-slot',
-      'adreno-matvec, 64 per submit + 1 slot, n_ctx 1024',
-      {
-        ...gpu,
-        nParallel: 1,
-        nCtx: 1024,
-      },
-      ['sub64'],
+      'gpu-mv',
+      'Adreno default (round 4: mat-vec WG 64, new soft_max, 256-wide row reductions)',
+      gpu,
     ),
+    mv('gpu-r3', 'round-3 default (mat-vec WG 256, upstream soft_max, 1024-wide rows)', gpu, [
+      'mvwg256',
+      'smup',
+      'rwg1024',
+    ]),
+    mv('gpu-old-softmax', 'round 4 but upstream soft_max, 1024-wide rows', gpu, [
+      'smup',
+      'rwg1024',
+    ]),
+    mv('gpu-rwg128', 'round 4, 128-wide row reductions', gpu, ['rwg128']),
+    mv('gpu-rwg64', 'round 4, 64-wide row reductions', gpu, ['rwg64']),
+    mv('gpu-ctx2048', 'round 4, n_ctx 2048 (4 slots)', { ...gpu, nCtx: 2048 }),
+    mv('gpu-ctx2048-np2', 'round 4, n_ctx 2048, 2 slots', { ...gpu, nCtx: 2048, nParallel: 2 }),
+    mv('gpu-ctx1024-np2', 'round 4, n_ctx 1024, 2 slots', { ...gpu, nCtx: 1024, nParallel: 2 }),
+    mv('gpu-ctx1024-np1', 'round 4, n_ctx 1024, 1 slot', { ...gpu, nCtx: 1024, nParallel: 1 }),
+    {
+      id: 'gpu-sg-fa',
+      label:
+        'opt-in flash attention: subgroups on (mat-vec routed to tiled), FA on; may garble, compare the output with CPU',
+      selection: gpu,
+      debugProfile: 'adreno-sg-tiled',
+      tuning: ['perf'],
+    },
   );
+  if (half !== null) {
+    configs.push(
+      mv(
+        'gpu-half-layers',
+        `round 4, hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`,
+        { ...gpu, nGpuLayers: half },
+      ),
+      mv('gpu-half-ctx2048-np2', `round 4, hybrid n_gpu_layers ${half}, n_ctx 2048, 2 slots`, {
+        ...gpu,
+        nGpuLayers: half,
+        nCtx: 2048,
+        nParallel: 2,
+      }),
+    );
+  }
+  configs.push(mv('gpu-mv-repeat', 'Adreno default again (thermal drift check)', gpu));
   return configs;
 }
 
@@ -395,6 +402,14 @@ export function formatPerfResult(result: PerfResult): string[] {
   const [cold, warm] = result.runs;
   if (cold) lines.push(runLine('run 1 (cold)', cold));
   if (warm) lines.push(runLine('run 2 (warm)', warm));
+  result.runs.forEach((run, index) => {
+    if (run.output.trim() === '') {
+      lines.push(
+        `  WARNING: run ${index + 1} produced no text (${run.predictedTokens ?? 'n/a'} tokens): an end-of-generation token first, ` +
+          'or a GPU fault that left the logits empty (see runtime lines)',
+      );
+    }
+  });
   if (cold && warm) {
     const ttft =
       cold.ttftMs !== null && warm.ttftMs !== null ? `${cold.ttftMs - warm.ttftMs} ms` : 'n/a';
@@ -471,11 +486,13 @@ export interface PerfSweepState {
   queue: string[];
   /** Set just before a config starts; still set on the next load means the page died. */
   running: string | null;
+  /** What the running config got to (load, runs), for a report when its page dies. */
+  partial?: PerfResult | null;
   results: PerfResult[];
 }
 
 export function emptyPerfState(modelId: string): PerfSweepState {
-  return { modelId, queue: [], running: null, results: [] };
+  return { modelId, queue: [], running: null, partial: null, results: [] };
 }
 
 export function parsePerfState(raw: string | null): PerfSweepState | null {
@@ -493,6 +510,8 @@ export function parsePerfState(raw: string | null): PerfSweepState | null {
       modelId: value.modelId,
       queue: value.queue.filter((id): id is string => typeof id === 'string'),
       running: typeof value.running === 'string' ? value.running : null,
+      partial:
+        value.partial && typeof value.partial === 'object' ? (value.partial as PerfResult) : null,
       results: value.results as PerfResult[],
     };
   } catch {
@@ -523,6 +542,7 @@ export function recordPerfResult(state: PerfSweepState, result: PerfResult): Per
   return {
     ...state,
     running: null,
+    partial: null,
     queue: state.queue.filter((id) => id !== result.configId),
     results: [...state.results.filter((r) => r.configId !== result.configId), result],
   };

@@ -25,7 +25,7 @@ const stat = (g: number, n: number, extra = ''): string =>
   `SAKUTTO_GPUSTAT g=${g} n=${n} nodes=662 kernels=355 submits=23 encode_ms=2.000 cycle_ms=${n > 4 ? 0 : 100}.000 readback_ms=60.000 readbacks=1${extra}`;
 
 describe('perf configs', () => {
-  it('builds a CPU baseline and adreno-matvec variants with the perf token', () => {
+  it('builds a CPU baseline and round-4 variants with the perf token', () => {
     const configs = buildPerfConfigs(probe, true, 16);
     expect(configs[0]?.id).toBe('cpu');
     expect(configs[0]?.label).toContain('threads');
@@ -33,29 +33,35 @@ describe('perf configs', () => {
     expect(ids).toEqual(
       expect.arrayContaining([
         'gpu-mv',
-        'gpu-mv-sub32',
-        'gpu-mv-sub64',
-        'gpu-mv-1-slot',
-        'gpu-mv-b512-ub256',
-        'gpu-mv-wg64',
-        'gpu-mv-half-layers',
+        'gpu-r3',
+        'gpu-old-softmax',
+        'gpu-rwg128',
+        'gpu-ctx2048-np2',
+        'gpu-ctx1024-np1',
+        'gpu-sg-fa',
+        'gpu-half-layers',
+        'gpu-half-ctx2048-np2',
       ]),
     );
+    expect(ids.at(-1)).toBe('gpu-mv-repeat');
     for (const config of configs.slice(1)) {
-      expect(config.debugProfile).toBe('adreno-matvec');
       expect(config.tuning).toContain('perf');
+      expect(config.debugProfile).toBe(
+        config.id === 'gpu-sg-fa' ? 'adreno-sg-tiled' : 'adreno-matvec',
+      );
     }
-    const ub = configs.find((c) => c.id === 'gpu-mv-b512-ub256')!;
-    expect(ub.selection.nBatch).toBe(512);
-    expect(ub.selection.debugLoad?.nUbatch).toBe(256);
-    expect(configs.find((c) => c.id === 'gpu-mv-half-layers')?.selection.nGpuLayers).toBe(9);
-    expect(perfDebugString(configs.find((c) => c.id === 'gpu-mv-sub32')!)).toBe(
-      'adreno-matvec+sub32+perf',
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-r3')!)).toBe(
+      'adreno-matvec+mvwg256+smup+rwg1024+perf',
     );
+    const np1 = configs.find((c) => c.id === 'gpu-ctx1024-np1')!;
+    expect(np1.selection.nParallel).toBe(1);
+    expect(np1.selection.nCtx).toBe(1024);
+    expect(perfDebugString(np1)).toBe('adreno-matvec+perf');
+    expect(configs.find((c) => c.id === 'gpu-half-layers')?.selection.nGpuLayers).toBe(9);
   });
 
   it('skips the hybrid config for an unknown layer count and GPU configs without WebGPU', () => {
-    expect(buildPerfConfigs(probe, true, null).some((c) => c.id === 'gpu-mv-half-layers')).toBe(
+    expect(buildPerfConfigs(probe, true, null).some((c) => c.id.startsWith('gpu-half'))).toBe(
       false,
     );
     expect(buildPerfConfigs({ ...probe, webgpu: false }, true, 16).map((c) => c.id)).toEqual([
@@ -72,10 +78,7 @@ describe('perf configs', () => {
     const sweep = perfSweepQueue(configs);
     expect(sweep[0]).toBe('cpu');
     expect(sweep.at(-1)).toBe('gpu-mv#ops');
-    expect(perfBreakdownQueue(configs, 'gpu-mv-sub32')).toEqual([
-      'gpu-mv-sub32',
-      'gpu-mv-sub32#ops',
-    ]);
+    expect(perfBreakdownQueue(configs, 'gpu-rwg128')).toEqual(['gpu-rwg128', 'gpu-rwg128#ops']);
     expect(perfBreakdownQueue(configs, 'cpu')).toEqual(['cpu']);
   });
 });
@@ -169,6 +172,14 @@ describe('perf report and sweep state', () => {
     notes: [],
   };
 
+  it('warns about a run without output', () => {
+    const empty = {
+      ...result,
+      runs: [result.runs[0]!, { ...result.runs[1]!, output: '', predictedTokens: 1 }],
+    };
+    expect(formatPerfReport([], [empty])).toContain('WARNING: run 2 produced no text (1 tokens)');
+  });
+
   it('formats a copy-pasteable report', () => {
     const text = formatPerfReport(['model: m'], [result]);
     expect(text).toContain('=== Sakutto GPU perf report ===');
@@ -178,7 +189,12 @@ describe('perf report and sweep state', () => {
   });
 
   it('round-trips state and records crashes', () => {
-    const state = { ...emptyPerfState('m'), queue: ['cpu', 'gpu-mv'], running: 'cpu' };
+    const state = {
+      ...emptyPerfState('m'),
+      queue: ['cpu', 'gpu-mv'],
+      running: 'cpu',
+      partial: { ...result, configId: 'cpu' },
+    };
     expect(parsePerfState(JSON.stringify(state))).toEqual(state);
     expect(parsePerfState('{')).toBeNull();
     const next = recordPerfResult(state, crashedPerfResult('cpu', 'm', 'crashed'));

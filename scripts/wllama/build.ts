@@ -75,6 +75,11 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp',
     'inline uint32_t ggml_webgpu_sakutto_mv_wg_size',
   ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp',
+    'ggml_webgpu_sakutto_softmax_nocache',
+  ],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/soft_max.wgsl', '#ifdef NO_CACHE'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {
