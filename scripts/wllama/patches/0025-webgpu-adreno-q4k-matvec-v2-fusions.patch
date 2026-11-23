@@ -1,0 +1,792 @@
+ggml-webgpu: Adreno decode round 6 (debug tokens, off by default): q4_K single-column mat-vec
+"v2" with 16-byte weight/activation loads (q4v2, q4v2r<N>, q4v2t<N>), fused gate+up q4_K mat-vec +
+SWIGLU (mvglu), fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL] post-norm residual chain (fna).
+After llama.cpp ggml-opencl (gemv_noshuffle_q4_k_f32.cl, fuse_rms_norm_mul_add, fused mm+glu; MIT)
+and Apache TVM dlight gpu/gemv.py Adreno schedule (Apache-2.0); no code copied.
+
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -2063,6 +2063,14 @@
+         if (use_mmvq) {
+             ggml_webgpu_quantize_q8_dispatch(ctx, src0, src1, dst, dispatches);
+         }
++        // Sakutto patch 0025: q4_K single-column mat-vec v2 (vec4 loads of weights and activations).
++        if (ggml_webgpu_sakutto_q4v2_rows != 0 && !use_mmvq && !src_overlap && src0->type == GGML_TYPE_Q4_K &&
++            src1->type == GGML_TYPE_F32 && dst->ne[1] == 1 && src0->ne[0] % 256 == 0) {
++            const size_t f = sizeof(float);
++            shader_lib_ctx.sakutto_q4v2 =
++                (ggml_webgpu_tensor_misalignment(ctx, src1) / f) % 4 == 0 && (src1->nb[1] / f) % 4 == 0 &&
++                (src1->nb[2] / f) % 4 == 0 && (src1->nb[3] / f) % 4 == 0 && src1->nb[0] == f;
++        }
+         pipeline = ctx->shader_lib->get_mul_mat_vec_pipeline(shader_lib_ctx, src_overlap);
+     } else {
+         pipeline = ctx->shader_lib->get_mul_mat_fast_pipeline(shader_lib_ctx, src_overlap);
+@@ -3804,6 +3812,229 @@
+     return true;
+ }
+ 
++// Sakutto patch 0025: RMS_NORM, MUL, ADD [, RMS_NORM, MUL] -> one row kernel (token fna).
++// Graph-shape checks only; buffer placement is checked when encoding (ggml_webgpu_sakutto_norm_add).
++// Returns the number of fused nodes (5 or 3), or 0.
++static int ggml_webgpu_sakutto_can_fuse_norm_add(const struct ggml_cgraph * cgraph, int node_idx) {
++    if (!ggml_webgpu_sakutto_fuse_norm_add) {
++        return 0;
++    }
++    const auto f32_rows = [](const ggml_tensor * t) {
++        return t->type == GGML_TYPE_F32 && t->nb[0] == sizeof(float) && ggml_is_contiguous_rows(t);
++    };
++    // MUL(norm, w) or MUL(w, norm) with w broadcast over norm's shape
++    const auto norm_mul_ok = [&](const ggml_tensor * norm, const ggml_tensor * mul, const ggml_tensor ** w) {
++        if (mul->src[0] == norm) {
++            *w = mul->src[1];
++        } else if (mul->src[1] == norm) {
++            *w = mul->src[0];
++        } else {
++            return false;
++        }
++        return f32_rows(norm->src[0]) && f32_rows(*w) && f32_rows(mul) && ggml_are_same_shape(mul, norm) &&
++               ggml_can_repeat(*w, norm);
++    };
++
++    if (node_idx + 3 > cgraph->n_nodes) {
++        return 0;
++    }
++    const ggml_tensor * norm1 = cgraph->nodes[node_idx];
++    const ggml_tensor * mul1  = cgraph->nodes[node_idx + 1];
++    const ggml_tensor * add   = cgraph->nodes[node_idx + 2];
++    const ggml_tensor * w1    = nullptr;
++    if (norm1->op != GGML_OP_RMS_NORM || mul1->op != GGML_OP_MUL || add->op != GGML_OP_ADD ||
++        !norm_mul_ok(norm1, mul1, &w1)) {
++        return 0;
++    }
++    const ggml_tensor * r = add->src[0] == mul1 ? add->src[1] : (add->src[1] == mul1 ? add->src[0] : nullptr);
++    if (r == nullptr || r == mul1 || !f32_rows(r) || !f32_rows(add) || !ggml_are_same_shape(r, add) ||
++        !ggml_are_same_shape(mul1, add)) {
++        return 0;
++    }
++
++    if (node_idx + 5 <= cgraph->n_nodes) {
++        const ggml_tensor * norm2 = cgraph->nodes[node_idx + 3];
++        const ggml_tensor * mul2  = cgraph->nodes[node_idx + 4];
++        const ggml_tensor * w2    = nullptr;
++        const int           outs[2] = { node_idx + 2, node_idx + 4 };
++        const ggml_op       ops[5]  = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_RMS_NORM, GGML_OP_MUL };
++        if (norm2->op == GGML_OP_RMS_NORM && mul2->op == GGML_OP_MUL && norm2->src[0] == add &&
++            norm_mul_ok(norm2, mul2, &w2) && ggml_can_fuse_subgraph(cgraph, node_idx, 5, ops, outs, 2)) {
++            return 5;
++        }
++    }
++    const int     outs3[1] = { node_idx + 2 };
++    const ggml_op ops3[3]  = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD };
++    return ggml_can_fuse_subgraph(cgraph, node_idx, 3, ops3, outs3, 1) ? 3 : 0;
++}
++
++static std::optional<webgpu_encoded_op> ggml_webgpu_sakutto_norm_add(webgpu_context &           ctx,
++                                                                     const struct ggml_cgraph * cgraph,
++                                                                     int                        node_idx,
++                                                                     int                        n_fused) {
++    ggml_tensor * norm1 = cgraph->nodes[node_idx];
++    ggml_tensor * mul1  = cgraph->nodes[node_idx + 1];
++    ggml_tensor * s     = cgraph->nodes[node_idx + 2];
++    ggml_tensor * a     = norm1->src[0];
++    ggml_tensor * w1    = mul1->src[0] == norm1 ? mul1->src[1] : mul1->src[0];
++    ggml_tensor * r     = s->src[0] == mul1 ? s->src[1] : s->src[0];
++    const bool    two   = n_fused == 5;
++    ggml_tensor * norm2 = two ? cgraph->nodes[node_idx + 3] : nullptr;
++    ggml_tensor * y     = two ? cgraph->nodes[node_idx + 4] : s;
++    ggml_tensor * w2    = two ? (y->src[0] == norm2 ? y->src[1] : y->src[0]) : w1;
++
++    // activations: one buffer; any two equal (in-place) or disjoint in bytes
++    ggml_tensor * acts[4] = { a, r, s, y };
++    for (int i = 0; i < 4; i++) {
++        if (acts[i]->buffer != a->buffer) {
++            return std::nullopt;
++        }
++        for (int j = i + 1; j < 4; j++) {
++            const size_t oi = ggml_webgpu_tensor_offset(acts[i]);
++            const size_t oj = ggml_webgpu_tensor_offset(acts[j]);
++            const size_t ni = ggml_nbytes(acts[i]);
++            const size_t nj = ggml_nbytes(acts[j]);
++            const bool   equal    = oi == oj && ni == nj;
++            const bool   disjoint = oi + ni <= oj || oj + nj <= oi;
++            if (!equal && !disjoint) {
++                return std::nullopt;
++            }
++        }
++    }
++    ggml_webgpu_merged_binding_range range = ggml_webgpu_tensor_merged_binding_range(ctx, { a, r, s, y });
++    bool w_merged = false;
++    for (ggml_tensor * w : { w1, w2 }) {
++        if (ggml_webgpu_tensor_binding_overlap_range(ctx->global_ctx, w, a->buffer, range.offset, range.size)) {
++            w_merged = true;
++        }
++    }
++    if (w_merged) {
++        if (w1->buffer != a->buffer || w2->buffer != a->buffer) {
++            return std::nullopt;
++        }
++        range = ggml_webgpu_tensor_merged_binding_range(ctx, { a, r, s, y, w1, w2 });
++    }
++    if (range.size > ctx->global_ctx->capabilities.limits.maxStorageBufferBindingSize) {
++        return std::nullopt;
++    }
++
++    const auto el  = [](const ggml_tensor * t, int d) { return (uint32_t) (t->nb[d] / sizeof(float)); };
++    const auto off = [&](const ggml_tensor * t) { return ggml_webgpu_tensor_merged_element_offset(t, range); };
++    const auto woff = [&](ggml_tensor * t) {
++        return w_merged ? off(t) : (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, t) / sizeof(float));
++    };
++    const float eps1 = ggml_get_op_params_f32(norm1, 0);
++    const float eps2 = two ? ggml_get_op_params_f32(norm2, 0) : eps1;
++
++    std::vector<uint32_t> params = {
++        off(a), off(r), off(s), off(y), woff(w1), woff(w2),
++        el(a, 1), el(a, 2), el(a, 3),
++        el(r, 1), el(r, 2), el(r, 3),
++        el(s, 1), el(s, 2), el(s, 3),
++        el(y, 1), el(y, 2), el(y, 3),
++        (uint32_t) w1->ne[0], (uint32_t) w1->ne[1], (uint32_t) w1->ne[2], (uint32_t) w1->ne[3],
++        el(w1, 1), el(w1, 2), el(w1, 3),
++        (uint32_t) w2->ne[0], (uint32_t) w2->ne[1], (uint32_t) w2->ne[2], (uint32_t) w2->ne[3],
++        el(w2, 1), el(w2, 2), el(w2, 3),
++        (uint32_t) s->ne[0], (uint32_t) s->ne[1], (uint32_t) s->ne[2], (uint32_t) s->ne[3],
++        ggml_webgpu_u32_from_f32(eps1), ggml_webgpu_u32_from_f32(eps2),
++    };
++
++    ggml_webgpu_shader_lib_context shader_lib_ctx = {};
++    shader_lib_ctx.src0        = a;
++    shader_lib_ctx.dst         = y;
++    shader_lib_ctx.max_wg_size = ctx->global_ctx->capabilities.limits.maxComputeInvocationsPerWorkgroup;
++    webgpu_pipeline pipeline   = ctx->shader_lib->get_sakutto_norm_add_pipeline(shader_lib_ctx, two, w_merged);
++
++    std::vector<wgpu::BindGroupEntry> entries;
++    entries.push_back(ggml_webgpu_make_bind_group_entry(0, ggml_webgpu_tensor_buf(a), range.offset, range.size));
++    if (!w_merged) {
++        entries.push_back(ggml_webgpu_make_tensor_bind_group_entry(ctx, 1, w1));
++        if (two) {
++            entries.push_back(ggml_webgpu_make_tensor_bind_group_entry(ctx, 2, w2));
++        }
++    }
++
++    uint32_t wg_x;
++    uint32_t wg_y;
++    compute_2d_workgroups(ggml_nrows(s), ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x,
++                          wg_y);
++    return ggml_backend_webgpu_build(ctx, pipeline, params, entries, wg_x, wg_y);
++}
++
++// Sakutto patch 0025: MUL_MAT (q4_K gate+up, one column) + SWIGLU -> mul_mat_vec_q4k_v2 GLU (token mvglu;
++// independent of q4v2, whose q4v2r*/q4v2t* shape tokens it shares).
++static bool ggml_webgpu_sakutto_can_fuse_mv_glu(webgpu_context & ctx, const struct ggml_cgraph * cgraph, int node_idx) {
++    if (!ggml_webgpu_sakutto_fuse_mv_glu || ctx->global_ctx->disable_mat_vec ||
++        !ggml_can_fuse_subgraph(cgraph, node_idx, { GGML_OP_MUL_MAT, GGML_OP_GLU }, { node_idx + 1 })) {
++        return false;
++    }
++    const ggml_tensor * mm   = cgraph->nodes[node_idx];
++    const ggml_tensor * glu  = cgraph->nodes[node_idx + 1];
++    const ggml_tensor * src0 = mm->src[0];
++    const ggml_tensor * src1 = mm->src[1];
++    if (glu->src[0] != mm || glu->src[1] != nullptr || ggml_get_glu_op(glu) != GGML_GLU_OP_SWIGLU ||
++        ggml_get_op_params_i32(glu, 1) != 0) {
++        return false;
++    }
++    if (src0->type != GGML_TYPE_Q4_K || src1->type != GGML_TYPE_F32 || mm->type != GGML_TYPE_F32 ||
++        glu->type != GGML_TYPE_F32 || src0->ne[0] % 256 != 0 || mm->ne[1] != 1 || mm->ne[0] % 2 != 0 ||
++        glu->ne[0] * 2 != mm->ne[0] || glu->ne[1] != 1 || ggml_nrows(src0) != src0->ne[1] ||
++        ggml_nrows(src1) != 1 || ggml_nrows(glu) != 1 || !ggml_is_contiguous(glu) || src1->nb[0] != sizeof(float) ||
++        ggml_webgpu_can_use_mmvq(src0, src1, 1, ctx->global_ctx->capabilities.supports_dot_product,
++                                 ctx->global_ctx->vendor) ||
++        ggml_webgpu_tensor_binding_overlap(ctx->global_ctx, src0, src1) ||
++        (ggml_webgpu_tensor_misalignment(ctx, src1) / sizeof(float)) % 4 != 0) {
++        return false;
++    }
++    return true;
++}
++
++static webgpu_encoded_op ggml_webgpu_sakutto_mul_mat_swiglu(webgpu_context & ctx,
++                                                            ggml_tensor *    src0,
++                                                            ggml_tensor *    src1,
++                                                            ggml_tensor *    glu) {
++    ggml_webgpu_shader_lib_context shader_lib_ctx = {};
++    shader_lib_ctx.src0                 = src0;
++    shader_lib_ctx.src1                 = src1;
++    shader_lib_ctx.dst                  = glu;  // one column
++    shader_lib_ctx.max_wg_size          = ctx->global_ctx->capabilities.limits.maxComputeInvocationsPerWorkgroup;
++    shader_lib_ctx.supports_subgroups   = ctx->global_ctx->capabilities.supports_subgroups;
++    shader_lib_ctx.supports_dot_product = ctx->global_ctx->capabilities.supports_dot_product;
++    shader_lib_ctx.vendor               = ctx->global_ctx->vendor;
++    shader_lib_ctx.sakutto_q4v2         = true;
++    shader_lib_ctx.sakutto_q4v2_glu     = true;
++    webgpu_pipeline pipeline            = ctx->shader_lib->get_mul_mat_vec_pipeline(shader_lib_ctx, false);
++    auto * decisions = static_cast<ggml_webgpu_mul_mat_vec_shader_decisions *>(pipeline.context.get());
++
++    const size_t          bs0    = ggml_type_size(src0->type);
++    std::vector<uint32_t> params = {
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src0) / bs0),
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src1) / sizeof(float)),
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, glu) / sizeof(float)),
++        (uint32_t) glu->ne[0],  // output rows; weight rows o and o + m
++        1u,
++        (uint32_t) src0->ne[0],
++        (uint32_t) (src0->nb[1] / bs0),
++        (uint32_t) (src1->nb[1] / sizeof(float)),
++        (uint32_t) (src0->nb[2] / bs0),
++        (uint32_t) (src1->nb[2] / sizeof(float)),
++        (uint32_t) (src0->nb[3] / bs0),
++        (uint32_t) (src1->nb[3] / sizeof(float)),
++        1u, 1u, 1u, 1u,
++    };
++    std::vector<wgpu::BindGroupEntry> entries = {
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 0, src0),
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 1, src1),
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 2, glu),
++    };
++    uint32_t wg_x = 1;
++    uint32_t wg_y = 1;
++    compute_2d_workgroups(CEIL_DIV(glu->ne[0], decisions->outputs_per_wg),
++                          ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x, wg_y);
++    return ggml_backend_webgpu_build(ctx, pipeline, params, entries, wg_x, wg_y);
++}
++
+ static bool ggml_webgpu_can_fuse_gdn_cache(const struct ggml_cgraph * cgraph, int node_idx, int & num_encoded_ops) {
+     const ggml_tensor * gdn = cgraph->nodes[node_idx];
+ 
+@@ -3950,6 +4181,10 @@
+         case GGML_OP_GET_ROWS:
+             return ggml_webgpu_get_rows(ctx, src0, src1, node);
+         case GGML_OP_MUL_MAT:
++            if (ggml_webgpu_sakutto_can_fuse_mv_glu(ctx, cgraph, node_idx)) {
++                num_encoded_ops = 2;
++                return ggml_webgpu_sakutto_mul_mat_swiglu(ctx, src0, src1, nodes[node_idx + 1]);
++            }
+             return ggml_webgpu_mul_mat(ctx, src0, src1, node);
+         case GGML_OP_MUL_MAT_ID:
+             return ggml_webgpu_mul_mat_id(ctx, src0, src1, src2, node);
+@@ -3969,6 +4204,13 @@
+         case GGML_OP_GROUP_NORM:
+             return ggml_webgpu_group_norm(ctx, src0, node);
+         case GGML_OP_RMS_NORM:
++            if (const int n_fused = ggml_webgpu_sakutto_can_fuse_norm_add(cgraph, node_idx); n_fused > 0) {
++                std::optional<webgpu_encoded_op> fused = ggml_webgpu_sakutto_norm_add(ctx, cgraph, node_idx, n_fused);
++                if (fused.has_value()) {
++                    num_encoded_ops = n_fused;
++                    return fused;
++                }
++            }
+             if (ggml_webgpu_can_fuse_rms_norm_mul(cgraph, node_idx)) {
+                 num_encoded_ops        = 2;
+                 ggml_tensor * mul_node = nodes[node_idx + 1];
+@@ -5724,6 +5966,42 @@
+             GGML_LOG_INFO("ggml_webgpu: tuning: tiled matmul padded shared-memory rows\n");
+         }
+     }
++    // Sakutto patch 0025: q4_K mat-vec v2 and the fused post-norm residual chain (see
++    // ggml-webgpu-shader-lib.hpp). Off unless a token selects them.
++    ggml_webgpu_sakutto_q4v2_rows     = 0;
++    ggml_webgpu_sakutto_q4v2_tpr      = 16;
++    ggml_webgpu_sakutto_fuse_norm_add = false;
++    if (ggml_webgpu_debug_has_token("q4v2")) {
++        ggml_webgpu_sakutto_q4v2_rows = 1;
++    }
++    for (const uint32_t n : { 1u, 2u, 4u }) {
++        const std::string token = "q4v2r" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_q4v2_rows = n;
++        }
++    }
++    for (const uint32_t n : { 8u, 16u, 32u, 64u }) {
++        const std::string token = "q4v2t" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_q4v2_tpr = n;
++            if (ggml_webgpu_sakutto_q4v2_rows == 0) {
++                ggml_webgpu_sakutto_q4v2_rows = 1;
++            }
++        }
++    }
++    if (ggml_webgpu_sakutto_q4v2_rows != 0) {
++        GGML_LOG_INFO("ggml_webgpu: tuning: q4_K mat-vec v2, %u threads per row, %u rows per row group\n",
++                      ggml_webgpu_sakutto_q4v2_tpr, ggml_webgpu_sakutto_q4v2_rows);
++    }
++    ggml_webgpu_sakutto_fuse_mv_glu = false;
++    if (ggml_webgpu_debug_has_token("mvglu")) {
++        ggml_webgpu_sakutto_fuse_mv_glu = true;
++        GGML_LOG_INFO("ggml_webgpu: tuning: fused q4_K gate+up mat-vec + SWIGLU\n");
++    }
++    if (ggml_webgpu_debug_has_token("fna")) {
++        ggml_webgpu_sakutto_fuse_norm_add = true;
++        GGML_LOG_INFO("ggml_webgpu: tuning: fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL]\n");
++    }
+     ctx->webgpu_global_ctx->sakutto_perf_ops = ggml_webgpu_debug_has_token("perfops");
+     ctx->webgpu_global_ctx->sakutto_perf =
+         ctx->webgpu_global_ctx->sakutto_perf_ops || ggml_webgpu_debug_has_token("perf");
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -79,6 +79,15 @@
+ inline uint32_t ggml_webgpu_sakutto_mm_wg_m   = 0;
+ inline uint32_t ggml_webgpu_sakutto_mm_wg_n   = 0;
+ inline bool     ggml_webgpu_sakutto_mm_pad    = false;
++// Sakutto patch 0025: q4_K x f32 single-column mat-vec "v2" (vec4<u32> weight loads, vec4<f32>
++// activations, TPR threads per row, WG_SIZE / TPR row groups of q4v2_rows rows each; see
++// mul_mat_vec_q4k_v2.wgsl). 0 = off. Tokens q4v2, q4v2r<N>, q4v2t<N>.
++inline uint32_t ggml_webgpu_sakutto_q4v2_rows = 0;
++inline uint32_t ggml_webgpu_sakutto_q4v2_tpr  = 16;
++// Sakutto patch 0025: fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL] (post-norm residual chains). Token fna.
++inline bool     ggml_webgpu_sakutto_fuse_norm_add = false;
++// Sakutto patch 0025: fused gate+up q4_K mat-vec v2 + SWIGLU (needs q4v2). Token mvglu.
++inline bool     ggml_webgpu_sakutto_fuse_mv_glu   = false;
+ 
+ #define WEBGPU_MUL_MAT_VEC_FLOAT_OUTPUTS_PER_WG    4
+ #define WEBGPU_MUL_MAT_VEC_LEGACY_Q_OUTPUTS_PER_WG 4
+@@ -123,6 +132,8 @@
+     uint32_t    max_subgroup_size        = 0;
+     bool        supports_dot_product     = false;
+     std::string vendor;
++    bool        sakutto_q4v2             = false;  // patch 0025: use mul_mat_vec_q4k_v2
++    bool        sakutto_q4v2_glu         = false;  // patch 0025: ... with a fused SWIGLU
+ };
+ 
+ struct webgpu_pipeline {
+@@ -1025,10 +1036,13 @@
+     uint32_t  num_cols;
+     bool      use_mmvq;
+     bool      src_overlap;
++    bool      sakutto_q4v2     = false;
++    bool      sakutto_q4v2_glu = false;
+ 
+     bool operator==(const ggml_webgpu_mul_mat_vec_pipeline_key & other) const {
+         return src0_type == other.src0_type && src1_type == other.src1_type && vectorized == other.vectorized &&
+-               num_cols == other.num_cols && use_mmvq == other.use_mmvq && src_overlap == other.src_overlap;
++               num_cols == other.num_cols && use_mmvq == other.use_mmvq && src_overlap == other.src_overlap &&
++               sakutto_q4v2 == other.sakutto_q4v2 && sakutto_q4v2_glu == other.sakutto_q4v2_glu;
+     }
+ };
+ 
+@@ -1041,6 +1055,8 @@
+         ggml_webgpu_hash_combine(seed, key.num_cols);
+         ggml_webgpu_hash_combine(seed, key.use_mmvq);
+         ggml_webgpu_hash_combine(seed, key.src_overlap);
++        ggml_webgpu_hash_combine(seed, key.sakutto_q4v2);
++        ggml_webgpu_hash_combine(seed, key.sakutto_q4v2_glu);
+         return seed;
+     }
+ };
+@@ -2225,12 +2241,42 @@
+         key.use_mmvq    = ggml_webgpu_can_use_mmvq(context.src0, context.src1, context.src1->ne[1],
+                                                    context.supports_dot_product, context.vendor);
+         key.src_overlap = src_overlap;
++        key.sakutto_q4v2     = context.sakutto_q4v2;
++        key.sakutto_q4v2_glu = context.sakutto_q4v2 && context.sakutto_q4v2_glu;
+ 
+         auto it = mul_mat_vec_pipelines.find(key);
+         if (it != mul_mat_vec_pipelines.end()) {
+             return it->second;
+         }
+ 
++        if (key.sakutto_q4v2) {
++            // Sakutto patch 0025 (caller checked: q4_K x f32, one column, no MMVQ, no overlap,
++            // src1 offsets/strides multiples of 4 floats).
++            const uint32_t wg_size = ggml_webgpu_sakutto_mv_wg_size != 0 ? ggml_webgpu_sakutto_mv_wg_size : 64;
++            const uint32_t tpr     = std::min(ggml_webgpu_sakutto_q4v2_tpr, wg_size);
++            const uint32_t rows    = std::min(4u, std::max(1u, ggml_webgpu_sakutto_q4v2_rows));  // vec4 accumulators
++            std::vector<std::string> v2_defines = {
++                "WG_SIZE=" + std::to_string(wg_size) + "u",
++                "TPR=" + std::to_string(tpr) + "u",
++                "ROWS_PER_GROUP=" + std::to_string(rows) + "u",
++            };
++            if (key.sakutto_q4v2_glu) {
++                v2_defines.push_back("GLU");
++            }
++            const std::string v2_variant = std::string(key.sakutto_q4v2_glu ? "mul_mat_vec_q4k_v2_swiglu" : "mul_mat_vec_q4k_v2") +
++                                           "_wg" + std::to_string(wg_size) + "_t" + std::to_string(tpr) + "_r" +
++                                           std::to_string(rows);
++            auto v2_processed            = preprocessor.preprocess(wgsl_mul_mat_vec_q4k_v2, v2_defines);
++            auto v2_decisions            = std::make_shared<ggml_webgpu_mul_mat_vec_shader_decisions>();
++            v2_decisions->wg_size        = wg_size;
++            v2_decisions->outputs_per_wg = (wg_size / tpr) * rows;
++            v2_decisions->vec_size       = 4;
++            webgpu_pipeline v2_pipeline  = ggml_webgpu_create_pipeline(device, v2_processed, v2_variant);
++            v2_pipeline.context          = v2_decisions;
++            mul_mat_vec_pipelines[key]   = v2_pipeline;
++            return mul_mat_vec_pipelines[key];
++        }
++
+         std::vector<std::string> defines;
+         std::string              variant    = "mul_mat_vec";
+         const char *             shader_src = wgsl_mul_mat_vec;
+@@ -2959,6 +3005,35 @@
+         return unary_pipelines[key];
+     }
+ 
++    // Sakutto patch 0025: fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL] (rms_norm_mul_add.wgsl).
++    std::unordered_map<uint32_t, webgpu_pipeline> sakutto_norm_add_pipelines;
++
++    webgpu_pipeline get_sakutto_norm_add_pipeline(const ggml_webgpu_shader_lib_context & context,
++                                                  bool                                   second_norm,
++                                                  bool                                   w_merged) {
++        const uint32_t wg_size = ggml_webgpu_sakutto_row_reduce_wg(context.max_wg_size);
++        const uint32_t key     = (wg_size << 2) | (second_norm ? 1u : 0u) | (w_merged ? 2u : 0u);
++        auto           it      = sakutto_norm_add_pipelines.find(key);
++        if (it != sakutto_norm_add_pipelines.end()) {
++            return it->second;
++        }
++        std::vector<std::string> defines = { "WG_SIZE=" + std::to_string(wg_size) + "u" };
++        std::string              variant = "RMS_NORM_MUL_ADD";
++        if (second_norm) {
++            defines.push_back("SECOND_NORM");
++            variant += "_RMS_NORM_MUL";
++        }
++        if (w_merged) {
++            defines.push_back("W_MERGED");
++            variant += "_wmerged";
++        }
++        variant += "_wg" + std::to_string(wg_size);
++        auto            processed       = preprocessor.preprocess(wgsl_rms_norm_mul_add, defines);
++        webgpu_pipeline pipeline        = ggml_webgpu_create_pipeline(device, processed, variant);
++        sakutto_norm_add_pipelines[key] = pipeline;
++        return pipeline;
++    }
++
+     webgpu_pipeline get_rms_norm_mul_pipeline(const ggml_webgpu_shader_lib_context & context, bool src_overlap) {
+         ggml_webgpu_rms_norm_mul_pipeline_key key = {};
+         key.inplace                               = ggml_webgpu_tensor_equal(context.src0, context.dst);
+--- /dev/null
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec_q4k_v2.wgsl
+@@ -0,0 +1,196 @@
++// Sakutto patch 0025: q4_K mat-vec for one src1 column (decode), after the Adreno OpenCL GEMV in
++// llama.cpp (ggml-opencl gemv_noshuffle_q4_k_f32.cl: wide contiguous weight loads per fiber, dequant
++// in registers, one cross-fiber reduction at the end) and TVM dlight's Adreno GEMV schedule
++// (64 threads, a few rows per workgroup, 8+ contiguous reduction elements per thread).
++//
++// Each thread takes whole 16-byte chunks of a q4_K block (32 weights) with one vec4<u32> load, plus
++// the block's 16-byte header (d, dmin, 12 scale bytes) with a second vec4<u32> load; src1 is read as
++// vec4<f32>. Groups of TPR threads share a row; WG_SIZE / TPR groups work on different rows; a group
++// handles ROWS_PER_GROUP rows, reusing the src1 registers. No subgroup operations.
++//
++// GLU: fused SWIGLU of a gate+up product (after ggml-opencl's fused mat-vec + GLU): output row o
++// takes weight rows o (gate) and o + m (up); params.m is the GLU output width.
++//
++// Requires: src1 offset, row stride and batch strides multiple of 4 floats (host checks), K % 256 == 0.
++
++enable f16;
++
++struct MulMatParams {
++    offset_src0: u32,
++    offset_src1: u32,
++    offset_dst: u32,
++    m: u32,
++    n: u32,
++    k: u32,
++    stride_01: u32,
++    stride_11: u32,
++    stride_02: u32,
++    stride_12: u32,
++    stride_03: u32,
++    stride_13: u32,
++    bs02: u32,
++    bs03: u32,
++    broadcast2: u32,
++    broadcast3: u32
++};
++
++@group(0) @binding(0) var<storage, read_write> src0: array<vec4<u32>>;
++@group(0) @binding(1) var<storage, read_write> src1: array<vec4<f32>>;
++@group(0) @binding(2) var<storage, read_write> dst: array<f32>;
++@group(0) @binding(3) var<uniform> params: MulMatParams;
++
++const GROUPS: u32 = WG_SIZE / TPR;
++const OUTPUTS: u32 = GROUPS * ROWS_PER_GROUP;
++// q4_K block: 144 bytes = 9 vec4<u32>: header (d|dmin, scales[0..11]) then 8 quant chunks.
++const BLOCK_VEC4: u32 = 9u;
++
++#ifdef GLU
++const PRODUCTS: u32 = 2u;
++#else
++const PRODUCTS: u32 = 1u;
++#endif
++var<workgroup> partial_sums: array<f32, OUTPUTS * TPR * PRODUCTS>;
++
++fn scale_byte(h: vec4<u32>, i: u32) -> u32 {
++    // scales[i] = byte i of h.y, h.z, h.w
++    let w = select(select(h.w, h.z, i < 8u), h.y, i < 4u);
++    return (w >> (8u * (i & 3u))) & 0xFFu;
++}
++
++// get_scale_min_k4 (ggml-quants.c) for sub-block j: (scale, min)
++fn scale_min(h: vec4<u32>, j: u32) -> vec2<f32> {
++    if (j < 4u) {
++        return vec2<f32>(f32(scale_byte(h, j) & 63u), f32(scale_byte(h, j + 4u) & 63u));
++    }
++    let q4 = scale_byte(h, j + 4u);
++    let sc = (q4 & 0xFu) | ((scale_byte(h, j - 4u) >> 6u) << 4u);
++    let mn = (q4 >> 4u) | ((scale_byte(h, j) >> 6u) << 4u);
++    return vec2<f32>(f32(sc), f32(mn));
++}
++
++fn nibbles_lo(w: u32) -> vec4<f32> {
++    return vec4<f32>(f32(w & 0xFu), f32((w >> 8u) & 0xFu), f32((w >> 16u) & 0xFu), f32((w >> 24u) & 0xFu));
++}
++
++fn nibbles_hi(w: u32) -> vec4<f32> {
++    return vec4<f32>(f32((w >> 4u) & 0xFu), f32((w >> 12u) & 0xFu), f32((w >> 20u) & 0xFu), f32((w >> 28u) & 0xFu));
++}
++
++// One 32-weight chunk of q4_K block blk (index of the block's first vec4) times its activations.
++fn chunk_dot(blk: u32, chunk: u32, j: u32,
++             xl0: vec4<f32>, xl1: vec4<f32>, xl2: vec4<f32>, xl3: vec4<f32>,
++             xh0: vec4<f32>, xh1: vec4<f32>, xh2: vec4<f32>, xh3: vec4<f32>,
++             sum_lo: f32, sum_hi: f32) -> f32 {
++    let h = src0[blk];
++    let q = src0[blk + 1u + chunk];
++    let dd = unpack2x16float(h.x);
++    let sm_lo = scale_min(h, 2u * j);
++    let sm_hi = scale_min(h, 2u * j + 1u);
++    let dot_lo = dot(nibbles_lo(q.x), xl0) + dot(nibbles_lo(q.y), xl1) +
++                 dot(nibbles_lo(q.z), xl2) + dot(nibbles_lo(q.w), xl3);
++    let dot_hi = dot(nibbles_hi(q.x), xh0) + dot(nibbles_hi(q.y), xh1) +
++                 dot(nibbles_hi(q.z), xh2) + dot(nibbles_hi(q.w), xh3);
++    return dd.x * (sm_lo.x * dot_lo + sm_hi.x * dot_hi) - dd.y * (sm_lo.y * sum_lo + sm_hi.y * sum_hi);
++}
++
++@compute @workgroup_size(WG_SIZE)
++fn main(
++    @builtin(local_invocation_id) local_id: vec3<u32>,
++    @builtin(workgroup_id) wg_id: vec3<u32>,
++    @builtin(num_workgroups) num_wg: vec3<u32>
++) {
++    let thread_id = local_id.x;
++    let group = thread_id / TPR;
++    let lane = thread_id % TPR;
++
++    let total_batches = params.bs02 * params.broadcast2 * params.bs03 * params.broadcast3;
++    let wg_linear = wg_id.y * num_wg.x + wg_id.x;
++    let output_groups = (params.m + OUTPUTS - 1u) / OUTPUTS;
++    let batch_idx = wg_linear / output_groups;
++    // No early return: every thread reaches the barrier below.
++    let batch_ok = batch_idx < total_batches;
++
++    let row_base = (wg_linear % output_groups) * OUTPUTS;
++
++    let dst2_stride = params.m * params.n;
++    let dst2_idx = batch_idx % (params.bs02 * params.broadcast2);
++    let dst3_stride = dst2_stride * params.bs02 * params.broadcast2;
++    let dst3_idx = batch_idx / (params.bs02 * params.broadcast2);
++    let src03_idx = dst3_idx / params.broadcast3;
++    let src13_idx = dst3_idx;
++    let src02_idx = dst2_idx / params.broadcast2;
++    let src12_idx = dst2_idx;
++
++    // src0 offsets/strides are in q4_K blocks; src1 in floats (multiples of 4).
++    let src0_batch_offset = params.offset_src0 + src03_idx * params.stride_03 + src02_idx * params.stride_02;
++    let src1_base = (params.offset_src1 + src13_idx * params.stride_13 + src12_idx * params.stride_12) / 4u;
++    let dst_idx_base = params.offset_dst + dst3_idx * dst3_stride + dst2_idx * dst2_stride + row_base;
++
++    // ROWS_PER_GROUP <= 4: vector accumulators rather than private arrays (a dynamically indexed
++    // private array can be placed in slow memory by the Adreno compiler, cf. the SOFT_MAX cache).
++    var acc = vec4<f32>(0.0);
++    var acc_up = vec4<f32>(0.0);
++
++    let num_blocks = params.k / 256u;
++    let num_pairs = num_blocks * 8u;
++
++    if (batch_ok) {
++        for (var pair = lane; pair < num_pairs; pair += TPR) {
++            let block = pair / 8u;
++            let chunk = pair % 8u;
++            let j = chunk / 2u;                  // 64-value group: sub-blocks 2j (low) and 2j+1 (high)
++            let l0 = (chunk % 2u) * 16u;         // first byte of the chunk within the group's 32 bytes
++            // src1 vec4 index of x[block*256 + 64j + l0]; the high nibbles pair with +32 values.
++            let xb = src1_base + block * 64u + j * 16u + l0 / 4u;
++            let xl0 = src1[xb];
++            let xl1 = src1[xb + 1u];
++            let xl2 = src1[xb + 2u];
++            let xl3 = src1[xb + 3u];
++            let xh0 = src1[xb + 8u];
++            let xh1 = src1[xb + 9u];
++            let xh2 = src1[xb + 10u];
++            let xh3 = src1[xb + 11u];
++            let one = vec4<f32>(1.0);
++            let sum_lo = dot(xl0 + xl1 + xl2 + xl3, one);
++            let sum_hi = dot(xh0 + xh1 + xh2 + xh3, one);
++
++            for (var r = 0u; r < ROWS_PER_GROUP; r++) {
++                let row = row_base + group * ROWS_PER_GROUP + r;
++                if (row < params.m) {
++                    let blk = (src0_batch_offset + row * params.stride_01 + block) * BLOCK_VEC4;
++                    acc[r] += chunk_dot(blk, chunk, j, xl0, xl1, xl2, xl3, xh0, xh1, xh2, xh3, sum_lo, sum_hi);
++#ifdef GLU
++                    let blk_up = (src0_batch_offset + (row + params.m) * params.stride_01 + block) * BLOCK_VEC4;
++                    acc_up[r] += chunk_dot(blk_up, chunk, j, xl0, xl1, xl2, xl3, xh0, xh1, xh2, xh3, sum_lo, sum_hi);
++#endif
++                }
++            }
++        }
++    }
++
++    for (var r = 0u; r < ROWS_PER_GROUP; r++) {
++        partial_sums[(group * ROWS_PER_GROUP + r) * TPR + lane] = acc[r];
++#ifdef GLU
++        partial_sums[(OUTPUTS + group * ROWS_PER_GROUP + r) * TPR + lane] = acc_up[r];
++#endif
++    }
++    workgroupBarrier();
++
++    if (batch_ok && thread_id < OUTPUTS) {
++        let row = row_base + thread_id;
++        if (row < params.m) {
++            var total = 0.0;
++            for (var i = 0u; i < TPR; i++) {
++                total += partial_sums[thread_id * TPR + i];
++            }
++#ifdef GLU
++            var up = 0.0;
++            for (var i = 0u; i < TPR; i++) {
++                up += partial_sums[(OUTPUTS + thread_id) * TPR + i];
++            }
++            total = total / (1.0 + exp(-total)) * up;
++#endif
++            dst[dst_idx_base + thread_id] = total;
++        }
++    }
++}
+--- /dev/null
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/rms_norm_mul_add.wgsl
+@@ -0,0 +1,139 @@
++// Sakutto patch 0025: fused post-norm residual chain
++//   s = rms_norm(a) * w1 + r          (RMS_NORM, MUL, ADD)
++//   y = rms_norm(s) * w2              (RMS_NORM, MUL; only with SECOND_NORM)
++// as in PLaMo 3 / Gemma post-norm blocks (attn_post_norm -> residual add -> ffn_norm), after the
++// fused rms_norm+mul+add kernels of llama.cpp ggml-opencl (kernel_rms_norm_mul_add) and ggml-vulkan.
++// One workgroup per row. Each thread writes and re-reads only its own columns of s, so no storage
++// barrier is needed between the two norms; the sums of squares use workgroup tree reductions.
++// All activations (a, r, s, y) are one merged binding: in-place outputs (s == r, y == s, ...) are
++// legal because every element is read and written by the same invocation.
++
++struct Params {
++    offset_a: u32,
++    offset_r: u32,
++    offset_s: u32,
++    offset_y: u32,
++    offset_w1: u32,
++    offset_w2: u32,
++
++    stride_a1: u32,
++    stride_a2: u32,
++    stride_a3: u32,
++    stride_r1: u32,
++    stride_r2: u32,
++    stride_r3: u32,
++    stride_s1: u32,
++    stride_s2: u32,
++    stride_s3: u32,
++    stride_y1: u32,
++    stride_y2: u32,
++    stride_y3: u32,
++
++    w1_ne0: u32,
++    w1_ne1: u32,
++    w1_ne2: u32,
++    w1_ne3: u32,
++    stride_w1_1: u32,
++    stride_w1_2: u32,
++    stride_w1_3: u32,
++    w2_ne0: u32,
++    w2_ne1: u32,
++    w2_ne2: u32,
++    w2_ne3: u32,
++    stride_w2_1: u32,
++    stride_w2_2: u32,
++    stride_w2_3: u32,
++
++    ne0: u32,
++    ne1: u32,
++    ne2: u32,
++    ne3: u32,
++
++    eps1: f32,
++    eps2: f32
++};
++
++@group(0) @binding(0) var<storage, read_write> act: array<f32>;
++#ifdef W_MERGED
++@group(0) @binding(1) var<uniform> params: Params;
++fn w1_at(i: u32) -> f32 { return act[i]; }
++fn w2_at(i: u32) -> f32 { return act[i]; }
++#else
++@group(0) @binding(1) var<storage, read_write> w1: array<f32>;
++#ifdef SECOND_NORM
++@group(0) @binding(2) var<storage, read_write> w2: array<f32>;
++@group(0) @binding(3) var<uniform> params: Params;
++fn w2_at(i: u32) -> f32 { return w2[i]; }
++#else
++@group(0) @binding(2) var<uniform> params: Params;
++#endif
++fn w1_at(i: u32) -> f32 { return w1[i]; }
++#endif
++
++var<workgroup> scratch: array<f32, WG_SIZE>;
++
++fn reduce_sum(lid: u32, v: f32) -> f32 {
++    scratch[lid] = v;
++    workgroupBarrier();
++    var offset: u32 = WG_SIZE / 2u;
++    while (offset > 0u) {
++        if (lid < offset) {
++            scratch[lid] += scratch[lid + offset];
++        }
++        offset = offset / 2u;
++        workgroupBarrier();
++    }
++    let total = scratch[0];
++    // scratch is reused by the next reduction
++    workgroupBarrier();
++    return total;
++}
++
++@compute @workgroup_size(WG_SIZE)
++fn main(@builtin(workgroup_id) wid: vec3<u32>,
++        @builtin(num_workgroups) num_wg: vec3<u32>,
++        @builtin(local_invocation_id) lid3: vec3<u32>) {
++    let lid = lid3.x;
++    var i = wid.x + wid.y * num_wg.x;
++    if (i >= params.ne1 * params.ne2 * params.ne3) {
++        return;
++    }
++    let i3 = i / (params.ne2 * params.ne1);
++    i = i % (params.ne2 * params.ne1);
++    let i2 = i / params.ne1;
++    let i1 = i % params.ne1;
++
++    let row_a = params.offset_a + i3 * params.stride_a3 + i2 * params.stride_a2 + i1 * params.stride_a1;
++    let row_r = params.offset_r + i3 * params.stride_r3 + i2 * params.stride_r2 + i1 * params.stride_r1;
++    let row_s = params.offset_s + i3 * params.stride_s3 + i2 * params.stride_s2 + i1 * params.stride_s1;
++    let row_w1 = params.offset_w1 + (i3 % params.w1_ne3) * params.stride_w1_3 +
++                 (i2 % params.w1_ne2) * params.stride_w1_2 + (i1 % params.w1_ne1) * params.stride_w1_1;
++
++    var sum = 0.0f;
++    for (var col = lid; col < params.ne0; col += WG_SIZE) {
++        let v = act[row_a + col];
++        sum += v * v;
++    }
++    sum = reduce_sum(lid, sum);
++    let scale1 = 1.0 / sqrt(sum / f32(params.ne0) + params.eps1);
++
++    // a may alias s: all reads of a for the sum are done (barrier in reduce_sum); below, column col
++    // of a is read before column col of s is written, by the same invocation.
++    var sum2 = 0.0f;
++    for (var col = lid; col < params.ne0; col += WG_SIZE) {
++        let v = act[row_a + col] * scale1 * w1_at(row_w1 + col % params.w1_ne0) + act[row_r + col];
++        act[row_s + col] = v;
++        sum2 += v * v;
++    }
++
++#ifdef SECOND_NORM
++    let row_y = params.offset_y + i3 * params.stride_y3 + i2 * params.stride_y2 + i1 * params.stride_y1;
++    let row_w2 = params.offset_w2 + (i3 % params.w2_ne3) * params.stride_w2_3 +
++                 (i2 % params.w2_ne2) * params.stride_w2_2 + (i1 % params.w2_ne1) * params.stride_w2_1;
++    sum2 = reduce_sum(lid, sum2);
++    let scale2 = 1.0 / sqrt(sum2 / f32(params.ne0) + params.eps2);
++    for (var col = lid; col < params.ne0; col += WG_SIZE) {
++        act[row_y + col] = act[row_s + col] * scale2 * w2_at(row_w2 + col % params.w2_ne0);
++    }
++#endif
++}

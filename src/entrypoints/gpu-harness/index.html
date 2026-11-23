@@ -144,9 +144,9 @@
         prompt twice with the prompt cache off (run 1 includes shader compilation, run 2 is warm),
         with llama.cpp's prompt/decode timings and ggml-webgpu's per-token counters. "GPU perf
         breakdown" runs the chosen config, then the same config with per-op timing. "Run GPU perf
-        sweep" runs every config below (CPU baseline first, per-op run last). Each config is cut off
-        after 5 minutes; a crash or device loss only ends that config. Copy the report text and
-        paste it back.
+        sweep" runs every config below (CPU baseline first, then the per-op runs of the round-5
+        default and the round-6 candidate). Each config is cut off after 5 minutes; a crash or
+        device loss only ends that config. Copy the report text and paste it back.
       </p>
       <label
         >Config

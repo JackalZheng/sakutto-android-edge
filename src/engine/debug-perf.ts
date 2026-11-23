@@ -39,8 +39,10 @@ export interface PerfConfig {
   tuning: readonly string[];
 }
 
-/** The current Adreno default in the sweep (its per-op variant ends the sweep). */
+/** The current Adreno default in the sweep (its per-op variant runs at the end of the sweep). */
 export const PERF_DEFAULT_ID = 'gpu-r5';
+/** The round-6 candidate (its per-op variant ends the sweep). */
+export const PERF_CANDIDATE_ID = 'gpu-r6';
 
 export function buildPerfConfigs(
   probe: BackendProbe,
@@ -73,58 +75,41 @@ export function buildPerfConfigs(
     debugProfile: 'adreno-matvec',
     tuning: [...tuning, 'perf'],
   });
-  // Round 5 (patch 0023): the Adreno default (`gpu-r5`) runs prompt MUL_MATs with 4 < n <= 64
-  // through the mat-vec shader in batches of 4 columns (batched mat-vec) instead of the tiled
-  // matmul, and uses 128-wide SOFT_MAX / fused RMS_NORM workgroups. `gpu-mv` is the round-4
-  // default. The bmv* configs move the crossover / batch width; the tile-* configs keep the tiled
-  // matmul for every n > 4 (bmv0) and change its shape, to measure it on the prompt.
+  // Round 5 (patch 0023) is the Adreno default (`gpu-r5`): prompt MUL_MATs with 4 < n <= 64 run
+  // through the mat-vec shader in batches of 4 columns, 128-wide SOFT_MAX / fused RMS_NORM
+  // workgroups. Round 6 (patch 0025, debug tokens only): `q4v2*` the q4_K one-column mat-vec v2
+  // (16-byte weight and activation loads; r<N> rows per thread group, t<N> threads per row),
+  // `mvglu` the fused gate+up mat-vec + SWIGLU, `fna` the fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL]
+  // residual chain; `gpu-r6` combines them (the round-6 candidate). Box (lavapipe): kernels per
+  // decode token 355 -> 277 for PLaMo 3, output identical to the CPU.
   const half = modelLayers !== null && modelLayers > 1 ? Math.floor(modelLayers / 2) + 1 : null;
-  const tiled = (id: string, label: string, tokens: readonly string[]): PerfConfig =>
-    mv(id, `round 5, tiled matmul for every n > 4: ${label}`, gpu, ['bmv0', ...tokens]);
+  const r6 = ['q4v2r2', 'mvglu', 'fna'];
   configs.push(
-    mv('gpu-mv', 'round-4 default (tiled matmul for n > 4, 256-wide row reductions)', gpu, [
-      'bmv0',
-      'rwg256',
-    ]),
     mv(
       'gpu-r5',
       'Adreno default (round 5: batched mat-vec for n <= 64, 128-wide row reductions)',
       gpu,
     ),
-    mv('gpu-r5-rwg256', 'round 5, 256-wide row reductions', gpu, ['rwg256']),
-    mv('gpu-bmv16', 'round 5, batched mat-vec only for n <= 16', gpu, ['bmv16']),
-    mv('gpu-bmv32', 'round 5, batched mat-vec only for n <= 32', gpu, ['bmv32']),
-    mv('gpu-bmv128', 'round 5, batched mat-vec for n <= 128', gpu, ['bmv128']),
-    mv('gpu-bmv256', 'round 5, batched mat-vec for n <= 256', gpu, ['bmv256']),
-    mv('gpu-bmv64-c8', 'round 5, batched mat-vec 8 columns per batch', gpu, ['bmvc8']),
-    mv('gpu-bmv256-c8', 'round 5, batched mat-vec for n <= 256, 8 columns per batch', gpu, [
-      'bmv256',
-      'bmvc8',
+    mv('gpu-q4v2', 'round 6: q4_K mat-vec v2 only (16 threads x 1 row per group)', gpu, ['q4v2']),
+    mv('gpu-q4v2-r2', 'round 6: q4_K mat-vec v2 only, 2 rows per group', gpu, ['q4v2r2']),
+    mv('gpu-q4v2-r4', 'round 6: q4_K mat-vec v2 only, 4 rows per group', gpu, ['q4v2r4']),
+    mv('gpu-q4v2-t32', 'round 6: q4_K mat-vec v2 only, 32 threads x 2 rows per group', gpu, [
+      'q4v2t32',
+      'q4v2r2',
     ]),
-    tiled('gpu-tile-pad', 'padded shared memory', ['mmpad']),
-    tiled('gpu-tile-8x4', '8x4 outputs per thread', ['mmt8x4']),
-    tiled('gpu-tile-8x4-pad', '8x4 outputs per thread, padded', ['mmt8x4', 'mmpad']),
-    tiled('gpu-tile-128x32-pad', '16x8 threads x 8x4 outputs, padded', [
-      'mmt8x4',
-      'mmwg16x8',
-      'mmpad',
-    ]),
-    tiled('gpu-tile-128x128', '16x16 threads x 8x8 outputs', ['mmt8x8', 'mmwg16x16']),
-    tiled('gpu-tile-32x16-pad', '8x4 threads x 4x4 outputs (16-column tiles), padded', [
-      'mmwg8x4',
-      'mmpad',
-    ]),
+    mv('gpu-mvglu', 'round 6: fused gate+up mat-vec + SWIGLU only', gpu, ['mvglu']),
+    mv('gpu-fna', 'round 6: fused RMS_NORM+MUL+ADD(+RMS_NORM+MUL) only', gpu, ['fna']),
+    mv('gpu-r6', 'round-6 candidate: q4_K mat-vec v2 (2 rows) + mvglu + fna', gpu, r6),
+    mv('gpu-r6-r4', 'round-6 candidate with 4 rows per group', gpu, ['q4v2r4', 'mvglu', 'fna']),
   );
   if (half !== null) {
+    const hybrid = `hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`;
     configs.push(
-      mv(
-        'gpu-r5-half',
-        `round 5, hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`,
-        { ...gpu, nGpuLayers: half },
-      ),
+      mv('gpu-r5-half', `round 5, ${hybrid}`, { ...gpu, nGpuLayers: half }),
+      mv('gpu-r6-half', `round-6 candidate, ${hybrid}`, { ...gpu, nGpuLayers: half }, r6),
     );
   }
-  configs.push(mv('gpu-r5-repeat', 'Adreno default again (thermal drift check)', gpu));
+  configs.push(mv('gpu-r6-repeat', 'round-6 candidate again (thermal drift check)', gpu, r6));
   return configs;
 }
 
@@ -145,10 +130,12 @@ export function resolvePerfConfig(configs: readonly PerfConfig[], id: string): P
   };
 }
 
-/** The sweep: every config, then the per-op run of the Adreno default. */
+/** The sweep: every config, then the per-op runs of the Adreno default and the candidate. */
 export function perfSweepQueue(configs: readonly PerfConfig[]): string[] {
   const ids = configs.map((c) => c.id);
-  if (ids.includes(PERF_DEFAULT_ID)) ids.push(`${PERF_DEFAULT_ID}${PERF_OPS_SUFFIX}`);
+  for (const id of [PERF_DEFAULT_ID, PERF_CANDIDATE_ID]) {
+    if (ids.includes(id)) ids.push(`${id}${PERF_OPS_SUFFIX}`);
+  }
   return ids;
 }
 

@@ -82,6 +82,17 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'ggml_webgpu_append_mv_columns(ctx, src0'],
   ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl', 'fn shmem_slot(idx: u32)'],
   ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-mulmat'],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec_q4k_v2.wgsl', 'fn chunk_dot('],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/rms_norm_mul_add.wgsl', '#ifdef SECOND_NORM'],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'ggml_webgpu_sakutto_can_fuse_norm_add(cgraph, node_idx)',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'ggml_webgpu_sakutto_mul_mat_swiglu(ctx, src0',
+  ],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-r6'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {
@@ -180,7 +191,9 @@ async function ensureCheckout(): Promise<void> {
 
 async function resetCheckout(): Promise<void> {
   // A superproject reset leaves the submodule's files alone, and a patch applies into llama.cpp.
+  // Files a patch adds there (patch 0025's shaders) are untracked: clean them too.
   await git(['checkout', '--', '.'], join(CHECKOUT_DIR, 'llama.cpp'));
+  await git(['clean', '-fd'], join(CHECKOUT_DIR, 'llama.cpp'));
   await git(['reset', '--hard', WLLAMA_COMMIT]);
   await git([
     'clean',

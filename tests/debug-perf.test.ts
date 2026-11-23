@@ -26,44 +26,64 @@ const stat = (g: number, n: number, extra = ''): string =>
   `SAKUTTO_GPUSTAT g=${g} n=${n} nodes=662 kernels=355 submits=23 encode_ms=2.000 cycle_ms=${n > 4 ? 0 : 100}.000 readback_ms=60.000 readbacks=1${extra}`;
 
 describe('perf configs', () => {
-  it('builds a CPU baseline and round-5 variants with the perf token', () => {
+  it('builds a CPU baseline, the round-5 default and the round-6 variants with the perf token', () => {
     const configs = buildPerfConfigs(probe, true, 16);
     expect(configs[0]?.id).toBe('cpu');
     expect(configs[0]?.label).toContain('threads');
     const ids = configs.map((c) => c.id);
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        'gpu-mv',
-        'gpu-r5',
-        'gpu-r5-rwg256',
-        'gpu-bmv16',
-        'gpu-bmv32',
-        'gpu-bmv128',
-        'gpu-bmv256',
-        'gpu-bmv64-c8',
-        'gpu-bmv256-c8',
-        'gpu-tile-pad',
-        'gpu-tile-8x4',
-        'gpu-tile-128x32-pad',
-        'gpu-r5-half',
-      ]),
-    );
-    expect(ids).not.toContain('gpu-sg-fa');
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.at(-1)).toBe('gpu-r5-repeat');
+    expect(ids).toEqual([
+      'cpu',
+      'gpu-r5',
+      'gpu-q4v2',
+      'gpu-q4v2-r2',
+      'gpu-q4v2-r4',
+      'gpu-q4v2-t32',
+      'gpu-mvglu',
+      'gpu-fna',
+      'gpu-r6',
+      'gpu-r6-r4',
+      'gpu-r5-half',
+      'gpu-r6-half',
+      'gpu-r6-repeat',
+    ]);
     for (const config of configs.slice(1)) {
       expect(config.tuning).toContain('perf');
       expect(config.debugProfile).toBe('adreno-matvec');
       for (const token of config.tuning) expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token)).toBe(true);
     }
-    expect(perfDebugString(configs.find((c) => c.id === 'gpu-mv')!)).toBe(
-      'adreno-matvec+bmv0+rwg256+perf',
-    );
     expect(perfDebugString(configs.find((c) => c.id === 'gpu-r5')!)).toBe('adreno-matvec+perf');
-    expect(perfDebugString(configs.find((c) => c.id === 'gpu-tile-128x32-pad')!)).toBe(
-      'adreno-matvec+bmv0+mmt8x4+mmwg16x8+mmpad+perf',
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-r6')!)).toBe(
+      'adreno-matvec+q4v2r2+mvglu+fna+perf',
+    );
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-q4v2-t32')!)).toBe(
+      'adreno-matvec+q4v2t32+q4v2r2+perf',
     );
     expect(configs.find((c) => c.id === 'gpu-r5-half')?.selection.nGpuLayers).toBe(9);
+    expect(configs.find((c) => c.id === 'gpu-r6-half')?.selection.nGpuLayers).toBe(9);
+    expect(configs.find((c) => c.id === 'gpu-r6-half')?.tuning).toEqual([
+      'q4v2r2',
+      'mvglu',
+      'fna',
+      'perf',
+    ]);
+  });
+
+  it('accepts the round-6 tokens and rejects malformed ones', () => {
+    for (const token of [
+      'q4v2',
+      'q4v2r1',
+      'q4v2r2',
+      'q4v2r4',
+      'q4v2t8',
+      'q4v2t64',
+      'mvglu',
+      'fna',
+    ]) {
+      expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token)).toBe(true);
+    }
+    for (const token of ['q4v2r3', 'q4v2t4', 'q4v2x', 'fnax', 'mvglu2']) {
+      expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token)).toBe(false);
+    }
   });
 
   it('skips the hybrid config for an unknown layer count and GPU configs without WebGPU', () => {
@@ -83,8 +103,8 @@ describe('perf configs', () => {
     expect(resolvePerfConfig(configs, 'nope')).toBeNull();
     const sweep = perfSweepQueue(configs);
     expect(sweep[0]).toBe('cpu');
-    expect(sweep.at(-1)).toBe('gpu-r5#ops');
-    expect(perfBreakdownQueue(configs, 'gpu-bmv32')).toEqual(['gpu-bmv32', 'gpu-bmv32#ops']);
+    expect(sweep.slice(-2)).toEqual(['gpu-r5#ops', 'gpu-r6#ops']);
+    expect(perfBreakdownQueue(configs, 'gpu-fna')).toEqual(['gpu-fna', 'gpu-fna#ops']);
     expect(perfBreakdownQueue(configs, 'cpu')).toEqual(['cpu']);
   });
 });
