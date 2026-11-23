@@ -36,11 +36,14 @@ export type Formality = 'polite' | 'plain';
 export type DisplayMode = 'replace' | 'bilingual';
 export type TierPreference = 'auto' | 'g' | 'c8' | 'c4' | 'c1';
 
-/** See `applyAdrenoProfile` (engine/in-browser/backend.ts). */
-export type AdrenoGpuProfile = 'optimized' | 'compat' | 'hybrid';
+/**
+ * See `applyAdrenoProfile` (engine/in-browser/backend.ts). 1.3.0 also had 'hybrid' (half the
+ * layers on the GPU); 1.3.1 removed it, and a stored 'hybrid' normalizes to 'optimized'.
+ */
+export type AdrenoGpuProfile = 'optimized' | 'compat';
 
 export function isAdrenoGpuProfile(value: unknown): value is AdrenoGpuProfile {
-  return value === 'optimized' || value === 'compat' || value === 'hybrid';
+  return value === 'optimized' || value === 'compat';
 }
 export type TranslationPace = 'fast' | 'quality';
 export type IdleMinutes = 0 | 1 | 5 | 15;

@@ -408,7 +408,16 @@ describe('Adreno GPU profile', () => {
   it('defaults to the optimized profile and keeps a valid choice', () => {
     expect(DEFAULT_SETTINGS.gpuProfile).toBe('optimized');
     expect(isAdrenoGpuProfile('compat')).toBe(true);
-    expect(isAdrenoGpuProfile('hybrid')).toBe(true);
+    expect(isAdrenoGpuProfile('hybrid')).toBe(false);
     expect(isAdrenoGpuProfile('turbo')).toBe(false);
+  });
+
+  it('migrates the removed hybrid profile to optimized and keeps compat', () => {
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, gpuProfile: 'hybrid' }, 'en').gpuProfile).toBe(
+      'optimized',
+    );
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, gpuProfile: 'compat' }, 'en').gpuProfile).toBe(
+      'compat',
+    );
   });
 });

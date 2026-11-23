@@ -128,6 +128,7 @@ const modelDeleteButton = document.querySelector<HTMLButtonElement>('#model-dele
 const modelCancelButton = document.querySelector<HTMLButtonElement>('#model-cancel')!;
 const perfConfigEl = document.querySelector<HTMLSelectElement>('#perf-config')!;
 const perfRunButton = document.querySelector<HTMLButtonElement>('#run-perf')!;
+const perfOpsEl = document.querySelector<HTMLInputElement>('#perf-ops')!;
 const perfSweepButton = document.querySelector<HTMLButtonElement>('#run-perf-sweep')!;
 const perfCopyButton = document.querySelector<HTMLButtonElement>('#perf-copy')!;
 const perfClearButton = document.querySelector<HTMLButtonElement>('#perf-clear')!;
@@ -773,7 +774,7 @@ async function main(): Promise<void> {
     location.reload();
   };
   perfRunButton.addEventListener('click', () => {
-    startPerf(perfBreakdownQueue(perfConfigs, perfConfigEl.value));
+    startPerf(perfBreakdownQueue(perfConfigs, perfConfigEl.value, perfOpsEl.checked));
   });
   perfSweepButton.addEventListener('click', () => {
     startPerf(perfSweepQueue(perfConfigs));

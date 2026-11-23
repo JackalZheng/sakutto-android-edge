@@ -143,15 +143,20 @@
         Each config runs in a fresh page (fresh worker and WebGPU device): model load, then the
         prompt twice with the prompt cache off (run 1 includes shader compilation, run 2 is warm),
         with llama.cpp's prompt/decode timings and ggml-webgpu's per-token counters. "GPU perf
-        breakdown" runs the chosen config, then the same config with per-op timing. "Run GPU perf
-        sweep" runs every config below (CPU baseline first, then the per-op runs of the round-5
-        default and the round-6 candidate). Each config is cut off after 5 minutes; a crash or
-        device loss only ends that config. Copy the report text and paste it back.
+        breakdown" runs the chosen config (plus a per-op timing run when the box below is ticked;
+        that run submits after every op and crashed the page on Adreno). "Run GPU perf sweep" runs
+        every config below except the hybrid ones, CPU baseline first, with no per-op runs. Each
+        config is cut off after 5 minutes; a crash or device loss only ends that config. Copy the
+        report text and paste it back.
       </p>
       <label
         >Config
         <select id="perf-config"></select>
       </label>
+      <label
+        ><input id="perf-ops" type="checkbox" /> Breakdown: add a per-op timing run (slow; may crash
+        the page)</label
+      >
       <button id="run-perf" type="button" disabled>GPU perf breakdown</button>
       <button id="run-perf-sweep" type="button" disabled>Run GPU perf sweep</button>
       <button id="perf-copy" type="button" disabled>Copy report</button>

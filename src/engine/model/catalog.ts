@@ -4,7 +4,7 @@ export interface ModelEntry {
   id: ModelId;
   params: '0.8B' | '2B';
   quantization: 'Q4_K_M';
-  /** Transformer blocks (`plamo3.block_count`); the hybrid GPU profile offloads half. */
+  /** Transformer blocks (`plamo3.block_count`). */
   layers: number;
   repository: string;
   file: string;

@@ -1078,7 +1078,7 @@
     "message": "用一段固定文字分别跑 CPU 与 WebGPU，再比对输出。侧载安装的模型是另外存放的，请先在这里下载 0.8B 模型。"
   },
   "tierAdrenoAutoHelp": {
-    "message": "在 Qualcomm Adreno GPU 上，“自动”目前使用 CPU：在现有手机上 CPU 比 WebGPU 更快（每段约 2.5 秒，WebGPU 约 3.3–3.8 秒）。若要使用下方的 Adreno 配置，请选择“GPU (WebGPU)”。"
+    "message": "在 Qualcomm Adreno GPU 上，“自动”会使用 WebGPU 并应用下方的 Adreno 配置（测试手机上每段约 2.3 秒，CPU 约 2.9 秒）。如果 GPU 产生乱码，这台设备的“自动”会改用 CPU；选择“GPU (WebGPU)”可以再试一次。"
   },
   "gpuProfileLabel": {
     "message": "Adreno GPU 配置"
@@ -1087,22 +1087,16 @@
     "message": "优化（推荐）"
   },
   "gpuProfileCompat": {
-    "message": "第 4 轮兼容"
-  },
-  "gpuProfileHybrid": {
-    "message": "混合（一半层在 GPU）"
+    "message": "兼容（第 5 轮）"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "为 Adreno 调校的内核：不使用 subgroup、64 宽矩阵向量乘法、64 个 token 以内的提示词使用批量矩阵向量乘法、2 个并行槽。"
+    "message": "第 6 轮 Adreno 内核：q4_K 矩阵向量乘法使用 16 字节读取（每组 4 行）、合并 gate/up 与 SwiGLU、合并 norm 运算链；不使用 subgroup、短提示词使用批量矩阵向量乘法、2 个并行槽。"
   },
   "gpuProfileCompatHelp": {
-    "message": "已在手机上验证的第 4 轮设置，不含批量矩阵向量乘法。如果“优化”出现错误译文，请改用此项。"
-  },
-  "gpuProfileHybridHelp": {
-    "message": "约一半的模型层在 GPU 上运行，其余在 CPU。在手机上通常比全部使用 GPU 更快。"
+    "message": "1.3.0 的 Adreno 设置，不含第 6 轮内核（稍慢）。如果“优化”出现错误译文或 GPU 停止响应，请改用此项。"
   },
   "gpuProfileInactive": {
-    "message": "配置仅在计算后端为“GPU (WebGPU)”时生效。"
+    "message": "配置仅在使用 GPU 时生效（Adreno 上的“自动”或“GPU (WebGPU)”）。"
   },
   "diagGpu": {
     "message": "检测到的 GPU"

@@ -1,4 +1,5 @@
 import {
+  ADRENO_R6_TUNING,
   applyMobileLimits,
   selectionForTier,
   type BackendProbe,
@@ -108,8 +109,14 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
     {
       id: 'gpu-default',
       label:
-        'WebGPU (default; Adreno: subgroups off, mat-vec WG 64, batched mat-vec for n <= 64, new soft_max, 16 kernels per submit)',
-      selection: gpu,
+        'WebGPU (ggml-webgpu built-in default; Adreno: round 5 = subgroups off, mat-vec WG 64, batched mat-vec for n <= 64, new soft_max, 16 kernels per submit; = the "compat" profile)',
+      selection: { ...gpu, webgpuTuning: [] },
+      debugProfile: null,
+    },
+    {
+      id: 'gpu-release',
+      label: `WebGPU + the 1.3.1 Adreno default profile (round 6: ${ADRENO_R6_TUNING.join('+')}; what Automatic / "Optimized" run on Adreno)`,
+      selection: { ...gpu, webgpuTuning: ADRENO_R6_TUNING },
       debugProfile: null,
     },
     {

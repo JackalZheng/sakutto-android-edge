@@ -10,8 +10,8 @@ import {
   selectBackend,
   selectionForTier,
   WEBGPU_ALL_LAYERS,
+  ADRENO_R6_TUNING,
   applyAdrenoProfile,
-  resolveGpuLayers,
   resolveSelection,
 } from '@/engine/in-browser/backend';
 import { DEFAULT_MODEL_ID, getModel, isModelId, MODEL_CATALOG } from '@/engine/model/catalog';
@@ -206,14 +206,41 @@ describe('stepping down after a GPU failure', () => {
   });
 });
 
-describe('Adreno policy (v1.3.0)', () => {
+describe('Adreno policy (v1.3.1)', () => {
   const gpu = { webgpu: true, hardwareConcurrency: 8, fastBatches: false, adreno: true };
 
-  it('keeps Automatic on the CPU on Adreno, phone or desktop', () => {
-    expect(resolveSelection('auto', gpu, { android: true, adreno: true }).backend).toBe('cpu-wasm');
-    expect(resolveSelection('auto', gpu, { android: false, adreno: true }).backend).toBe(
-      'cpu-wasm',
+  it('runs Automatic on WebGPU with the round-6 profile on Adreno, phone or desktop', () => {
+    for (const android of [true, false]) {
+      const selection = resolveSelection('auto', gpu, { android, adreno: true });
+      expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 2, nCtx: 2048 });
+      expect(selection.webgpuTuning).toEqual(['q4v2r4', 'mvglu', 'fna']);
+      expect(selection.webgpuTuning).toBe(ADRENO_R6_TUNING);
+    }
+  });
+
+  it('applies the phone caps to Automatic on an Adreno phone', () => {
+    const selection = resolveSelection('auto', gpu, { android: true, adreno: true });
+    expect(selection.nThreads).toBeLessThanOrEqual(4);
+    expect(selection.nBatch).toBeDefined();
+  });
+
+  it('keeps Automatic on the CPU on Adreno without a WebGPU adapter', () => {
+    const selection = resolveSelection(
+      'auto',
+      { ...gpu, webgpu: false },
+      {
+        android: true,
+        adreno: true,
+      },
     );
+    expect(selection.backend).toBe('cpu-wasm');
+    expect(selection.webgpuTuning).toBeUndefined();
+  });
+
+  it('keeps Automatic on the CPU on a non-Adreno phone', () => {
+    expect(
+      resolveSelection('auto', { ...gpu, adreno: false }, { android: true, adreno: false }).backend,
+    ).toBe('cpu-wasm');
   });
 
   it('leaves non-Adreno GPUs on the upstream defaults', () => {
@@ -222,50 +249,50 @@ describe('Adreno policy (v1.3.0)', () => {
     expect(selection.webgpuTuning).toBeUndefined();
   });
 
-  it('runs an explicit GPU choice with two slots and 2048 tokens of context', () => {
+  it('runs an explicit GPU choice with two slots, 2048 tokens of context and round 6', () => {
     const selection = resolveSelection('g', gpu, {
       android: true,
       adreno: true,
       gpuProfile: 'optimized',
     });
     expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 2, nCtx: 2048 });
-    expect(selection.webgpuTuning).toEqual([]);
+    expect(selection.webgpuTuning).toEqual(['q4v2r4', 'mvglu', 'fna']);
     expect(selection.nGpuLayers).toBe(WEBGPU_ALL_LAYERS);
   });
 
-  it('turns batched mat-vec off for the round-4 compatible profile', () => {
-    const selection = resolveSelection('g', gpu, {
-      android: false,
-      adreno: true,
-      gpuProfile: 'compat',
-    });
-    expect(selection.webgpuTuning).toEqual(['bmv0']);
-  });
-
-  it('offloads half the layers (plus the output) in the hybrid profile', () => {
-    const selection = resolveSelection('g', gpu, {
-      android: true,
-      adreno: true,
-      gpuProfile: 'hybrid',
-    });
-    expect(selection.gpuLayersHalf).toBe(true);
-    expect(resolveGpuLayers(selection, 16).nGpuLayers).toBe(9);
-    expect(resolveGpuLayers(selection, 24).nGpuLayers).toBe(13);
-    expect(resolveGpuLayers(selection, null).nGpuLayers).toBe(WEBGPU_ALL_LAYERS);
-  });
-
-  it('falls back to the CPU after garbled GPU output', () => {
-    for (const android of [true, false]) {
-      expect(
-        resolveSelection('g', gpu, { android, adreno: true, gpuOutputBroken: true }).backend,
-      ).toBe('cpu-wasm');
+  it('runs the round-5 defaults (no tokens) for the compatible profile', () => {
+    for (const preference of ['auto', 'g'] as const) {
+      const selection = resolveSelection(preference, gpu, {
+        android: false,
+        adreno: true,
+        gpuProfile: 'compat',
+      });
+      expect(selection.backend).toBe('webgpu');
+      expect(selection.webgpuTuning).toEqual([]);
     }
+  });
+
+  it('falls back to the CPU after garbled GPU output, for Automatic and GPU', () => {
+    for (const android of [true, false]) {
+      for (const preference of ['auto', 'g'] as const) {
+        expect(
+          resolveSelection(preference, gpu, { android, adreno: true, gpuOutputBroken: true })
+            .backend,
+        ).toBe('cpu-wasm');
+      }
+    }
+  });
+
+  it('keeps an explicit CPU tier on the CPU on Adreno', () => {
+    const selection = resolveSelection('c4', gpu, { android: true, adreno: true });
+    expect(selection.backend).toBe('cpu-wasm');
+    expect(selection.webgpuTuning).toBeUndefined();
   });
 
   it('never applies the profile to a CPU selection', () => {
     const cpu = selectionForTier('c4', gpu);
-    expect(applyAdrenoProfile(cpu, 'hybrid')).toBe(cpu);
-    expect(resolveGpuLayers(cpu, 16)).toBe(cpu);
+    expect(applyAdrenoProfile(cpu, 'compat')).toBe(cpu);
+    expect(applyAdrenoProfile(cpu, 'optimized')).toBe(cpu);
   });
 
   it('gives every catalog model its block count', () => {

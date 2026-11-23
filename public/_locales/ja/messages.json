@@ -1078,7 +1078,7 @@
     "message": "固定の段落を CPU と WebGPU で実行し、出力を比較します。サイドロードした版はモデルを別に保存するため、まずここで 0.8B モデルをダウンロードしてください。"
   },
   "tierAdrenoAutoHelp": {
-    "message": "Qualcomm Adreno GPU では、「自動」は当面 CPU を使います。現在のスマートフォンでは CPU のほうが WebGPU より速いためです（1 段落あたり約 2.5 秒、WebGPU は約 3.3〜3.8 秒）。下の Adreno プロファイルを使うには「GPU (WebGPU)」を選んでください。"
+    "message": "Qualcomm Adreno GPU では、「自動」は下の Adreno プロファイルで WebGPU を使います（テスト端末で 1 段落あたり約 2.3 秒、CPU は約 2.9 秒）。GPU の訳文が文字化けした場合、この端末の「自動」は CPU に切り替わります。もう一度試すには「GPU (WebGPU)」を選んでください。"
   },
   "gpuProfileLabel": {
     "message": "Adreno GPU プロファイル"
@@ -1087,22 +1087,16 @@
     "message": "最適化（推奨）"
   },
   "gpuProfileCompat": {
-    "message": "ラウンド 4 互換"
-  },
-  "gpuProfileHybrid": {
-    "message": "ハイブリッド（半分の層を GPU）"
+    "message": "互換（ラウンド 5）"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "Adreno 向けに調整したカーネル：subgroup なし、幅 64 の行列ベクトル積、64 トークン以下のプロンプトはバッチ行列ベクトル積、並列スロット 2。"
+    "message": "Adreno 向けラウンド 6 カーネル：16 バイト読み込みの q4_K 行列ベクトル積（1 グループ 4 行）、gate/up と SwiGLU の融合、norm チェーンの融合。subgroup なし、短いプロンプトはバッチ行列ベクトル積、並列スロット 2。"
   },
   "gpuProfileCompatHelp": {
-    "message": "スマートフォンで検証済みのラウンド 4 設定（バッチ行列ベクトル積なし）。「最適化」で訳文がおかしい場合に試してください。"
-  },
-  "gpuProfileHybridHelp": {
-    "message": "モデルの層の約半分を GPU、残りを CPU で実行します。スマートフォンではすべて GPU より速いことがあります。"
+    "message": "1.3.0 の Adreno 設定（ラウンド 6 カーネルなし、少し遅い）。「最適化」で訳文がおかしい場合や GPU が応答しなくなった場合に試してください。"
   },
   "gpuProfileInactive": {
-    "message": "プロファイルは計算バックエンドが「GPU (WebGPU)」のときだけ使われます。"
+    "message": "プロファイルは GPU を使うときだけ使われます（Adreno での「自動」、または「GPU (WebGPU)」）。"
   },
   "diagGpu": {
     "message": "検出された GPU"

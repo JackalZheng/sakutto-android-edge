@@ -1,4 +1,5 @@
 import {
+  ADRENO_R6_TUNING,
   applyMobileLimits,
   selectionForTier,
   type BackendProbe,
@@ -37,12 +38,12 @@ export interface PerfConfig {
   debugProfile: Exclude<WebGpuDebugProfile, 'off'> | null;
   /** ggml-webgpu tuning tokens (patch 0021); `perf` is added to every WebGPU config. */
   tuning: readonly string[];
+  /** false: only runs when picked for a breakdown, never in the sweep (the hybrid configs). */
+  sweep?: boolean;
 }
 
-/** The current Adreno default in the sweep (its per-op variant runs at the end of the sweep). */
-export const PERF_DEFAULT_ID = 'gpu-r5';
-/** The round-6 candidate (its per-op variant ends the sweep). */
-export const PERF_CANDIDATE_ID = 'gpu-r6';
+/** The Adreno default since 1.3.1 (settings "Optimized", round 6 with 4 rows per group). */
+export const PERF_DEFAULT_ID = 'gpu-r6-r4';
 
 export function buildPerfConfigs(
   probe: BackendProbe,
@@ -84,10 +85,17 @@ export function buildPerfConfigs(
   // decode token 355 -> 277 for PLaMo 3, output identical to the CPU.
   const half = modelLayers !== null && modelLayers > 1 ? Math.floor(modelLayers / 2) + 1 : null;
   const r6 = ['q4v2r2', 'mvglu', 'fna'];
+  const r6r4 = [...ADRENO_R6_TUNING];
   configs.push(
     mv(
+      'gpu-r6-r4',
+      `Adreno default since 1.3.1 ("Optimized", round 6: ${r6r4.join('+')})`,
+      gpu,
+      r6r4,
+    ),
+    mv(
       'gpu-r5',
-      'Adreno default (round 5: batched mat-vec for n <= 64, 128-wide row reductions)',
+      'round 5 ("Compatible" profile, 1.3.0 default: batched mat-vec for n <= 64, 128-wide row reductions)',
       gpu,
     ),
     mv('gpu-q4v2', 'round 6: q4_K mat-vec v2 only (16 threads x 1 row per group)', gpu, ['q4v2']),
@@ -99,17 +107,21 @@ export function buildPerfConfigs(
     ]),
     mv('gpu-mvglu', 'round 6: fused gate+up mat-vec + SWIGLU only', gpu, ['mvglu']),
     mv('gpu-fna', 'round 6: fused RMS_NORM+MUL+ADD(+RMS_NORM+MUL) only', gpu, ['fna']),
-    mv('gpu-r6', 'round-6 candidate: q4_K mat-vec v2 (2 rows) + mvglu + fna', gpu, r6),
-    mv('gpu-r6-r4', 'round-6 candidate with 4 rows per group', gpu, ['q4v2r4', 'mvglu', 'fna']),
+    mv('gpu-r6', 'round 6 with 2 rows per group: q4_K mat-vec v2 + mvglu + fna', gpu, r6),
   );
   if (half !== null) {
+    // Breakdown only: slower than full GPU in every phone sweep, and gpu-r6-half once stalled
+    // for 41 s; the settings no longer offer a hybrid profile (1.3.1).
     const hybrid = `hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`;
     configs.push(
-      mv('gpu-r5-half', `round 5, ${hybrid}`, { ...gpu, nGpuLayers: half }),
-      mv('gpu-r6-half', `round-6 candidate, ${hybrid}`, { ...gpu, nGpuLayers: half }, r6),
+      { ...mv('gpu-r5-half', `round 5, ${hybrid}`, { ...gpu, nGpuLayers: half }), sweep: false },
+      {
+        ...mv('gpu-r6-r4-half', `1.3.1 default, ${hybrid}`, { ...gpu, nGpuLayers: half }, r6r4),
+        sweep: false,
+      },
     );
   }
-  configs.push(mv('gpu-r6-repeat', 'round-6 candidate again (thermal drift check)', gpu, r6));
+  configs.push(mv('gpu-r6-r4-repeat', '1.3.1 default again (thermal drift check)', gpu, r6r4));
   return configs;
 }
 
@@ -130,20 +142,23 @@ export function resolvePerfConfig(configs: readonly PerfConfig[], id: string): P
   };
 }
 
-/** The sweep: every config, then the per-op runs of the Adreno default and the candidate. */
+/**
+ * The sweep: every config except the breakdown-only ones. No per-op runs: `perfops` submits and
+ * waits after every op, and on the POCO F5 Pro (1.3.1-dev) that run reloaded the page.
+ */
 export function perfSweepQueue(configs: readonly PerfConfig[]): string[] {
-  const ids = configs.map((c) => c.id);
-  for (const id of [PERF_DEFAULT_ID, PERF_CANDIDATE_ID]) {
-    if (ids.includes(id)) ids.push(`${id}${PERF_OPS_SUFFIX}`);
-  }
-  return ids;
+  return configs.filter((c) => c.sweep !== false).map((c) => c.id);
 }
 
-/** The breakdown: the chosen config, then its per-op variant when it runs on WebGPU. */
-export function perfBreakdownQueue(configs: readonly PerfConfig[], id: string): string[] {
+/** The breakdown: the chosen config, then its per-op variant only when asked for (WebGPU only). */
+export function perfBreakdownQueue(
+  configs: readonly PerfConfig[],
+  id: string,
+  withOps = false,
+): string[] {
   const config = configs.find((c) => c.id === id);
   if (!config) return [];
-  return config.selection.backend === 'webgpu' ? [id, `${id}${PERF_OPS_SUFFIX}`] : [id];
+  return withOps && config.selection.backend === 'webgpu' ? [id, `${id}${PERF_OPS_SUFFIX}`] : [id];
 }
 
 export function perfDebugString(config: PerfConfig): string | null {

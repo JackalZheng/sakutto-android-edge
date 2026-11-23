@@ -60,6 +60,7 @@ describe('buildHarnessConfigs', () => {
     expect(ids).toEqual([
       'cpu',
       'gpu-default',
+      'gpu-release',
       'gpu-1-slot',
       'gpu-nctx-2048',
       'gpu-no-f16',

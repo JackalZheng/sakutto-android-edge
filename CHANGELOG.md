@@ -2,6 +2,16 @@
 
 Release sections are added by `pnpm release`. Each section lists commit subjects since the previous `vX.Y.Z` tag.
 
+## [1.3.1] - 2026-11-23
+
+### Improvements
+
+- WebGPU on Adreno is now faster than the CPU, and Automatic uses it. The new default Adreno profile (Optimized) adds round-6 kernels: a q4_K mat-vec with 16-byte loads and 4 rows per thread group, a fused gate+up mat-vec + SwiGLU, and a fused RMS_NORM+MUL+ADD(+RMS_NORM+MUL) chain (decode kernels per token 355 → 277). On a POCO F5 Pro (Adreno 730, PLaMo 3 0.8B, one paragraph, warm) a translation took 2.25 s (decode 22.2 tokens/s) vs 2.91 s on the CPU (17.3 tokens/s) and 2.69 s with the 1.3.0 GPU kernels (15.9 tokens/s). (#18)
+- On Adreno (Edge for Android and Windows on Snapdragon), Automatic now picks WebGPU with the Adreno profile. Other Android GPUs still use the CPU under Automatic; other desktop GPUs are unchanged.
+- Adreno GPU profile: Optimized (recommended) = round 6; **Compatible (round 5)** = the 1.3.0 Optimized settings, as a fallback. The Hybrid option (half the layers on the GPU) is removed: it was slower than full GPU in every phone run and once stalled for 41 s. A saved Hybrid choice becomes Optimized; a saved Round-4 compatible choice now means round 5.
+- The "WebGPU produced garbled text" flag is now kept per extension version. A flag stored by 1.3.0 or earlier no longer keeps Automatic off the GPU after the update; if the new kernels garble text too, the output guard moves to the CPU again and remembers it for this version (choose GPU (WebGPU) to retry).
+- Debug build only: the GPU perf sweep no longer runs per-op timing (it crashed the page on the phone) or the hybrid configs; per-op timing is an opt-in checkbox for a single breakdown. The translation-run harness gains `gpu-release` (the 1.3.1 Adreno default tokens).
+
 ## [1.3.0] - 2026-11-23
 
 ### Features

@@ -85,6 +85,29 @@ python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json'))
    text page. Keyboard shortcuts and the right-click menu will not
    be there — that is expected on Android.
 
+## v1.3.1: Automatic on Adreno = WebGPU (round 6)
+
+- **Automatic on Adreno = WebGPU** with the Adreno profile (Edge for Android
+  and Windows on Snapdragon). POCO F5 Pro (Adreno 730, PLaMo 3 0.8B, one
+  paragraph, warm): round 6 2.25 s / decode 22.2 t/s, CPU (4 threads)
+  2.91 s / 17.3 t/s, round 5 2.69 s / 15.9 t/s. Other Android GPUs keep
+  Automatic on the CPU.
+- **Adreno GPU profile:**
+  - Optimized (default): round 6 = the ggml-webgpu Adreno defaults plus the
+    tokens `q4v2r4+mvglu+fna` (q4_K mat-vec v2, 16 threads x 4 rows per
+    group; fused gate+up mat-vec + SWIGLU; fused RMS_NORM+MUL+ADD chain).
+  - Compatible (round 5): the ggml-webgpu Adreno defaults only (the 1.3.0
+    Optimized profile).
+  - Hybrid was removed (slower in every phone run, one 41 s stall); a stored
+    `hybrid` is rewritten as `optimized`.
+- **Broken-output flag** (`webgpuOutputBroken`) now stores the extension
+  version and only counts for that version, so a flag from 1.3.0 (stored as
+  `true`) does not keep the new kernels off. While it is set, Automatic and
+  GPU (WebGPU) both run on the CPU; choosing GPU (WebGPU) clears it.
+- **Debug harness:** the perf sweep skips the hybrid and per-op runs (the
+  per-op run reloaded the page on the phone); per-op timing is an opt-in
+  checkbox for a single breakdown.
+
 ## v1.3.0: compute backend and the Adreno GPU profile
 
 Settings → **Compute backend**: Automatic (recommended) / GPU (WebGPU) /

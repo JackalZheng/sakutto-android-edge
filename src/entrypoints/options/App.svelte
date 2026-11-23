@@ -62,16 +62,14 @@
   // Release builds do not ship the harness page (it is in `pnpm build:debug` only).
   const showGpuHarness =
     __SAKUTTO_DEBUG_BUILD__ && (androidEdge || webGpuDebugProfileFromUrl(location.href) !== null);
-  const gpuProfiles: readonly AdrenoGpuProfile[] = ['optimized', 'compat', 'hybrid'];
+  const gpuProfiles: readonly AdrenoGpuProfile[] = ['optimized', 'compat'];
   const gpuProfileHelpKey = {
     optimized: 'gpuProfileOptimizedHelp',
     compat: 'gpuProfileCompatHelp',
-    hybrid: 'gpuProfileHybridHelp',
   } as const;
   const gpuProfileLabelKey = {
     optimized: 'gpuProfileOptimized',
     compat: 'gpuProfileCompat',
-    hybrid: 'gpuProfileHybrid',
   } as const;
 
   let settings = $state<Settings | null>(null);
@@ -484,7 +482,7 @@
           </select>
         </label>
         <p class="muted help">{t(gpuProfileHelpKey[settings.gpuProfile])}</p>
-        {#if settings.tier !== 'g'}
+        {#if settings.tier !== 'g' && !(settings.tier === 'auto' && capabilities?.gpuAdreno === true)}
           <p class="muted help">{t('gpuProfileInactive')}</p>
         {/if}
       {/if}

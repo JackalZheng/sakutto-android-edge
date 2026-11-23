@@ -22,7 +22,6 @@ import {
   cpuFallback,
   isGpuLoadFallback,
   lighterSelection,
-  resolveGpuLayers,
   resolveSelection,
   type RuntimeContext,
   selectionAfterGpuLoss,
@@ -236,10 +235,11 @@ export class EngineHost {
     };
     const stored = await loadEngineSettings();
     // A phone's small cores and shared memory budget cannot use the desktop thread and
-    // batch sizes, and "auto" stays off WebGPU there; see `resolveSelection`.
+    // batch sizes, and "auto" stays off WebGPU there unless the GPU is an Adreno; see
+    // `resolveSelection`.
     const android = isAndroidEdgeRuntime();
-    // Adreno (phone or Windows on Snapdragon): "auto" stays on the CPU and an explicit WebGPU
-    // choice runs the settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
+    // Adreno (phone or Windows on Snapdragon): "auto" and an explicit WebGPU choice run the
+    // settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
     const runtime: RuntimeContext = {
       android,
       gpuOutputBroken: (android || probe.adreno) && stored?.gpuOutputBroken === true,
@@ -256,11 +256,7 @@ export class EngineHost {
       const result = await loadWithFallback(
         async (selection) => {
           try {
-            return await manager.ensureLoaded(
-              this.activeModelId,
-              resolveGpuLayers(selection, getModel(this.activeModelId).layers),
-              { signal },
-            );
+            return await manager.ensureLoaded(this.activeModelId, selection, { signal });
           } catch (error) {
             this.noteGpuError(error);
             throw error;

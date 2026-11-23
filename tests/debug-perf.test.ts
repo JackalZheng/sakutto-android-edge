@@ -11,6 +11,7 @@ import {
   perfDebugString,
   type PerfResult,
   PerfTimeoutError,
+  PERF_DEFAULT_ID,
   perfSweepQueue,
   recordPerfResult,
   resolvePerfConfig,
@@ -26,13 +27,14 @@ const stat = (g: number, n: number, extra = ''): string =>
   `SAKUTTO_GPUSTAT g=${g} n=${n} nodes=662 kernels=355 submits=23 encode_ms=2.000 cycle_ms=${n > 4 ? 0 : 100}.000 readback_ms=60.000 readbacks=1${extra}`;
 
 describe('perf configs', () => {
-  it('builds a CPU baseline, the round-5 default and the round-6 variants with the perf token', () => {
+  it('builds a CPU baseline, the 1.3.1 default, round 5 and the round-6 variants with perf', () => {
     const configs = buildPerfConfigs(probe, true, 16);
     expect(configs[0]?.id).toBe('cpu');
     expect(configs[0]?.label).toContain('threads');
     const ids = configs.map((c) => c.id);
     expect(ids).toEqual([
       'cpu',
+      'gpu-r6-r4',
       'gpu-r5',
       'gpu-q4v2',
       'gpu-q4v2-r2',
@@ -41,10 +43,9 @@ describe('perf configs', () => {
       'gpu-mvglu',
       'gpu-fna',
       'gpu-r6',
-      'gpu-r6-r4',
       'gpu-r5-half',
-      'gpu-r6-half',
-      'gpu-r6-repeat',
+      'gpu-r6-r4-half',
+      'gpu-r6-r4-repeat',
     ]);
     for (const config of configs.slice(1)) {
       expect(config.tuning).toContain('perf');
@@ -58,10 +59,14 @@ describe('perf configs', () => {
     expect(perfDebugString(configs.find((c) => c.id === 'gpu-q4v2-t32')!)).toBe(
       'adreno-matvec+q4v2t32+q4v2r2+perf',
     );
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-r6-r4')!)).toBe(
+      'adreno-matvec+q4v2r4+mvglu+fna+perf',
+    );
+    expect(PERF_DEFAULT_ID).toBe('gpu-r6-r4');
     expect(configs.find((c) => c.id === 'gpu-r5-half')?.selection.nGpuLayers).toBe(9);
-    expect(configs.find((c) => c.id === 'gpu-r6-half')?.selection.nGpuLayers).toBe(9);
-    expect(configs.find((c) => c.id === 'gpu-r6-half')?.tuning).toEqual([
-      'q4v2r2',
+    expect(configs.find((c) => c.id === 'gpu-r6-r4-half')?.selection.nGpuLayers).toBe(9);
+    expect(configs.find((c) => c.id === 'gpu-r6-r4-half')?.tuning).toEqual([
+      'q4v2r4',
       'mvglu',
       'fna',
       'perf',
@@ -103,9 +108,15 @@ describe('perf configs', () => {
     expect(resolvePerfConfig(configs, 'nope')).toBeNull();
     const sweep = perfSweepQueue(configs);
     expect(sweep[0]).toBe('cpu');
-    expect(sweep.slice(-2)).toEqual(['gpu-r5#ops', 'gpu-r6#ops']);
-    expect(perfBreakdownQueue(configs, 'gpu-fna')).toEqual(['gpu-fna', 'gpu-fna#ops']);
-    expect(perfBreakdownQueue(configs, 'cpu')).toEqual(['cpu']);
+    expect(sweep[1]).toBe('gpu-r6-r4');
+    // No per-op runs (they crashed the page on the phone) and no hybrid configs in the sweep.
+    expect(sweep.some((id) => id.endsWith('#ops'))).toBe(false);
+    expect(sweep.some((id) => id.endsWith('-half'))).toBe(false);
+    expect(sweep.at(-1)).toBe('gpu-r6-r4-repeat');
+    expect(perfBreakdownQueue(configs, 'gpu-fna')).toEqual(['gpu-fna']);
+    expect(perfBreakdownQueue(configs, 'gpu-fna', true)).toEqual(['gpu-fna', 'gpu-fna#ops']);
+    expect(perfBreakdownQueue(configs, 'gpu-r5-half')).toEqual(['gpu-r5-half']);
+    expect(perfBreakdownQueue(configs, 'cpu', true)).toEqual(['cpu']);
   });
 });
 
