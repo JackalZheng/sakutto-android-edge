@@ -10,6 +10,9 @@ import {
   selectBackend,
   selectionForTier,
   WEBGPU_ALL_LAYERS,
+  applyAdrenoProfile,
+  resolveGpuLayers,
+  resolveSelection,
 } from '@/engine/in-browser/backend';
 import { DEFAULT_MODEL_ID, getModel, isModelId, MODEL_CATALOG } from '@/engine/model/catalog';
 
@@ -200,5 +203,72 @@ describe('stepping down after a GPU failure', () => {
     expect(isGpuLoadFallback(wide, cpu)).toBe(true);
     expect(isGpuLoadFallback(cpu, cpu)).toBe(false);
     expect(isGpuLoadFallback(wide, plain)).toBe(false);
+  });
+});
+
+describe('Adreno policy (v1.3.0)', () => {
+  const gpu = { webgpu: true, hardwareConcurrency: 8, fastBatches: false, adreno: true };
+
+  it('keeps Automatic on the CPU on Adreno, phone or desktop', () => {
+    expect(resolveSelection('auto', gpu, { android: true, adreno: true }).backend).toBe('cpu-wasm');
+    expect(resolveSelection('auto', gpu, { android: false, adreno: true }).backend).toBe(
+      'cpu-wasm',
+    );
+  });
+
+  it('leaves non-Adreno GPUs on the upstream defaults', () => {
+    const selection = resolveSelection('auto', { ...gpu, adreno: false }, { android: false });
+    expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 4, nCtx: 4096 });
+    expect(selection.webgpuTuning).toBeUndefined();
+  });
+
+  it('runs an explicit GPU choice with two slots and 2048 tokens of context', () => {
+    const selection = resolveSelection('g', gpu, {
+      android: true,
+      adreno: true,
+      gpuProfile: 'optimized',
+    });
+    expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 2, nCtx: 2048 });
+    expect(selection.webgpuTuning).toEqual([]);
+    expect(selection.nGpuLayers).toBe(WEBGPU_ALL_LAYERS);
+  });
+
+  it('turns batched mat-vec off for the round-4 compatible profile', () => {
+    const selection = resolveSelection('g', gpu, {
+      android: false,
+      adreno: true,
+      gpuProfile: 'compat',
+    });
+    expect(selection.webgpuTuning).toEqual(['bmv0']);
+  });
+
+  it('offloads half the layers (plus the output) in the hybrid profile', () => {
+    const selection = resolveSelection('g', gpu, {
+      android: true,
+      adreno: true,
+      gpuProfile: 'hybrid',
+    });
+    expect(selection.gpuLayersHalf).toBe(true);
+    expect(resolveGpuLayers(selection, 16).nGpuLayers).toBe(9);
+    expect(resolveGpuLayers(selection, 24).nGpuLayers).toBe(13);
+    expect(resolveGpuLayers(selection, null).nGpuLayers).toBe(WEBGPU_ALL_LAYERS);
+  });
+
+  it('falls back to the CPU after garbled GPU output', () => {
+    for (const android of [true, false]) {
+      expect(
+        resolveSelection('g', gpu, { android, adreno: true, gpuOutputBroken: true }).backend,
+      ).toBe('cpu-wasm');
+    }
+  });
+
+  it('never applies the profile to a CPU selection', () => {
+    const cpu = selectionForTier('c4', gpu);
+    expect(applyAdrenoProfile(cpu, 'hybrid')).toBe(cpu);
+    expect(resolveGpuLayers(cpu, 16)).toBe(cpu);
+  });
+
+  it('gives every catalog model its block count', () => {
+    expect(Object.values(MODEL_CATALOG).map((model) => model.layers)).toEqual([16, 24]);
   });
 });

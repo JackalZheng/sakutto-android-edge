@@ -67,7 +67,7 @@ describe('harness model list', () => {
     expect(formatModelSize(396_705_472)).toBe('397 MB');
     expect(formatModelSize(1_133_080_448)).toBe('1.13 GB');
     const line = describeHarnessModel(harnessModel('qwen3-0.6b-q4_k_m'));
-    expect(line).toContain('Qwen3 0.6B · 397 MB · Apache-2.0 — ');
+    expect(line).toContain('Qwen3 0.6B（GPU 實驗性） · 397 MB · Apache-2.0 — ');
   });
 
   it('recognizes ids and rejects unknown ones', () => {

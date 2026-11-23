@@ -53,7 +53,7 @@ const plamo = MODEL_CATALOG[DEFAULT_MODEL_ID];
 const MODELS: readonly HarnessModel[] = [
   entry({
     id: 'qwen3-0.6b-q4_k_m',
-    name: 'Qwen3 0.6B',
+    name: 'Qwen3 0.6B（GPU 實驗性）',
     architecture: 'qwen3',
     repository: 'unsloth/Qwen3-0.6B-GGUF',
     file: 'Qwen3-0.6B-Q4_K_M.gguf',
@@ -81,7 +81,7 @@ const MODELS: readonly HarnessModel[] = [
   },
   entry({
     id: 'gemma-3-1b-it-q4_k_m',
-    name: 'Gemma 3 1B IT',
+    name: 'Gemma 3 1B IT（GPU 實驗性）',
     architecture: 'gemma3',
     repository: 'ggml-org/gemma-3-1b-it-GGUF',
     file: 'gemma-3-1b-it-Q4_K_M.gguf',
@@ -94,7 +94,7 @@ const MODELS: readonly HarnessModel[] = [
   }),
   entry({
     id: 'qwen3-1.7b-q4_k_m',
-    name: 'Qwen3 1.7B',
+    name: 'Qwen3 1.7B（GPU 實驗性）',
     architecture: 'qwen3',
     repository: 'unsloth/Qwen3-1.7B-GGUF',
     file: 'Qwen3-1.7B-Q4_K_M.gguf',

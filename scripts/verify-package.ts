@@ -94,6 +94,9 @@ const FORBIDDEN = [
   /kyoto\.html$/i,
   /\.md$/i,
   /\.tsx?$/i,
+  // Debug-only GPU harness (`pnpm zip:debug`); the release package never carries it.
+  /(^|\/)gpu-harness\.html$/,
+  /(^|\/)chunks\/gpu-harness[-.][^/]*\.js$/,
 ];
 
 const REMOTE_CODE_MARKERS = ['cdn.jsdelivr.net'] as const;
@@ -193,6 +196,19 @@ export function remoteCodeProblems(files: Iterable<readonly [string, string]>): 
   return problems;
 }
 
+/** The release wasm must be built without the test-backend-ops harness (`build:wllama`). */
+export function wllamaBuildProblems(buildJson: string): string[] {
+  try {
+    const parsed = JSON.parse(buildJson) as { features?: unknown };
+    const features = Array.isArray(parsed.features) ? parsed.features : [];
+    return features.includes('test-backend-ops')
+      ? ['vendor/wllama is a debug build (test-backend-ops); run pnpm build:wllama']
+      : [];
+  } catch {
+    return ['vendor/wllama/wllama-build.json is not JSON'];
+  }
+}
+
 function findZip(outputDirectory: string, browser: PackageBrowser): string {
   const zips = readdirSync(outputDirectory)
     .filter((name) => name.endsWith('.zip'))
@@ -210,6 +226,7 @@ function inspectZip(zip: string): {
   entries: string[];
   manifest: PackagedManifest;
   texts: Array<readonly [string, string]>;
+  wllamaBuild: string | null;
 } {
   const archive = readZip(readFileSync(zip));
   const entries = [...archive.entries];
@@ -222,6 +239,9 @@ function inspectZip(zip: string): {
     entries,
     manifest: JSON.parse(archive.read('manifest.json').toString('utf8')) as PackagedManifest,
     texts,
+    wllamaBuild: entries.includes('vendor/wllama/wllama-build.json')
+      ? archive.read('vendor/wllama/wllama-build.json').toString('utf8')
+      : null,
   };
 }
 
@@ -242,6 +262,7 @@ function main(): void {
   const problems = [
     ...auditPackage(inspected.entries, inspected.manifest, browser),
     ...remoteCodeProblems(inspected.texts),
+    ...(inspected.wllamaBuild === null ? [] : wllamaBuildProblems(inspected.wllamaBuild)),
   ];
   if (problems.length > 0) {
     console.error(`${zip} failed the package check:`);

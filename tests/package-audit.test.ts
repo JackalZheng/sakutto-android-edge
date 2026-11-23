@@ -7,6 +7,7 @@ import {
   REQUIRED_LOCALES,
   auditPackage,
   remoteCodeProblems,
+  wllamaBuildProblems,
   type PackagedManifest,
 } from '../scripts/verify-package.ts';
 
@@ -85,6 +86,22 @@ describe('auditPackage', () => {
   it('rejects the Wikipedia bench fixture', () => {
     const problems = auditPackage([...COMPLETE, 'scripts/bench/fixtures/kyoto.html'], manifest());
     expect(problems).toContain('unexpected scripts/bench/fixtures/kyoto.html');
+  });
+
+  it('rejects the debug-only GPU harness', () => {
+    const problems = auditPackage(
+      [...COMPLETE, 'gpu-harness.html', 'chunks/gpu-harness-B1x2.js'],
+      manifest(),
+    );
+    expect(problems).toContain('unexpected gpu-harness.html');
+    expect(problems).toContain('unexpected chunks/gpu-harness-B1x2.js');
+  });
+
+  it('rejects a wllama build that links test-backend-ops', () => {
+    expect(wllamaBuildProblems(JSON.stringify({ features: ['webgpu', 'compat'] }))).toEqual([]);
+    expect(
+      wllamaBuildProblems(JSON.stringify({ features: ['webgpu', 'compat', 'test-backend-ops'] })),
+    ).toHaveLength(1);
   });
 
   it('rejects install-time host permissions', () => {

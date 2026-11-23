@@ -19,8 +19,14 @@
   } from '@/shared/messages';
   import type { QualitySample } from '@/shared/quality';
   import { PLAMO_OFFICIAL_LINKS, PROJECT_LINKS } from '@/shared/plamo-license';
-  import type { IdleMinutes, Settings, SettingsPatch, TierPreference } from '@/shared/settings';
-  import { isIdleMinutes, isTierPreference } from '@/shared/settings';
+  import type {
+    AdrenoGpuProfile,
+    IdleMinutes,
+    Settings,
+    SettingsPatch,
+    TierPreference,
+  } from '@/shared/settings';
+  import { isAdrenoGpuProfile, isIdleMinutes, isTierPreference } from '@/shared/settings';
   import { isAndroidEdgeRuntime } from '@/shared/mobile';
   import { webGpuDebugProfileFromUrl } from '@/shared/gpu-diagnostic';
   import type { TargetLanguage } from '@/shared/languages';
@@ -53,7 +59,20 @@
    * its button on Android Edge, or on desktop when the settings page was opened
    * with a WebGPU debug profile (?webgpuDebug=…), the same signal the engine uses.
    */
-  const showGpuHarness = androidEdge || webGpuDebugProfileFromUrl(location.href) !== null;
+  // Release builds do not ship the harness page (it is in `pnpm build:debug` only).
+  const showGpuHarness =
+    __SAKUTTO_DEBUG_BUILD__ && (androidEdge || webGpuDebugProfileFromUrl(location.href) !== null);
+  const gpuProfiles: readonly AdrenoGpuProfile[] = ['optimized', 'compat', 'hybrid'];
+  const gpuProfileHelpKey = {
+    optimized: 'gpuProfileOptimizedHelp',
+    compat: 'gpuProfileCompatHelp',
+    hybrid: 'gpuProfileHybridHelp',
+  } as const;
+  const gpuProfileLabelKey = {
+    optimized: 'gpuProfileOptimized',
+    compat: 'gpuProfileCompat',
+    hybrid: 'gpuProfileHybrid',
+  } as const;
 
   let settings = $state<Settings | null>(null);
   let settingsError = $state<SettingsError>(null);
@@ -185,6 +204,18 @@
     await updateSettings({ tier });
     await requestEngineTier(tier);
     engine = await requestEngineStatus();
+  }
+
+  async function changeGpuProfile(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (!isAdrenoGpuProfile(select.value)) return;
+    const gpuProfile: AdrenoGpuProfile = select.value;
+    await updateSettings({ gpuProfile });
+    // The engine reads the profile when the tier is applied; reload only if WebGPU is in use.
+    if (settings?.tier === 'g') {
+      await requestEngineTier('g');
+      engine = await requestEngineStatus();
+    }
   }
 
   async function changeIdle(event: Event) {
@@ -437,8 +468,25 @@
         </select>
       </label>
       <p class="muted help">{t('tierHelp')}</p>
+      {#if capabilities?.gpuAdreno === true || androidEdge}
+        <p class="muted help">{t('tierAdrenoAutoHelp')}</p>
+      {/if}
       {#if androidEdge && settings.tier === 'g'}
         <p class="error" role="note">{t('tierGpuMobileWarning')}</p>
+      {/if}
+      {#if capabilities?.gpuAdreno === true || androidEdge}
+        <label class="field">
+          <span>{t('gpuProfileLabel')}</span>
+          <select value={settings.gpuProfile} onchange={changeGpuProfile}>
+            {#each gpuProfiles as profile (profile)}
+              <option value={profile}>{t(gpuProfileLabelKey[profile])}</option>
+            {/each}
+          </select>
+        </label>
+        <p class="muted help">{t(gpuProfileHelpKey[settings.gpuProfile])}</p>
+        {#if settings.tier !== 'g'}
+          <p class="muted help">{t('gpuProfileInactive')}</p>
+        {/if}
       {/if}
       <label class="field">
         <span>{t('idleLabel')}</span>
@@ -453,6 +501,14 @@
     <p class="engine-line">{engineLine}</p>
     <h3>{t('diagHeading')}</h3>
     <dl class="diag">
+      <div>
+        <dt>{t('diagGpu')}</dt>
+        <dd>
+          {capabilities?.gpuName ?? t('diagGpuNone')}{capabilities?.gpuAdreno === true
+            ? ` · ${t('diagGpuAdreno')}`
+            : ''}
+        </dd>
+      </div>
       <div>
         <dt>{t('diagBackend')}</dt>
         <dd>

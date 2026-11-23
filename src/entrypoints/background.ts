@@ -27,6 +27,9 @@ import {
   isModelUseRequest,
   isQualitySampleRequest,
   isWebGpuDebugQuery,
+  isEngineSettingsQuery,
+  isGpuOutputBrokenUpdate,
+  type EngineSettingsSnapshot,
   requestEngineProbe,
   type ModelProgressMessage,
 } from '@/shared/messages';
@@ -37,6 +40,7 @@ import {
   type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 import { ensureSettings } from '@/shared/storage';
+import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
 import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
 
 const CAPABILITIES_CACHE_KEY = 'engineCapabilities';
@@ -205,6 +209,27 @@ export default defineBackground(() => {
 
     if (isEngineCapabilitiesRequest(message)) {
       void getEngineCapabilities().then(sendResponse, () => sendResponse(null));
+      return true;
+    }
+
+    if (isEngineSettingsQuery(message)) {
+      void Promise.all([ensureSettings(), loadGpuOutputBroken()]).then(
+        ([settings, gpuOutputBroken]) =>
+          sendResponse({
+            tier: settings.tier,
+            gpuProfile: settings.gpuProfile,
+            gpuOutputBroken,
+          } satisfies EngineSettingsSnapshot),
+        () => sendResponse(null),
+      );
+      return true;
+    }
+
+    if (isGpuOutputBrokenUpdate(message)) {
+      void saveGpuOutputBroken(message.broken).then(
+        () => sendResponse(true),
+        () => sendResponse(false),
+      );
       return true;
     }
 

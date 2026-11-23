@@ -729,13 +729,13 @@
     "message": "절대 없음"
   },
   "tierLabel": {
-    "message": "성능 모드"
+    "message": "연산 백엔드"
   },
   "tierAuto": {
-    "message": "자동"
+    "message": "자동(권장)"
   },
   "tierGpu": {
-    "message": "WebGPU"
+    "message": "GPU (WebGPU)"
   },
   "tierCpu8": {
     "message": "CPU (8개 이상의 스레드)"
@@ -1076,5 +1076,41 @@
   },
   "gpuHarnessHelp": {
     "message": "고정된 문단을 CPU와 WebGPU로 실행해 출력을 비교합니다. 사이드로드 설치본은 모델을 따로 저장하므로, 먼저 여기서 0.8B 모델을 다운로드하세요."
+  },
+  "tierAdrenoAutoHelp": {
+    "message": "Qualcomm Adreno GPU에서는 당분간 \"자동\"이 CPU를 사용합니다. 현재 휴대폰에서는 CPU가 WebGPU보다 빠릅니다(단락당 약 2.5초, WebGPU 약 3.3–3.8초). 아래 Adreno 프로필을 쓰려면 \"GPU (WebGPU)\"를 선택하세요."
+  },
+  "gpuProfileLabel": {
+    "message": "Adreno GPU 프로필"
+  },
+  "gpuProfileOptimized": {
+    "message": "최적화(권장)"
+  },
+  "gpuProfileCompat": {
+    "message": "4차 호환"
+  },
+  "gpuProfileHybrid": {
+    "message": "하이브리드(레이어 절반을 GPU)"
+  },
+  "gpuProfileOptimizedHelp": {
+    "message": "Adreno용으로 조정한 커널: subgroup 미사용, 64폭 행렬-벡터 곱, 64토큰 이하 프롬프트는 배치 행렬-벡터 곱, 병렬 슬롯 2개."
+  },
+  "gpuProfileCompatHelp": {
+    "message": "휴대폰에서 검증된 4차 설정(배치 행렬-벡터 곱 없음). \"최적화\"에서 번역이 이상하면 사용해 보세요."
+  },
+  "gpuProfileHybridHelp": {
+    "message": "모델 레이어의 약 절반은 GPU, 나머지는 CPU에서 실행합니다. 휴대폰에서는 전체 GPU보다 빠른 경우가 많습니다."
+  },
+  "gpuProfileInactive": {
+    "message": "프로필은 연산 백엔드가 \"GPU (WebGPU)\"일 때만 적용됩니다."
+  },
+  "diagGpu": {
+    "message": "감지된 GPU"
+  },
+  "diagGpuNone": {
+    "message": "WebGPU 어댑터 없음"
+  },
+  "diagGpuAdreno": {
+    "message": "Adreno"
   }
 }

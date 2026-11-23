@@ -1,4 +1,5 @@
 import { MOBILE_MAX_BATCH, MOBILE_MAX_THREADS } from '@/shared/mobile';
+import type { AdrenoGpuProfile } from '@/shared/settings';
 
 export type ComputeTier = 'g' | 'c8' | 'c4' | 'c1';
 
@@ -35,7 +36,26 @@ export interface BackendProbe {
    * `crossOriginIsolated`, so this is false there and CPU is one thread.
    */
   sharedMemory?: boolean;
+  /** The WebGPU adapter is a Qualcomm Adreno (vendor `qualcomm` or architecture `adreno-*`). */
+  adreno?: boolean;
 }
+
+/**
+ * The WebGPU setup on an Adreno GPU (settings: "Adreno GPU profile"). ggml-webgpu applies the
+ * Adreno defaults by itself (subgroups off, mat-vec workgroup 64, the new SOFT_MAX, 128-wide row
+ * reductions, 16 kernels per submit, batched mat-vec for 5-64-token prompts); the profile only
+ * picks what differs:
+ * - 'optimized': those defaults;
+ * - 'compat': the round-4 setup measured on the phone (no batched mat-vec, `bmv0`);
+ * - 'hybrid': the defaults with about half the layers on the GPU, the rest on the CPU.
+ */
+export type { AdrenoGpuProfile };
+
+/**
+ * Adreno: two slots of 1024 tokens (n_ctx 2048). The phone sweep showed no speed difference
+ * between n_ctx 1024-4096 and 1-4 slots, so the smaller KV cache wins.
+ */
+const WEBGPU_SLOTS_ADRENO = 2;
 
 export interface DebugLoadOverrides {
   /** false turns flash attention off; unset keeps llama.cpp's auto choice. */
@@ -60,6 +80,13 @@ export interface BackendSelection {
   sharedMemory?: boolean;
   /** Debug harness only: extra llama.cpp load options. Production selections never set it. */
   debugLoad?: DebugLoadOverrides;
+  /**
+   * ggml-webgpu tuning tokens for this load (see `composeWebGpuDebugString`). Set on Adreno
+   * WebGPU selections (an empty list clears an earlier profile); unset leaves them alone.
+   */
+  webgpuTuning?: readonly string[];
+  /** Hybrid: put about half of the model's layers on the GPU (resolved per model at load). */
+  gpuLayersHalf?: boolean;
 }
 
 function clampThreads(requested: number, hardwareConcurrency: number): number {
@@ -214,6 +241,41 @@ export interface RuntimeContext {
   android: boolean;
   /** WebGPU produced broken output on this device before; see `gpu-output.ts`. */
   gpuOutputBroken?: boolean;
+  /** The WebGPU adapter is an Adreno: "auto" stays on the CPU, and `gpuProfile` applies. */
+  adreno?: boolean;
+  /** Settings: the Adreno WebGPU profile (default 'optimized'). */
+  gpuProfile?: AdrenoGpuProfile;
+}
+
+/**
+ * The Adreno WebGPU selection for a profile: two slots, the profile's tuning tokens, and for
+ * 'hybrid' half the layers. Other selections are returned unchanged.
+ */
+export function applyAdrenoProfile(
+  selection: BackendSelection,
+  profile: AdrenoGpuProfile = 'optimized',
+): BackendSelection {
+  if (selection.backend !== 'webgpu') return selection;
+  const slots = Math.min(selection.nParallel, WEBGPU_SLOTS_ADRENO);
+  const next: BackendSelection = {
+    ...selection,
+    nParallel: slots,
+    nCtx: WEBGPU_CONTEXT_PER_SLOT * slots,
+    webgpuTuning: profile === 'compat' ? ['bmv0'] : [],
+  };
+  if (profile === 'hybrid') next.gpuLayersHalf = true;
+  else delete next.gpuLayersHalf;
+  return next;
+}
+
+/** `n_gpu_layers` for a hybrid selection: the output layer plus the last half of the blocks. */
+export function resolveGpuLayers(
+  selection: BackendSelection,
+  modelLayers: number | null,
+): BackendSelection {
+  if (selection.backend !== 'webgpu' || selection.gpuLayersHalf !== true) return selection;
+  if (modelLayers === null || modelLayers < 2) return selection;
+  return { ...selection, nGpuLayers: Math.floor(modelLayers / 2) + 1 };
 }
 
 /**
@@ -223,17 +285,32 @@ export interface RuntimeContext {
  * garbage on an Adreno 730 (POCO F5 Pro) while the CPU path translated correctly, and a
  * phone cannot tell a wrong GPU from a right one before it has translated something. WebGPU
  * stays available as an explicit choice, unless it already produced broken output here.
+ *
+ * On an Adreno GPU (phone or Windows on Snapdragon), "auto" also stays on the CPU: on the POCO F5
+ * Pro the fixed WebGPU path translated correctly but the CPU was still faster (PLaMo 3 0.8B,
+ * total 2.52 s CPU, 3.77 s full GPU, 3.28 s hybrid). An explicit WebGPU choice runs the Adreno
+ * profile from the settings (`applyAdrenoProfile`).
  */
 export function resolveSelection(
   preference: TierPreference,
   probe: BackendProbe,
   context: RuntimeContext,
 ): BackendSelection {
-  if (!context.android) return selectionForTier(preference, probe);
+  const adreno = context.adreno === true || probe.adreno === true;
+  const adrenoProfile = (selection: BackendSelection): BackendSelection =>
+    adreno ? applyAdrenoProfile(selection, context.gpuProfile) : selection;
+  if (!context.android) {
+    // Auto stays on the CPU on Adreno (faster on the phones measured so far), and so does an
+    // explicit GPU choice once its output came out garbled (cleared by choosing GPU again).
+    if (adreno && (preference === 'auto' || (preference === 'g' && context.gpuOutputBroken))) {
+      return selectionForTier('auto', { ...probe, webgpu: false });
+    }
+    return adrenoProfile(selectionForTier(preference, probe));
+  }
   const cpuOnly = preference === 'auto' || (preference === 'g' && context.gpuOutputBroken === true);
   const selection = cpuOnly
     ? selectionForTier('auto', { ...probe, webgpu: false })
-    : selectionForTier(preference, probe);
+    : adrenoProfile(selectionForTier(preference, probe));
   return applyMobileLimits(selection);
 }
 

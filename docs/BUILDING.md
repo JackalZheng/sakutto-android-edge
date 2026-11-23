@@ -21,6 +21,11 @@ pnpm build:wllama
 pnpm verify:wllama
 ```
 
+`pnpm build:wllama` is the release build. `pnpm build:wllama:debug` (`SAKUTTO_WLLAMA_DEBUG=1`)
+also links the `test-backend-ops` harness (`features` gains `test-backend-ops`); pair it with
+`pnpm build:debug` (`SAKUTTO_DEBUG_BUILD=1`), which keeps the GPU harness page. `pnpm zip:edge`
+rejects a package that carries either.
+
 The script runs these steps:
 
 1. Fetches `d275dac` into `vendor/wllama/.checkout` with a depth-1 fetch (falling back to the full

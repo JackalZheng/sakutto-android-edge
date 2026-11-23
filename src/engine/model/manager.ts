@@ -305,7 +305,8 @@ export class ModelManager {
       loaded.selection.nThreads === selection.nThreads &&
       loaded.selection.nGpuLayers === selection.nGpuLayers &&
       loaded.selection.nParallel === selection.nParallel &&
-      loaded.selection.nCtx === selection.nCtx
+      loaded.selection.nCtx === selection.nCtx &&
+      (loaded.selection.webgpuTuning ?? []).join('+') === (selection.webgpuTuning ?? []).join('+')
     );
   }
 

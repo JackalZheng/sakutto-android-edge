@@ -113,7 +113,7 @@
     "message": "診斷"
   },
   "diagBackend": {
-    "message": "主動的後端"
+    "message": "目前使用的後端"
   },
   "diagThreads": {
     "message": "討論串"
@@ -729,19 +729,19 @@
     "message": "從不"
   },
   "tierLabel": {
-    "message": "效能模式"
+    "message": "運算後端"
   },
   "tierAuto": {
-    "message": "自動"
+    "message": "自動（建議）"
   },
   "tierGpu": {
-    "message": "WebGPU"
+    "message": "GPU (WebGPU)"
   },
   "tierCpu8": {
-    "message": "CPU (8 個或以上執行緒)"
+    "message": "CPU（8 個或以上執行緒）"
   },
   "tierCpu4": {
-    "message": "CPU (4 執行緒)"
+    "message": "CPU（4 個執行緒）"
   },
   "tierHelp": {
     "message": "自動選擇適合此電腦的模式。"
@@ -1054,7 +1054,7 @@
     "message": "Firefox extension pages cannot use wasm threads, so CPU translation uses one thread."
   },
   "tierCpu1": {
-    "message": "CPU (1 thread)"
+    "message": "CPU（1 個執行緒）"
   },
   "tierGpuMobileWarning": {
     "message": "在手機 GPU 上使用 WebGPU 可能產生錯誤的翻譯。如果出現亂碼，Sakutto 會自動切回 CPU。"
@@ -1076,5 +1076,41 @@
   },
   "gpuHarnessHelp": {
     "message": "用一段固定文字分別跑 CPU 與 WebGPU，再比對輸出。側載安裝的模型是另外存放的，請先在這裡下載 0.8B 模型。"
+  },
+  "tierAdrenoAutoHelp": {
+    "message": "在 Qualcomm Adreno GPU 上，「自動」目前會使用 CPU：在現有手機上 CPU 比 WebGPU 更快（每段約 2.5 秒，WebGPU 約 3.3–3.8 秒）。若要使用下方的 Adreno 設定檔，請選擇「GPU (WebGPU)」。"
+  },
+  "gpuProfileLabel": {
+    "message": "Adreno GPU 設定檔"
+  },
+  "gpuProfileOptimized": {
+    "message": "最佳化（建議）"
+  },
+  "gpuProfileCompat": {
+    "message": "第 4 輪相容"
+  },
+  "gpuProfileHybrid": {
+    "message": "混合（一半層數在 GPU）"
+  },
+  "gpuProfileOptimizedHelp": {
+    "message": "為 Adreno 調校的核心：不使用 subgroup、64 寬度矩陣向量乘法、64 個 token 以內的提示詞使用批次矩陣向量乘法、2 個平行槽。"
+  },
+  "gpuProfileCompatHelp": {
+    "message": "已在手機上驗證的第 4 輪設定，不含批次矩陣向量乘法。若「最佳化」出現錯誤譯文，請改用此項。"
+  },
+  "gpuProfileHybridHelp": {
+    "message": "約一半的模型層在 GPU 上執行，其餘在 CPU。在手機上常比全部使用 GPU 更快。"
+  },
+  "gpuProfileInactive": {
+    "message": "設定檔只在運算後端為「GPU (WebGPU)」時生效。"
+  },
+  "diagGpu": {
+    "message": "偵測到的 GPU"
+  },
+  "diagGpuNone": {
+    "message": "沒有 WebGPU 介面卡"
+  },
+  "diagGpuAdreno": {
+    "message": "Adreno"
   }
 }

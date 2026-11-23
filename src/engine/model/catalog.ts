@@ -4,6 +4,8 @@ export interface ModelEntry {
   id: ModelId;
   params: '0.8B' | '2B';
   quantization: 'Q4_K_M';
+  /** Transformer blocks (`plamo3.block_count`); the hybrid GPU profile offloads half. */
+  layers: number;
   repository: string;
   file: string;
   commit: string;
@@ -22,6 +24,7 @@ const ZERO_EIGHT: ModelEntry = {
   id: 'plamo-3-translate-0.8b-q4_k_m',
   params: '0.8B',
   quantization: 'Q4_K_M',
+  layers: 16,
   repository: 'pfnet/plamo-3-translate-0.8b-GGUF',
   file: 'plamo-3-translate-0.8b-Q4_K_M.gguf',
   commit: 'dbeb0856cb0b004b484f190bb71dd65876297013',
@@ -38,6 +41,7 @@ const TWO: ModelEntry = {
   id: 'plamo-3-translate-2b-q4_k_m',
   params: '2B',
   quantization: 'Q4_K_M',
+  layers: 24,
   repository: 'pfnet/plamo-3-translate-2b-GGUF',
   file: 'plamo-3-translate-2b-Q4_K_M.gguf',
   commit: '232fbd7916519edecddfdae0beae7e76fe70453f',

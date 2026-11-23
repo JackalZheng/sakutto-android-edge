@@ -729,13 +729,13 @@
     "message": "解放しません"
   },
   "tierLabel": {
-    "message": "動作モード"
+    "message": "計算バックエンド"
   },
   "tierAuto": {
-    "message": "自動"
+    "message": "自動（推奨）"
   },
   "tierGpu": {
-    "message": "WebGPU"
+    "message": "GPU (WebGPU)"
   },
   "tierCpu8": {
     "message": "CPU（8スレッド以上）"
@@ -1076,5 +1076,41 @@
   },
   "gpuHarnessHelp": {
     "message": "固定の段落を CPU と WebGPU で実行し、出力を比較します。サイドロードした版はモデルを別に保存するため、まずここで 0.8B モデルをダウンロードしてください。"
+  },
+  "tierAdrenoAutoHelp": {
+    "message": "Qualcomm Adreno GPU では、「自動」は当面 CPU を使います。現在のスマートフォンでは CPU のほうが WebGPU より速いためです（1 段落あたり約 2.5 秒、WebGPU は約 3.3〜3.8 秒）。下の Adreno プロファイルを使うには「GPU (WebGPU)」を選んでください。"
+  },
+  "gpuProfileLabel": {
+    "message": "Adreno GPU プロファイル"
+  },
+  "gpuProfileOptimized": {
+    "message": "最適化（推奨）"
+  },
+  "gpuProfileCompat": {
+    "message": "ラウンド 4 互換"
+  },
+  "gpuProfileHybrid": {
+    "message": "ハイブリッド（半分の層を GPU）"
+  },
+  "gpuProfileOptimizedHelp": {
+    "message": "Adreno 向けに調整したカーネル：subgroup なし、幅 64 の行列ベクトル積、64 トークン以下のプロンプトはバッチ行列ベクトル積、並列スロット 2。"
+  },
+  "gpuProfileCompatHelp": {
+    "message": "スマートフォンで検証済みのラウンド 4 設定（バッチ行列ベクトル積なし）。「最適化」で訳文がおかしい場合に試してください。"
+  },
+  "gpuProfileHybridHelp": {
+    "message": "モデルの層の約半分を GPU、残りを CPU で実行します。スマートフォンではすべて GPU より速いことがあります。"
+  },
+  "gpuProfileInactive": {
+    "message": "プロファイルは計算バックエンドが「GPU (WebGPU)」のときだけ使われます。"
+  },
+  "diagGpu": {
+    "message": "検出された GPU"
+  },
+  "diagGpuNone": {
+    "message": "WebGPU アダプターなし"
+  },
+  "diagGpuAdreno": {
+    "message": "Adreno"
   }
 }

@@ -17,6 +17,10 @@ The extension is free and open source (MIT). It has no ads and no paid features.
 
 Edge for Android port: see [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) — PLaMo-only, 0.8B-only, no keyboard shortcuts, install via Edge Canary / Edge Add-ons.
 
+**v1.3.0 (port):** Settings → Compute backend offers Automatic (recommended), GPU (WebGPU) and CPU, and shows the detected GPU. On Qualcomm Adreno, Automatic uses the CPU (faster on current phones) and an Adreno GPU profile (Optimized / Round-4 compatible / Hybrid) tunes WebGPU when you pick it. Qwen3/Gemma on GPU remain experimental (debug harness only). See [CHANGELOG.md](CHANGELOG.md).
+
+> **v1.3.0（移植版）：** 設定 →「運算後端」可選「自動（建議）」、「GPU (WebGPU)」、「CPU」，並顯示偵測到的 GPU。在 Qualcomm Adreno 上，「自動」目前使用 CPU（在現有手機上較快）；選擇 GPU 時可用「Adreno GPU 設定檔」（最佳化／第 4 輪相容／混合）調整 WebGPU。Qwen3／Gemma 的 GPU 執行仍屬實驗性（僅除錯工具）。
+
 ## Install
 
 Install Sakutto from the Chrome Web Store:

@@ -54,7 +54,6 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
   ],
   ['cpp/wllama-context.h', 'sakutto.tensor_buft_overrides'],
   ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-plamo3'],
-  ['scripts/docker-compose.yml', 'CMAKE_EXTRA_FLAGS="-DWLLAMA_TEST_BACKEND=ON"'],
   ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'bool disable_mat_vec = false;'],
   [
     'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
@@ -281,6 +280,14 @@ async function syncPublicAssets(): Promise<void> {
   log(`copied the assets to ${PUBLIC_DIR}`);
 }
 
+/**
+ * SAKUTTO_WLLAMA_DEBUG=1 (`pnpm build:wllama:debug`): also link test-backend-ops (the GPU
+ * harness op diagnostics). Release builds leave it out.
+ */
+function wllamaDebugBuild(): boolean {
+  return process.env.SAKUTTO_WLLAMA_DEBUG === '1';
+}
+
 async function main(): Promise<void> {
   const checkOnly = process.argv.includes('--check');
   log(`pinned wllama @${WLLAMA_COMMIT} with llama.cpp @${LLAMA_CPP_COMMIT}`);
@@ -301,12 +308,13 @@ async function main(): Promise<void> {
   const compat = process.env.SKIP_COMPAT !== '1';
   const { tsupVersion } = await buildLibrary();
   const tag = emsdkTag(process.arch);
-  await buildWasm(CHECKOUT_DIR, process.arch, compat);
+  await buildWasm(CHECKOUT_DIR, process.arch, compat, wllamaDebugBuild());
 
   const packageLockSha256 = sha256(await readFile(join(CHECKOUT_DIR, 'package-lock.json')));
   const inputs: BuildInputs = {
     emscriptenTag: tag,
     compat,
+    testBackendOps: wllamaDebugBuild(),
     tsupVersion,
     packageLockSha256,
   };

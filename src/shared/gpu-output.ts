@@ -9,6 +9,8 @@ import { browser } from 'wxt/browser';
 export const GPU_OUTPUT_BROKEN_KEY = 'webgpuOutputBroken';
 
 export async function loadGpuOutputBroken(): Promise<boolean> {
+  // The offscreen document has no storage API: the host reads the flag from the
+  // background's settings snapshot instead (`requestEngineSettings`).
   if (!browser.storage?.local) return false;
   try {
     const stored = await browser.storage.local.get(GPU_OUTPUT_BROKEN_KEY);
@@ -19,7 +21,15 @@ export async function loadGpuOutputBroken(): Promise<boolean> {
 }
 
 export async function saveGpuOutputBroken(broken: boolean): Promise<void> {
-  if (!browser.storage?.local) return;
+  if (!browser.storage?.local) {
+    // Offscreen document: the background owns storage.
+    try {
+      await browser.runtime.sendMessage({ type: 'engine:gpu-output-broken', broken });
+    } catch {
+      // Best effort, as below.
+    }
+    return;
+  }
   try {
     if (broken) await browser.storage.local.set({ [GPU_OUTPUT_BROKEN_KEY]: true });
     else await browser.storage.local.remove(GPU_OUTPUT_BROKEN_KEY);

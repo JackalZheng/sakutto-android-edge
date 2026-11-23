@@ -2,6 +2,30 @@
 
 Release sections are added by `pnpm release`. Each section lists commit subjects since the previous `vX.Y.Z` tag.
 
+## [1.3.0] - 2026-11-23
+
+### Features
+
+- Settings: the performance mode is now **Compute backend**, with Automatic (recommended), GPU (WebGPU) and CPU. The diagnostics list shows the detected GPU (vendor, architecture and adapter name) next to the active backend.
+- Settings: on Qualcomm Adreno GPUs (Edge for Android, Windows on Snapdragon) a new **Adreno GPU profile** selector picks how WebGPU runs: Optimized (recommended; batched mat-vec for prompts up to 64 tokens), Round-4 compatible (the phone-tested settings without batched mat-vec), or Hybrid (about half the layers on the GPU, the rest on the CPU). Each option has a short description. The profile applies only when the compute backend is GPU (WebGPU). (#16)
+
+### Improvements
+
+- WebGPU on Adreno now runs a tuned kernel set by default: no subgroups, 64-wide mat-vec, a SOFT_MAX shader without the workgroup cache, a 128-wide row reduction, batched mat-vec for 5–64 token prompts, and 16 kernels per submit. An explicit GPU choice on Adreno uses 2 parallel slots and n_ctx 2048; flash attention stays off there. Other GPUs keep the upstream defaults. (#14, #16)
+- On Adreno, Automatic picks the CPU for now. On a POCO F5 Pro (Adreno 7xx, PLaMo 3 0.8B) a paragraph took about 2.52 s on the CPU, 3.77 s on WebGPU with the round-4 kernels and 3.28 s in the hybrid setup. GPU (WebGPU) stays selectable.
+- If WebGPU fails to start, loses the device, or produces garbled text, Sakutto moves to the CPU and remembers it until you choose GPU (WebGPU) again in the settings.
+- The release package no longer ships the GPU test harness page or the `test-backend-ops` build of the runtime (about 1.2 MB smaller per wasm). `pnpm build:wllama:debug` and `pnpm build:debug` still build them for diagnostics.
+
+### Bug Fixes
+
+- Chrome and Edge: the engine (offscreen document) now reads the stored compute backend, Adreno profile and broken-GPU flag through the background. Before, the offscreen document had no storage access, so a saved CPU/GPU choice only took effect after it was changed again in the settings.
+- WebGPU on Adreno no longer produces wrong text from the Q6_K mat-vec and SOFT_MAX kernels. (#16)
+
+### Known issues
+
+- Qwen3 and Gemma 3 (GPU harness models only, not shipped in the translator) still drift from the CPU output on WebGPU for some prompts (Qwen3 on short prompts, Gemma on long ones). They are labelled “GPU experimental” in the debug harness. PLaMo 3 matches the CPU.
+- GPU speed on Adreno has only been measured with the round-4 kernels; the round-5 batched mat-vec has been validated for correctness on the build machine, not timed on a phone yet.
+
 ## [1.2.1] - 2026-11-16
 
 ### Bug Fixes

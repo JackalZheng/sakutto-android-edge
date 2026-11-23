@@ -151,6 +151,7 @@ export function makeEntry(overrides: Partial<ModelEntry> = {}): ModelEntry {
     id: 'plamo-3-translate-0.8b-q4_k_m',
     params: '0.8B',
     quantization: 'Q4_K_M',
+    layers: 16,
     repository: 'pfnet/example-GGUF',
     file: 'model.gguf',
     commit: 'abc123',

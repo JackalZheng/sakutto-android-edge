@@ -1,5 +1,5 @@
 import { abortError, EngineError, GARBLED_OUTPUT_DETAIL, isAbortError } from '../errors';
-import { gpuFailureExcerpt } from '@/shared/gpu-diagnostic';
+import { gpuFailureExcerpt, setWebGpuDebugTuning } from '@/shared/gpu-diagnostic';
 import { TRANSLATION_STOP_TOKENS } from '../prompt/pfml3';
 import { createWllama } from '../wllama';
 import type { WllamaCompletionTimings, WllamaConfig } from '../wllama/module';
@@ -214,6 +214,11 @@ function loadLog(): { lines: string[]; logger: Required<WllamaConfig>['logger'];
 }
 
 export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
+  // Adreno WebGPU profile (see `applyAdrenoProfile`): the tokens reach ggml-webgpu through the
+  // worker's run options, so they have to be in place before the worker starts.
+  if (selection.webgpuTuning !== undefined) {
+    setWebGpuDebugTuning(selection.backend === 'webgpu' ? selection.webgpuTuning : []);
+  }
   const log = loadLog();
   const wllama = await createWllama({ suppressNativeLog: false, logger: log.logger });
 

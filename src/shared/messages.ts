@@ -11,8 +11,8 @@ import type { EngineKind } from '@/engine/types';
 import { isSiteHost, type SiteAuto } from '@/dom/sites';
 import type { QualitySample } from './quality';
 import { isQualitySample } from './quality';
-import type { DisplayMode, TierPreference } from './settings';
-import { isTierPreference } from './settings';
+import type { AdrenoGpuProfile, DisplayMode, TierPreference } from './settings';
+import { isAdrenoGpuProfile, isTierPreference } from './settings';
 import { WEBGPU_DEBUG_MESSAGE_TYPE } from './gpu-diagnostic';
 import { isRecord } from './object';
 
@@ -164,6 +164,58 @@ export interface ModelInspectRequest {
 
 export interface CacheClearRequest {
   type: 'cache:clear';
+}
+
+/**
+ * The offscreen document only has `chrome.runtime`, so the engine host asks the background
+ * for the stored engine settings (tier, Adreno profile, broken-GPU flag) when it starts.
+ */
+export interface EngineSettingsQuery {
+  type: 'engine:settings';
+}
+
+export interface EngineSettingsSnapshot {
+  tier: TierPreference;
+  gpuProfile: AdrenoGpuProfile;
+  gpuOutputBroken: boolean;
+}
+
+/** Offscreen → background: persist (or clear) the broken-GPU-output flag. */
+export interface GpuOutputBrokenUpdate {
+  type: 'engine:gpu-output-broken';
+  broken: boolean;
+}
+
+export function isEngineSettingsQuery(value: unknown): value is EngineSettingsQuery {
+  return isRecord(value) && value.type === 'engine:settings';
+}
+
+export function isEngineSettingsSnapshot(value: unknown): value is EngineSettingsSnapshot {
+  return (
+    isRecord(value) &&
+    isTierPreference(value.tier) &&
+    isAdrenoGpuProfile(value.gpuProfile) &&
+    typeof value.gpuOutputBroken === 'boolean'
+  );
+}
+
+export function isGpuOutputBrokenUpdate(value: unknown): value is GpuOutputBrokenUpdate {
+  return (
+    isRecord(value) &&
+    value.type === 'engine:gpu-output-broken' &&
+    typeof value.broken === 'boolean'
+  );
+}
+
+export async function requestEngineSettings(): Promise<EngineSettingsSnapshot | null> {
+  try {
+    const response: unknown = await browser.runtime.sendMessage({
+      type: 'engine:settings',
+    } satisfies EngineSettingsQuery);
+    return isEngineSettingsSnapshot(response) ? response : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface EngineTierRequest {

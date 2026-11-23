@@ -61,7 +61,12 @@ async function assertDocker(): Promise<void> {
   }
 }
 
-export async function buildWasm(checkoutDir: string, arch: string, compat: boolean): Promise<void> {
+export async function buildWasm(
+  checkoutDir: string,
+  arch: string,
+  compat: boolean,
+  testBackendOps = false,
+): Promise<void> {
   await assertDocker();
 
   const tag = emsdkTag(arch);
@@ -69,7 +74,8 @@ export async function buildWasm(checkoutDir: string, arch: string, compat: boole
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     EMSDK_IMAGE_TAG: tag,
-    WLLAMA_TEST_BACKEND: '',
+    // Debug builds only: link test-backend-ops for the GPU harness op diagnostics.
+    WLLAMA_TEST_BACKEND: testBackendOps ? '1' : '',
     SKIP_COMPAT: compat ? '' : '1',
     D_UID: String(process.getuid?.() ?? 0),
     D_GID: String(process.getgid?.() ?? 0),

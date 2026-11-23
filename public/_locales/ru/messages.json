@@ -735,7 +735,7 @@
     "message": "Автоматический"
   },
   "tierGpu": {
-    "message": "WebGPU"
+    "message": "GPU (WebGPU)"
   },
   "tierCpu8": {
     "message": "CPU (8 или более потоков)"
@@ -1076,5 +1076,41 @@
   },
   "gpuHarnessHelp": {
     "message": "Прогоняет фиксированный абзац через CPU и WebGPU и сравнивает результаты. При установке из файла модель хранится отдельно, поэтому сначала скачайте здесь модель 0.8B."
+  },
+  "tierAdrenoAutoHelp": {
+    "message": "On Qualcomm Adreno GPUs, Automatic uses the CPU for now: it is faster than WebGPU on current phones (about 2.5 s vs 3.3–3.8 s per paragraph). Choose GPU (WebGPU) to use the Adreno profile below."
+  },
+  "gpuProfileLabel": {
+    "message": "Adreno GPU profile"
+  },
+  "gpuProfileOptimized": {
+    "message": "Optimized (recommended)"
+  },
+  "gpuProfileCompat": {
+    "message": "Round-4 compatible"
+  },
+  "gpuProfileHybrid": {
+    "message": "Hybrid (half the layers on the GPU)"
+  },
+  "gpuProfileOptimizedHelp": {
+    "message": "Tuned kernels for Adreno: no subgroups, 64-wide mat-vec, batched mat-vec for prompts up to 64 tokens, 2 parallel slots."
+  },
+  "gpuProfileCompatHelp": {
+    "message": "The phone-tested round-4 settings without batched mat-vec. Try this if Optimized gives wrong text."
+  },
+  "gpuProfileHybridHelp": {
+    "message": "Runs about half of the model layers on the GPU and the rest on the CPU. Often faster than full GPU on phones."
+  },
+  "gpuProfileInactive": {
+    "message": "The profile applies only when the compute backend is GPU (WebGPU)."
+  },
+  "diagGpu": {
+    "message": "Detected GPU"
+  },
+  "diagGpuNone": {
+    "message": "No WebGPU adapter"
+  },
+  "diagGpuAdreno": {
+    "message": "Adreno"
   }
 }

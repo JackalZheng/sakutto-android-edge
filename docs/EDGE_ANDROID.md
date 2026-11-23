@@ -85,6 +85,32 @@ python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json'))
    text page. Keyboard shortcuts and the right-click menu will not
    be there — that is expected on Android.
 
+## v1.3.0: compute backend and the Adreno GPU profile
+
+Settings → **Compute backend**: Automatic (recommended) / GPU (WebGPU) /
+CPU. The diagnostics list shows the detected GPU and the active backend.
+
+- **Automatic on Adreno = CPU.** Measured on a POCO F5 Pro (PLaMo 3 0.8B,
+  one paragraph): CPU 2.52 s, WebGPU round-4 kernels 3.77 s, hybrid
+  (half the layers on the GPU) 3.28 s. Re-evaluate when the round-5
+  kernels have phone numbers.
+- **GPU (WebGPU) on Adreno** runs the Adreno defaults compiled into
+  ggml-webgpu (no subgroups, mat-vec WG 64, SOFT_MAX without cache,
+  row-reduction WG 128, batched mat-vec for 5–64 token prompts, 16 kernels
+  per submit) with 2 parallel slots and n_ctx 2048. Flash attention is
+  unavailable without subgroups, so it stays off.
+- **Adreno GPU profile** (shown on Adreno only):
+  - Optimized (default): the above.
+  - Round-4 compatible: the same without batched mat-vec (`bmv0`).
+  - Hybrid: offloads the output layer plus the last half of the blocks
+    (0.8B: 9 of 16+1, 2B: 13 of 24+1); the rest runs on the CPU.
+- **Fallback.** WebGPU init failure or device loss steps down to the CPU;
+  garbled output (the Android output guard) sets a stored flag so later
+  sessions stay on the CPU until GPU (WebGPU) is chosen again.
+- **Release vs debug build.** `pnpm build:wllama` + `pnpm build:edge` /
+  `pnpm zip:edge` leave out the GPU harness page and `test-backend-ops`;
+  `pnpm build:wllama:debug` + `pnpm build:debug` include them.
+
 ## Known risks (verify on a real device, do not assume)
 
 - **WebGPU on Android is device-dependent.** Chrome Android 121+

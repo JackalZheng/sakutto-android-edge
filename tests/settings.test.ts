@@ -9,6 +9,7 @@ import {
   PLAMO_NOTICE_VERSION,
   SETTINGS_SCHEMA_VERSION,
   createDefaultSettings,
+  isAdrenoGpuProfile,
   isTierPreference,
   needsLicenseReconsent,
   normalizeSettings,
@@ -33,6 +34,7 @@ function stored(overrides: Partial<Settings> = {}): Settings {
     composeInstantReplace: false,
     composePlacement: 'above',
     fabEverywhere: true,
+    gpuProfile: 'optimized',
     ...overrides,
   };
 }
@@ -399,5 +401,14 @@ describe('license notice re-consent', () => {
     expect(settings.consent?.acceptedAt).toBe(acceptedAt);
     expect(settings.consent?.ageNoticeShown).toBe(true);
     expect(settings.consent).not.toHaveProperty('guardian');
+  });
+});
+
+describe('Adreno GPU profile', () => {
+  it('defaults to the optimized profile and keeps a valid choice', () => {
+    expect(DEFAULT_SETTINGS.gpuProfile).toBe('optimized');
+    expect(isAdrenoGpuProfile('compat')).toBe(true);
+    expect(isAdrenoGpuProfile('hybrid')).toBe(true);
+    expect(isAdrenoGpuProfile('turbo')).toBe(false);
   });
 });

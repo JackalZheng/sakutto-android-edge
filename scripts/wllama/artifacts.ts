@@ -58,6 +58,8 @@ export interface FileRecord {
 export interface BuildInputs {
   emscriptenTag: string;
   compat: boolean;
+  /** Debug build: test-backend-ops linked into the wasm (GPU harness only). */
+  testBackendOps?: boolean;
   tsupVersion: string;
   packageLockSha256: string;
 }
@@ -241,9 +243,13 @@ export async function emitArtifacts(
       tsup: inputs.tsupVersion,
       packageLockSha256: inputs.packageLockSha256,
     },
-    features: inputs.compat
-      ? ['webgpu', 'jspi', 'memory64', 'compat']
-      : ['webgpu', 'jspi', 'memory64'],
+    features: [
+      'webgpu',
+      'jspi',
+      'memory64',
+      ...(inputs.compat ? ['compat'] : []),
+      ...(inputs.testBackendOps === true ? ['test-backend-ops'] : []),
+    ],
     compat: inputs.compat,
     patches,
     files,

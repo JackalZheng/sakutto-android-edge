@@ -9,6 +9,7 @@ import { loadSettings } from '@/shared/storage';
 import type { TierPreference } from '@/shared/settings';
 import { isAndroidEdgeRuntime } from '@/shared/mobile';
 import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
+import { requestEngineSettings, type EngineSettingsSnapshot } from '@/shared/messages';
 import { looksLikeBrokenTranslation } from '../text/garbage';
 import { MemoryTranslationCacheStore, IndexedDbTranslationCacheStore } from '../cache/store';
 import { CachingEngine } from '../cache/caching-engine';
@@ -21,7 +22,9 @@ import {
   cpuFallback,
   isGpuLoadFallback,
   lighterSelection,
+  resolveGpuLayers,
   resolveSelection,
+  type RuntimeContext,
   selectionAfterGpuLoss,
   type BackendSelection,
 } from '../in-browser/backend';
@@ -229,12 +232,20 @@ export class EngineHost {
       hardwareConcurrency: capabilities.hardwareConcurrency,
       fastBatches: capabilities.gpuFastBatches === true,
       sharedMemory: capabilities.crossOriginIsolated,
+      adreno: capabilities.gpuAdreno === true,
     };
-    const stored = browser.storage?.local ? await loadSettings().catch(() => null) : null;
+    const stored = await loadEngineSettings();
     // A phone's small cores and shared memory budget cannot use the desktop thread and
     // batch sizes, and "auto" stays off WebGPU there; see `resolveSelection`.
     const android = isAndroidEdgeRuntime();
-    const runtime = { android, gpuOutputBroken: android && (await loadGpuOutputBroken()) };
+    // Adreno (phone or Windows on Snapdragon): "auto" stays on the CPU and an explicit WebGPU
+    // choice runs the settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
+    const runtime: RuntimeContext = {
+      android,
+      gpuOutputBroken: (android || probe.adreno) && stored?.gpuOutputBroken === true,
+      adreno: probe.adreno,
+      gpuProfile: stored?.gpuProfile ?? 'optimized',
+    };
     const selection = resolveSelection(stored?.tier ?? 'auto', probe, runtime);
     const selectionState = { current: selection };
     const store = await OpfsModelFileStore.open();
@@ -245,7 +256,11 @@ export class EngineHost {
       const result = await loadWithFallback(
         async (selection) => {
           try {
-            return await manager.ensureLoaded(this.activeModelId, selection, { signal });
+            return await manager.ensureLoaded(
+              this.activeModelId,
+              resolveGpuLayers(selection, getModel(this.activeModelId).layers),
+              { signal },
+            );
           } catch (error) {
             this.noteGpuError(error);
             throw error;
@@ -295,7 +310,7 @@ export class EngineHost {
     const lazy = new LazyInBrowserEngine({
       loadRuntime: load,
       onGpuLost,
-      ...(android
+      ...(android || probe.adreno
         ? { outputGuard: { isBroken: looksLikeBrokenTranslation, onBroken: onBrokenOutput } }
         : {}),
     });
@@ -330,6 +345,9 @@ export class EngineHost {
           runtime.gpuOutputBroken = false;
           await saveGpuOutputBroken(false);
         }
+        // The Adreno profile is saved before the options page asks for the tier again.
+        const latest = await loadEngineSettings();
+        if (latest) runtime.gpuProfile = latest.gpuProfile;
         selectionState.current = resolveSelection(tier, probe, runtime);
         this.gpuFallback = false;
         this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), null);
@@ -875,5 +893,23 @@ export class EngineHost {
     } catch {
       // The other end is gone; pending requests are settled by the disconnect handler.
     }
+  }
+}
+
+/**
+ * Stored engine settings. Chrome's offscreen document has no `chrome.storage`, so there the
+ * background answers instead; an extension page host (Firefox frame, tests) reads storage.
+ */
+async function loadEngineSettings(): Promise<EngineSettingsSnapshot | null> {
+  if (!browser.storage?.local) return requestEngineSettings();
+  try {
+    const settings = await loadSettings();
+    return {
+      tier: settings.tier,
+      gpuProfile: settings.gpuProfile,
+      gpuOutputBroken: await loadGpuOutputBroken(),
+    };
+  } catch {
+    return null;
   }
 }

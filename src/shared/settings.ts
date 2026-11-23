@@ -35,6 +35,13 @@ export const PLAMO_NOTICE_VERSION = '2026-11-06';
 export type Formality = 'polite' | 'plain';
 export type DisplayMode = 'replace' | 'bilingual';
 export type TierPreference = 'auto' | 'g' | 'c8' | 'c4' | 'c1';
+
+/** See `applyAdrenoProfile` (engine/in-browser/backend.ts). */
+export type AdrenoGpuProfile = 'optimized' | 'compat' | 'hybrid';
+
+export function isAdrenoGpuProfile(value: unknown): value is AdrenoGpuProfile {
+  return value === 'optimized' || value === 'compat' || value === 'hybrid';
+}
 export type TranslationPace = 'fast' | 'quality';
 export type IdleMinutes = 0 | 1 | 5 | 15;
 export const COMPOSE_PLACEMENTS = ['above', 'below', 'corner', 'free'] as const;
@@ -67,6 +74,8 @@ export interface Settings {
   glossary: GlossaryEntry[];
   idleMinutes: IdleMinutes;
   tier: TierPreference;
+  /** WebGPU setup on an Adreno GPU; only used when WebGPU is chosen there. */
+  gpuProfile: AdrenoGpuProfile;
   pace: TranslationPace;
   /** False hides the あA button on message boxes. The shortcut and context menu stay. */
   composeIcon: boolean;
@@ -104,6 +113,7 @@ export type SettingsPatch = Partial<
     | 'glossary'
     | 'idleMinutes'
     | 'tier'
+    | 'gpuProfile'
     | 'pace'
     | 'composeIcon'
     | 'composeTargetLanguage'
@@ -125,6 +135,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   glossary: [],
   idleMinutes: 5,
   tier: 'auto',
+  gpuProfile: 'optimized',
   pace: 'quality',
   composeIcon: true,
   shortcutsEnabled: defaultShortcutEnabled(),
@@ -171,6 +182,7 @@ export function normalizeSettings(value: unknown, uiLanguage: string): Settings 
     glossary: normalizeGlossary(value.glossary),
     idleMinutes: isIdleMinutes(value.idleMinutes) ? value.idleMinutes : defaults.idleMinutes,
     tier: isTierPreference(value.tier) ? value.tier : defaults.tier,
+    gpuProfile: isAdrenoGpuProfile(value.gpuProfile) ? value.gpuProfile : defaults.gpuProfile,
     pace: isTranslationPace(value.pace) ? value.pace : defaults.pace,
     composeIcon: value.composeIcon !== false,
     shortcutsEnabled: normalizeShortcutEnabled(value.shortcutsEnabled),
