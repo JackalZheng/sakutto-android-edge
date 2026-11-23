@@ -80,6 +80,9 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'ggml_webgpu_sakutto_softmax_nocache',
   ],
   ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/soft_max.wgsl', '#ifdef NO_CACHE'],
+  ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'ggml_webgpu_append_mv_columns(ctx, src0'],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl', 'fn shmem_slot(idx: u32)'],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-mulmat'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {

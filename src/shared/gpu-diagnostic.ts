@@ -184,9 +184,12 @@ function debugGlobal(): { __SAKUTTO_WEBGPU_DEBUG__?: unknown } {
  * `sub8|sub16|sub32|sub64` kernels per submit, `mvwg64|mvwg128|mvwg256` and `mvo1|mvo2|mvo4|mvo8`
  * mat-vec workgroup size / outputs per workgroup, `rwg64..1024` SOFT_MAX / fused RMS_NORM workgroup
  * size, `smnc` / `smup` new / upstream SOFT_MAX shader, `perf` per-graph stats, `perfops` per-op timing.
+ * Patch 0023: `bmv0..256` batched mat-vec crossover (MUL_MAT with 4 < n <= N; bmv0 off), `bmvc2|4|8`
+ * columns per batch, `mmt<M>x<N>` / `mmwg<M>x<N>` tiled-matmul outputs per thread / threads, `mmpad`
+ * padded tiled-matmul shared memory.
  */
 export const WEBGPU_TUNING_TOKEN_PATTERN =
-  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|rwg(64|128|256|512|1024)|smnc|smup|perf|perfops)$/u;
+  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|rwg(64|128|256|512|1024)|smnc|smup|bmv(0|8|16|32|48|64|96|128|256)|bmvc[248]|mmt(4x4|8x4|4x8|8x8)|mmwg(8x8|16x8|8x16|16x16|8x4|16x4)|mmpad|perf|perfops)$/u;
 
 /** The string the worker hands ggml-webgpu: the profile, then any tuning tokens. */
 export function composeWebGpuDebugString(

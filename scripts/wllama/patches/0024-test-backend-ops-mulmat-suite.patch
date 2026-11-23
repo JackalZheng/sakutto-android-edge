@@ -1,0 +1,72 @@
+test-backend-ops: --sakutto-mulmat, prompt-stage MUL_MAT cases (n 5..512) for the WebGPU batched
+mat-vec and tiled-matmul knobs (patch 0023): harness-model weight types, n around the 4-column
+batch and 32-column tile edges, odd row counts, padded src1 rows, f16 activations, batched operands.
+
+--- a/llama.cpp/tests/test-backend-ops.cpp
++++ b/llama.cpp/tests/test-backend-ops.cpp
+@@ -14825,10 +14825,55 @@
+     return test_cases;
+ }
+ 
++// Sakutto patch 0023: --sakutto-mulmat, prompt-stage MUL_MAT (n > 4) for the WebGPU batched
++// mat-vec / tiled-matmul knobs: the harness models' weight types, n around the 4-column batch and
++// 32-column tile edges, odd row counts and a padded src1 row stride.
++static bool g_sakutto_mulmat = false;
++
++static std::vector<std::unique_ptr<test_case>> make_test_cases_sakutto_mulmat() {
++    std::vector<std::unique_ptr<test_case>> test_cases;
++    const int64_t ns[] = { 5, 6, 7, 8, 9, 12, 16, 31, 32, 33, 38, 41, 63, 64, 65, 96, 128, 256, 512 };
++    struct weight_shape { ggml_type type; int64_t m; int64_t k; };
++    const weight_shape weights[] = {
++        { GGML_TYPE_Q4_K, 2304, 1536 }, // PLaMo 3 attn_qkv
++        { GGML_TYPE_Q6_K, 1536, 6144 }, // PLaMo 3 ffn_down
++        { GGML_TYPE_Q4_K, 1001, 512  }, // odd rows
++        { GGML_TYPE_Q6_K, 1003, 768  }, // odd rows
++        { GGML_TYPE_F16,  1024, 1024 },
++        { GGML_TYPE_F16,  1001, 516  }, // odd rows, k % 8 != 0
++        { GGML_TYPE_F32,  257,  256  },
++        { GGML_TYPE_Q8_0, 1024, 1024 }, // Qwen3
++        { GGML_TYPE_Q5_0, 1152, 1152 }, // Gemma 3
++        { GGML_TYPE_Q4_0, 1000, 1024 },
++        { GGML_TYPE_Q5_K, 512,  1024 },
++    };
++    for (const auto & w : weights) {
++        for (int64_t n : ns) {
++            test_cases.emplace_back(new test_mul_mat(w.type, GGML_TYPE_F32, w.m, n, w.k, {1, 1}, {1, 1}));
++        }
++    }
++    for (int64_t n : { (int64_t) 5, (int64_t) 38, (int64_t) 64 }) {
++        // src1 rows padded (row stride k_v > k)
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 768, n, 512, {1, 1}, {1, 1}, {0, 1, 2, 3}, 768));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 768, n, 512, {1, 1}, {1, 1}, {0, 1, 2, 3}, 768));
++        // f16 activations
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 512, n, 256, {1, 1}, {1, 1}));
++        // batched (not taken by the batched mat-vec; stays on the tiled shader)
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 128, n, 256, {4, 1}, {2, 1}));
++        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 256, n, 256, {2, 1}, {1, 1}));
++        // real-checkpoint weight scale
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q6_K, 2304, n, 1536, 0.02f));
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q4_K, 2304, n, 1536, 0.02f));
++    }
++    return test_cases;
++}
++
+ static std::vector<std::unique_ptr<test_case>> make_test_cases(test_mode mode, const char * params_filter, const char * test_file_path) {
+     std::vector<std::unique_ptr<test_case>> test_cases;
+ 
+-    if (test_file_path == nullptr && g_sakutto_plamo3) {
++    if (test_file_path == nullptr && g_sakutto_mulmat) {
++        test_cases = make_test_cases_sakutto_mulmat();
++    } else if (test_file_path == nullptr && g_sakutto_plamo3) {
+         test_cases = make_test_cases_sakutto_plamo3();
+     } else if (test_file_path == nullptr) {
+         switch (mode) {
+@@ -15161,6 +15206,8 @@
+     for (int i = 1; i < argc; i++) {
+         if (strcmp(argv[i], "--sakutto-plamo3") == 0) {
+             g_sakutto_plamo3 = true;
++        } else if (strcmp(argv[i], "--sakutto-mulmat") == 0) {
++            g_sakutto_mulmat = true;
+         } else if (strcmp(argv[i], "test") == 0) {
+             mode = MODE_TEST;
+         } else if (strcmp(argv[i], "perf") == 0) {

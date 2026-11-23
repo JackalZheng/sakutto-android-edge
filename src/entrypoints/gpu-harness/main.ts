@@ -43,6 +43,7 @@ import {
   perfDebugString,
   type PerfResult,
   type PerfRunMetrics,
+  PERF_DEFAULT_ID,
   PERF_STATE_KEY,
   type PerfSweepState,
   perfSweepQueue,
@@ -740,7 +741,7 @@ async function main(): Promise<void> {
     option.textContent = `${config.id}: ${config.label}`;
     perfConfigEl.append(option);
   }
-  perfConfigEl.value = perfConfigs.some((c) => c.id === 'gpu-mv') ? 'gpu-mv' : 'cpu';
+  perfConfigEl.value = perfConfigs.some((c) => c.id === PERF_DEFAULT_ID) ? PERF_DEFAULT_ID : 'cpu';
   const readPerf = (): PerfSweepState =>
     parsePerfState(sessionStorage.getItem(PERF_STATE_KEY)) ?? emptyPerfState(model.id);
   const writePerf = (state: PerfSweepState): void => {

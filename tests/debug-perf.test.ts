@@ -18,6 +18,7 @@ import {
   summarizeGpuStats,
   withPerfTimeout,
 } from '@/engine/debug-perf';
+import { WEBGPU_TUNING_TOKEN_PATTERN } from '@/shared/gpu-diagnostic';
 
 const probe = { webgpu: true, hardwareConcurrency: 8, fastBatches: false, sharedMemory: true };
 
@@ -25,7 +26,7 @@ const stat = (g: number, n: number, extra = ''): string =>
   `SAKUTTO_GPUSTAT g=${g} n=${n} nodes=662 kernels=355 submits=23 encode_ms=2.000 cycle_ms=${n > 4 ? 0 : 100}.000 readback_ms=60.000 readbacks=1${extra}`;
 
 describe('perf configs', () => {
-  it('builds a CPU baseline and round-4 variants with the perf token', () => {
+  it('builds a CPU baseline and round-5 variants with the perf token', () => {
     const configs = buildPerfConfigs(probe, true, 16);
     expect(configs[0]?.id).toBe('cpu');
     expect(configs[0]?.label).toContain('threads');
@@ -33,31 +34,36 @@ describe('perf configs', () => {
     expect(ids).toEqual(
       expect.arrayContaining([
         'gpu-mv',
-        'gpu-r3',
-        'gpu-old-softmax',
-        'gpu-rwg128',
-        'gpu-ctx2048-np2',
-        'gpu-ctx1024-np1',
-        'gpu-sg-fa',
-        'gpu-half-layers',
-        'gpu-half-ctx2048-np2',
+        'gpu-r5',
+        'gpu-r5-rwg256',
+        'gpu-bmv16',
+        'gpu-bmv32',
+        'gpu-bmv128',
+        'gpu-bmv256',
+        'gpu-bmv64-c8',
+        'gpu-bmv256-c8',
+        'gpu-tile-pad',
+        'gpu-tile-8x4',
+        'gpu-tile-128x32-pad',
+        'gpu-r5-half',
       ]),
     );
-    expect(ids.at(-1)).toBe('gpu-mv-repeat');
+    expect(ids).not.toContain('gpu-sg-fa');
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.at(-1)).toBe('gpu-r5-repeat');
     for (const config of configs.slice(1)) {
       expect(config.tuning).toContain('perf');
-      expect(config.debugProfile).toBe(
-        config.id === 'gpu-sg-fa' ? 'adreno-sg-tiled' : 'adreno-matvec',
-      );
+      expect(config.debugProfile).toBe('adreno-matvec');
+      for (const token of config.tuning) expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token)).toBe(true);
     }
-    expect(perfDebugString(configs.find((c) => c.id === 'gpu-r3')!)).toBe(
-      'adreno-matvec+mvwg256+smup+rwg1024+perf',
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-mv')!)).toBe(
+      'adreno-matvec+bmv0+rwg256+perf',
     );
-    const np1 = configs.find((c) => c.id === 'gpu-ctx1024-np1')!;
-    expect(np1.selection.nParallel).toBe(1);
-    expect(np1.selection.nCtx).toBe(1024);
-    expect(perfDebugString(np1)).toBe('adreno-matvec+perf');
-    expect(configs.find((c) => c.id === 'gpu-half-layers')?.selection.nGpuLayers).toBe(9);
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-r5')!)).toBe('adreno-matvec+perf');
+    expect(perfDebugString(configs.find((c) => c.id === 'gpu-tile-128x32-pad')!)).toBe(
+      'adreno-matvec+bmv0+mmt8x4+mmwg16x8+mmpad+perf',
+    );
+    expect(configs.find((c) => c.id === 'gpu-r5-half')?.selection.nGpuLayers).toBe(9);
   });
 
   it('skips the hybrid config for an unknown layer count and GPU configs without WebGPU', () => {
@@ -71,14 +77,14 @@ describe('perf configs', () => {
 
   it('resolves the per-op variant and plans the queues', () => {
     const configs = buildPerfConfigs(probe, true, 16);
-    const ops = resolvePerfConfig(configs, 'gpu-mv#ops')!;
+    const ops = resolvePerfConfig(configs, 'gpu-r5#ops')!;
     expect(ops.tuning).toEqual(['perfops']);
     expect(resolvePerfConfig(configs, 'cpu#ops')).toBeNull();
     expect(resolvePerfConfig(configs, 'nope')).toBeNull();
     const sweep = perfSweepQueue(configs);
     expect(sweep[0]).toBe('cpu');
-    expect(sweep.at(-1)).toBe('gpu-mv#ops');
-    expect(perfBreakdownQueue(configs, 'gpu-rwg128')).toEqual(['gpu-rwg128', 'gpu-rwg128#ops']);
+    expect(sweep.at(-1)).toBe('gpu-r5#ops');
+    expect(perfBreakdownQueue(configs, 'gpu-bmv32')).toEqual(['gpu-bmv32', 'gpu-bmv32#ops']);
     expect(perfBreakdownQueue(configs, 'cpu')).toEqual(['cpu']);
   });
 });

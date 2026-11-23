@@ -39,6 +39,9 @@ export interface PerfConfig {
   tuning: readonly string[];
 }
 
+/** The current Adreno default in the sweep (its per-op variant ends the sweep). */
+export const PERF_DEFAULT_ID = 'gpu-r5';
+
 export function buildPerfConfigs(
   probe: BackendProbe,
   android: boolean,
@@ -70,56 +73,58 @@ export function buildPerfConfigs(
     debugProfile: 'adreno-matvec',
     tuning: [...tuning, 'perf'],
   });
-  // Round 4 (patch 0022): the Adreno default is now mat-vec workgroup 64, SOFT_MAX without the
-  // private cache and 256-wide SOFT_MAX / fused RMS_NORM workgroups. `gpu-r3` is the round-3
-  // default, `gpu-mv-repeat` reruns the baseline at the end to show thermal drift.
+  // Round 5 (patch 0023): the Adreno default (`gpu-r5`) runs prompt MUL_MATs with 4 < n <= 64
+  // through the mat-vec shader in batches of 4 columns (batched mat-vec) instead of the tiled
+  // matmul, and uses 128-wide SOFT_MAX / fused RMS_NORM workgroups. `gpu-mv` is the round-4
+  // default. The bmv* configs move the crossover / batch width; the tile-* configs keep the tiled
+  // matmul for every n > 4 (bmv0) and change its shape, to measure it on the prompt.
   const half = modelLayers !== null && modelLayers > 1 ? Math.floor(modelLayers / 2) + 1 : null;
+  const tiled = (id: string, label: string, tokens: readonly string[]): PerfConfig =>
+    mv(id, `round 5, tiled matmul for every n > 4: ${label}`, gpu, ['bmv0', ...tokens]);
   configs.push(
+    mv('gpu-mv', 'round-4 default (tiled matmul for n > 4, 256-wide row reductions)', gpu, [
+      'bmv0',
+      'rwg256',
+    ]),
     mv(
-      'gpu-mv',
-      'Adreno default (round 4: mat-vec WG 64, new soft_max, 256-wide row reductions)',
+      'gpu-r5',
+      'Adreno default (round 5: batched mat-vec for n <= 64, 128-wide row reductions)',
       gpu,
     ),
-    mv('gpu-r3', 'round-3 default (mat-vec WG 256, upstream soft_max, 1024-wide rows)', gpu, [
-      'mvwg256',
-      'smup',
-      'rwg1024',
+    mv('gpu-r5-rwg256', 'round 5, 256-wide row reductions', gpu, ['rwg256']),
+    mv('gpu-bmv16', 'round 5, batched mat-vec only for n <= 16', gpu, ['bmv16']),
+    mv('gpu-bmv32', 'round 5, batched mat-vec only for n <= 32', gpu, ['bmv32']),
+    mv('gpu-bmv128', 'round 5, batched mat-vec for n <= 128', gpu, ['bmv128']),
+    mv('gpu-bmv256', 'round 5, batched mat-vec for n <= 256', gpu, ['bmv256']),
+    mv('gpu-bmv64-c8', 'round 5, batched mat-vec 8 columns per batch', gpu, ['bmvc8']),
+    mv('gpu-bmv256-c8', 'round 5, batched mat-vec for n <= 256, 8 columns per batch', gpu, [
+      'bmv256',
+      'bmvc8',
     ]),
-    mv('gpu-old-softmax', 'round 4 but upstream soft_max, 1024-wide rows', gpu, [
-      'smup',
-      'rwg1024',
+    tiled('gpu-tile-pad', 'padded shared memory', ['mmpad']),
+    tiled('gpu-tile-8x4', '8x4 outputs per thread', ['mmt8x4']),
+    tiled('gpu-tile-8x4-pad', '8x4 outputs per thread, padded', ['mmt8x4', 'mmpad']),
+    tiled('gpu-tile-128x32-pad', '16x8 threads x 8x4 outputs, padded', [
+      'mmt8x4',
+      'mmwg16x8',
+      'mmpad',
     ]),
-    mv('gpu-rwg128', 'round 4, 128-wide row reductions', gpu, ['rwg128']),
-    mv('gpu-rwg64', 'round 4, 64-wide row reductions', gpu, ['rwg64']),
-    mv('gpu-ctx2048', 'round 4, n_ctx 2048 (4 slots)', { ...gpu, nCtx: 2048 }),
-    mv('gpu-ctx2048-np2', 'round 4, n_ctx 2048, 2 slots', { ...gpu, nCtx: 2048, nParallel: 2 }),
-    mv('gpu-ctx1024-np2', 'round 4, n_ctx 1024, 2 slots', { ...gpu, nCtx: 1024, nParallel: 2 }),
-    mv('gpu-ctx1024-np1', 'round 4, n_ctx 1024, 1 slot', { ...gpu, nCtx: 1024, nParallel: 1 }),
-    {
-      id: 'gpu-sg-fa',
-      label:
-        'opt-in flash attention: subgroups on (mat-vec routed to tiled), FA on; may garble, compare the output with CPU',
-      selection: gpu,
-      debugProfile: 'adreno-sg-tiled',
-      tuning: ['perf'],
-    },
+    tiled('gpu-tile-128x128', '16x16 threads x 8x8 outputs', ['mmt8x8', 'mmwg16x16']),
+    tiled('gpu-tile-32x16-pad', '8x4 threads x 4x4 outputs (16-column tiles), padded', [
+      'mmwg8x4',
+      'mmpad',
+    ]),
   );
   if (half !== null) {
     configs.push(
       mv(
-        'gpu-half-layers',
-        `round 4, hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`,
+        'gpu-r5-half',
+        `round 5, hybrid: n_gpu_layers ${half} (output + last ${half - 1} of ${modelLayers} layers on GPU)`,
         { ...gpu, nGpuLayers: half },
       ),
-      mv('gpu-half-ctx2048-np2', `round 4, hybrid n_gpu_layers ${half}, n_ctx 2048, 2 slots`, {
-        ...gpu,
-        nGpuLayers: half,
-        nCtx: 2048,
-        nParallel: 2,
-      }),
     );
   }
-  configs.push(mv('gpu-mv-repeat', 'Adreno default again (thermal drift check)', gpu));
+  configs.push(mv('gpu-r5-repeat', 'Adreno default again (thermal drift check)', gpu));
   return configs;
 }
 
@@ -143,7 +148,7 @@ export function resolvePerfConfig(configs: readonly PerfConfig[], id: string): P
 /** The sweep: every config, then the per-op run of the Adreno default. */
 export function perfSweepQueue(configs: readonly PerfConfig[]): string[] {
   const ids = configs.map((c) => c.id);
-  if (ids.includes('gpu-mv')) ids.push(`gpu-mv${PERF_OPS_SUFFIX}`);
+  if (ids.includes(PERF_DEFAULT_ID)) ids.push(`${PERF_DEFAULT_ID}${PERF_OPS_SUFFIX}`);
   return ids;
 }
 
