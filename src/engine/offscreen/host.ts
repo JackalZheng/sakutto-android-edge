@@ -29,12 +29,18 @@ import {
 } from '../in-browser/backend';
 import { LazyInBrowserEngine } from '../in-browser/lazy-engine';
 import { createWllamaRuntime, lastWebGpuLoadLog, type LlamaRuntime } from '../in-browser/runtime';
-import { DEFAULT_MODEL_ID, getModel, type ModelId } from '../model/catalog';
+import {
+  DEFAULT_MODEL_ID,
+  getModel,
+  isGpuExperimentalModel,
+  modelPromptFormat,
+  type ModelId,
+} from '../model/catalog';
 import { OpfsModelFileStore } from '../model/file-store';
 import { ModelManager, type LoadedModel } from '../model/manager';
 import type { DownloadProgress } from '../model/download';
 import { QUALITY_PARAGRAPH } from '../model/suggestion';
-import { buildTranslationPrompt } from '../prompt/pfml3';
+import { buildModelPrompt } from '../prompt/model-prompt';
 import { RoutingEngine, type PairSupport } from '../router';
 import {
   ENGINE_HOST_PORT,
@@ -64,6 +70,8 @@ export interface EngineServices {
   readonly selection: BackendSelection;
   clearCache: () => Promise<void>;
   setTier: (tier: TierPreference) => Promise<void>;
+  /** The active model changed: re-resolve the selection (GPU-experimental models, 1.3.0). */
+  modelChanged?: (modelId: ModelId) => Promise<void>;
 }
 
 export interface EngineHostOptions {
@@ -93,19 +101,21 @@ async function openCache(): Promise<TranslationCache> {
   }
 }
 
-async function warmup(runtime: LlamaRuntime, tgt: string): Promise<void> {
+async function warmup(runtime: LlamaRuntime, tgt: string, modelId: string): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
 
   try {
     const language = canonicalLanguage(tgt) ?? 'ja';
+    const { prompt, stop } = buildModelPrompt(modelPromptFormat(modelId), {
+      text: 'Hello.',
+      src: language === 'ja' ? 'en' : 'ja',
+      tgt: language,
+      ...(language === 'ja' ? { form: 'polite' } : {}),
+    });
     await runtime.complete({
-      prompt: buildTranslationPrompt({
-        text: 'Hello.',
-        src: language === 'ja' ? 'en' : 'ja',
-        tgt: language,
-        ...(language === 'ja' ? { form: 'polite' } : {}),
-      }),
+      prompt,
+      stop,
       maxTokens: 16,
       signal: controller.signal,
       onToken: () => undefined,
@@ -240,16 +250,25 @@ export class EngineHost {
     const android = isAndroidEdgeRuntime();
     // Adreno (phone or Windows on Snapdragon): "auto" and an explicit WebGPU choice run the
     // settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
+    const store = await OpfsModelFileStore.open();
+    const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
+    // 1.3.0: come back on the model chosen in the settings, if its file is still here.
+    if (stored?.modelId && stored.modelId !== this.activeModelId) {
+      const chosen = await manager.status(stored.modelId).catch(() => null);
+      if (chosen && (chosen.state === 'ready' || chosen.state === 'loaded')) {
+        this.activeModelId = stored.modelId;
+      }
+    }
     const runtime: RuntimeContext = {
       android,
       gpuOutputBroken: (android || probe.adreno) && stored?.gpuOutputBroken === true,
       adreno: probe.adreno,
       gpuProfile: stored?.gpuProfile ?? 'optimized',
+      gpuExperimental: isGpuExperimentalModel(this.activeModelId),
     };
-    const selection = resolveSelection(stored?.tier ?? 'auto', probe, runtime);
+    let tierPreference: TierPreference = stored?.tier ?? 'auto';
+    const selection = resolveSelection(tierPreference, probe, runtime);
     const selectionState = { current: selection };
-    const store = await OpfsModelFileStore.open();
-    const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
     const cache = await openCache();
     const chrome = new ChromeTranslatorEngine();
     const load = async (signal: AbortSignal): Promise<LoadedModel> => {
@@ -296,9 +315,13 @@ export class EngineHost {
     // must never send a working desktop GPU to the CPU over an unusual translation.
     const onBrokenOutput = async (): Promise<void> => {
       selectionState.current = cpuAfterBrokenOutput(selectionState.current, runtime);
-      runtime.gpuOutputBroken = true;
       this.gpuFallback = true;
-      await saveGpuOutputBroken(true);
+      // A GPU-experimental model (Qwen3, Gemma 3) breaking on WebGPU says nothing about PLaMo or
+      // Hy-MT2 there: move this load to the CPU without the stored per-version flag.
+      if (!runtime.gpuExperimental) {
+        runtime.gpuOutputBroken = true;
+        await saveGpuOutputBroken(true);
+      }
       // Short labels the check lets through may already be cached from the same GPU.
       await cache.clear().catch(() => undefined);
       await manager.unload();
@@ -344,11 +367,22 @@ export class EngineHost {
         // The Adreno profile is saved before the options page asks for the tier again.
         const latest = await loadEngineSettings();
         if (latest) runtime.gpuProfile = latest.gpuProfile;
+        tierPreference = tier;
         selectionState.current = resolveSelection(tier, probe, runtime);
         this.gpuFallback = false;
         this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), null);
         lazy.reset();
         await manager.unload();
+      },
+      modelChanged: async (modelId: ModelId) => {
+        runtime.gpuExperimental = isGpuExperimentalModel(modelId);
+        const latest = await loadEngineSettings();
+        if (latest) {
+          runtime.gpuProfile = latest.gpuProfile;
+          tierPreference = latest.tier;
+        }
+        selectionState.current = resolveSelection(tierPreference, probe, runtime);
+        this.gpuFallback = false;
       },
     };
   }
@@ -479,7 +513,7 @@ export class EngineHost {
         loaded = await services.load(controller.signal);
       }
       try {
-        await warmup(loaded.runtime, 'ja');
+        await warmup(loaded.runtime, 'ja', loaded.id);
       } catch {
         // The short warm-up is optional; translation still runs.
       }
@@ -606,6 +640,7 @@ export class EngineHost {
       if (request.modelId === this.activeModelId) {
         services.lazy.reset();
         this.activeModelId = DEFAULT_MODEL_ID;
+        await services.modelChanged?.(DEFAULT_MODEL_ID);
         const fallback = await services.manager.status(DEFAULT_MODEL_ID);
         this.plamoReady = fallback.state === 'ready' || fallback.state === 'loaded';
       }
@@ -633,6 +668,7 @@ export class EngineHost {
       services.lazy.reset();
       await services.manager.unload();
       this.activeModelId = modelId;
+      await services.modelChanged?.(modelId);
 
       const status = await services.manager.status(modelId);
       this.plamoReady = status.state === 'ready' || status.state === 'loaded';
@@ -762,8 +798,14 @@ export class EngineHost {
       }
 
       const started = performance.now();
+      const quality = buildModelPrompt(modelPromptFormat(loaded.id), {
+        text: QUALITY_PARAGRAPH,
+        tgt: 'ja',
+        form: 'polite',
+      });
       await loaded.runtime.complete({
-        prompt: buildTranslationPrompt({ text: QUALITY_PARAGRAPH, tgt: 'ja', form: 'polite' }),
+        prompt: quality.prompt,
+        stop: quality.stop,
         maxTokens: 512,
         signal: controller.signal,
         onToken: () => undefined,

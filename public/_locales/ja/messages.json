@@ -1078,22 +1078,22 @@
     "message": "固定の段落を CPU と WebGPU で実行し、出力を比較します。サイドロードした版はモデルを別に保存するため、まずここで 0.8B モデルをダウンロードしてください。"
   },
   "tierAdrenoAutoHelp": {
-    "message": "Qualcomm Adreno GPU では、「自動」は下の Adreno プロファイルで WebGPU を使います（テスト端末で 1 段落あたり約 2.3 秒、CPU は約 2.9 秒）。GPU の訳文が文字化けした場合、この端末の「自動」は CPU に切り替わります。もう一度試すには「GPU (WebGPU)」を選んでください。"
+    "message": "Qualcomm Adreno GPU では、「自動」は下の Adreno プロファイルで WebGPU を使います（テスト端末で 1 段落あたり約 2.3 秒、CPU は約 2.9 秒）。GPU の訳文が文字化けした場合、この端末の「自動」は CPU に切り替わります。もう一度試すには「GPU (WebGPU)」を選んでください。 「GPU 実験的」のモデル（Qwen3、Gemma 3）は「自動」では CPU で実行します。"
   },
   "gpuProfileLabel": {
     "message": "Adreno GPU プロファイル"
   },
   "gpuProfileOptimized": {
-    "message": "最適化（推奨）"
+    "message": "最適化（推奨・r6-r4）"
   },
   "gpuProfileCompat": {
-    "message": "互換（ラウンド 5）"
+    "message": "互換（第 5 ラウンド・r5）"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "Adreno 向けラウンド 6 カーネル：16 バイト読み込みの q4_K 行列ベクトル積（1 グループ 4 行）、gate/up と SwiGLU の融合、norm チェーンの融合。subgroup なし、短いプロンプトはバッチ行列ベクトル積、並列スロット 2。"
+    "message": "第 6 ラウンドのカーネル：q4_K 行列ベクトル積の新アルゴリズム（16 バイト読み込み、1 グループ 4 行）＋ gate/up と SwiGLU の融合＋ norm 演算チェーンの融合、並列スロット 2。テスト端末（POCO F5 Pro）で最速、1 段落約 2.25 秒（CPU 約 2.9 秒）。通常はこれを使ってください。"
   },
   "gpuProfileCompatHelp": {
-    "message": "1.3.0 の Adreno 設定（ラウンド 6 カーネルなし、少し遅い）。「最適化」で訳文がおかしい場合や GPU が応答しなくなった場合に試してください。"
+    "message": "第 6 ラウンドのカーネルなし：バッチ行列ベクトル積＋ 128 幅 softmax（1.3.0 開発版の設定）。テスト端末で 1 段落約 2.7 秒。新しいカーネルが端末で不具合を起こす場合に使ってください。"
   },
   "gpuProfileInactive": {
     "message": "プロファイルは GPU を使うときだけ使われます（Adreno での「自動」、または「GPU (WebGPU)」）。"
@@ -1106,5 +1106,71 @@
   },
   "diagGpuAdreno": {
     "message": "Adreno"
+  },
+  "gpuProfileQ4v2": {
+    "message": "q4_K 新アルゴリズムのみ（q4v2-r4）"
+  },
+  "gpuProfileQ4v2Help": {
+    "message": "q4_K 行列ベクトル積の新アルゴリズム（1 グループ 4 行）のみで、演算の融合はしません。テスト端末で 1 段落約 2.29 秒と、最適化とほぼ同じ速さです。最適化で訳文がおかしい、または応答しなくなる場合はまずこれを試してください。"
+  },
+  "gpuProfileR6": {
+    "message": "第 6 ラウンド（1 グループ 2 行・r6）"
+  },
+  "gpuProfileR6Help": {
+    "message": "q4_K 新アルゴリズムを 1 グループ 2 行にし、2 つの演算融合を加えたもの。レジスタ負荷が低く、古い・小さめの Adreno 向けです。テスト端末で 1 段落約 2.5 秒。"
+  },
+  "gpuProfileLowMemory": {
+    "message": "省メモリ（スロット 1・n_ctx 1024）"
+  },
+  "gpuProfileLowMemoryHelp": {
+    "message": "最適化と同じカーネルで、並列スロットを 1 つ（n_ctx 1024）にして KV キャッシュを半分にします。1 GB を超えるモデル（Qwen3 1.7B、Hy-MT2、PLaMo 2B）やメモリの少ない端末におすすめです。1 段落の速さはほぼ同じで、複数同時だと少し遅くなります。"
+  },
+  "gpuProfileR4": {
+    "message": "第 4 ラウンド互換（r4）"
+  },
+  "gpuProfileR4Help": {
+    "message": "最も保守的な GPU 設定：第 5・6 ラウンドの行列ベクトル積の変更を使わず、プロンプトはタイル行列積、softmax は 256 幅。最も遅く（テスト端末で 1 段落約 3.8 秒）、ほかのプロファイルがすべて失敗する場合だけ使ってください。"
+  },
+  "gpuProfileExperimentalAuto": {
+    "message": "現在のモデルは「GPU 実験的」のため、Adreno では「自動」が CPU で実行します。プロファイルは「GPU (WebGPU)」を手動で選んだときだけ有効です。"
+  },
+  "modelGpuExperimental": {
+    "message": "GPU 実験的"
+  },
+  "modelGpuExperimentalHelp": {
+    "message": "Adreno GPU では CPU と結果が異なることがあります。「自動」は CPU で実行します。GPU で試すには「GPU (WebGPU)」を手動で選んでください。"
+  },
+  "modelDefaultBadge": {
+    "message": "既定"
+  },
+  "modelDownloaded": {
+    "message": "ダウンロード済み"
+  },
+  "modelLicenseLabel": {
+    "message": "ライセンス"
+  },
+  "modelLargeMobileWarning": {
+    "message": "1 GB 超：スマートフォンではダウンロードと読み込みが遅く、メモリ負荷も高くなります。Adreno の「省メモリ」プロファイルをおすすめします。"
+  },
+  "modelGemmaTerms": {
+    "message": "Gemma をダウンロードして使うと、Gemma 利用規約と禁止用途ポリシーに同意したことになります。"
+  },
+  "modelDescQwen3Small": {
+    "message": "最小・最速の汎用モデル。翻訳品質はそこそこで、速さ優先や低スペック端末向けです。"
+  },
+  "modelDescPlamoSmall": {
+    "message": "翻訳専用モデル（既定）。日英中の訳が自然で、用語集と日本語の敬体／常体に対応します。"
+  },
+  "modelDescGemma": {
+    "message": "Google の汎用指示モデル。多言語の能力がバランスよく揃っています。"
+  },
+  "modelDescQwen3Large": {
+    "message": "大きめの Qwen3。中国語と英語の訳は 0.6B より明らかに良く、速度は約半分です。"
+  },
+  "modelDescHyMt": {
+    "message": "Tencent Hunyuan の翻訳専用モデル。33 言語の相互翻訳に対応し、高品質です。"
+  },
+  "modelDescPlamoLarge": {
+    "message": "PLaMo 翻訳の高品質版。ファイルが最も大きく、スマートフォンのメモリ負荷も最大です。"
   }
 }

@@ -1078,22 +1078,22 @@
     "message": "用一段固定文字分別跑 CPU 與 WebGPU，再比對輸出。側載安裝的模型是另外存放的，請先在這裡下載 0.8B 模型。"
   },
   "tierAdrenoAutoHelp": {
-    "message": "在 Qualcomm Adreno GPU 上，「自動」會使用 WebGPU 並套用下方的 Adreno 設定檔（測試手機上每段約 2.3 秒，CPU 約 2.9 秒）。如果 GPU 產生亂碼，這台裝置的「自動」會改用 CPU；選擇「GPU (WebGPU)」可以再試一次。"
+    "message": "在 Qualcomm Adreno GPU 上，「自動」會使用 WebGPU 並套用下方的 Adreno 設定檔（測試手機上每段約 2.3 秒，CPU 約 2.9 秒）。如果 GPU 產生亂碼，這台裝置的「自動」會改用 CPU；選擇「GPU (WebGPU)」可以再試一次。 標示「GPU 實驗性」的模型（Qwen3、Gemma 3）在「自動」下改用 CPU。"
   },
   "gpuProfileLabel": {
     "message": "Adreno GPU 設定檔"
   },
   "gpuProfileOptimized": {
-    "message": "最佳化（建議）"
+    "message": "最佳化（建議・r6-r4）"
   },
   "gpuProfileCompat": {
-    "message": "相容（第 5 輪）"
+    "message": "相容（第 5 輪・r5）"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "第 6 輪 Adreno 核心：q4_K 矩陣向量乘法使用 16 位元組讀取（每組 4 列）、合併 gate/up 與 SwiGLU、合併 norm 運算鏈；不使用 subgroup、短提示詞使用批次矩陣向量乘法、2 個平行槽。"
+    "message": "第 6 輪核心：q4_K 矩陣向量乘法新算法（16 位元組讀取、每組 4 列）＋合併 gate/up 與 SwiGLU＋合併 norm 運算鏈，2 個平行槽。測試手機（POCO F5 Pro）上最快，每段約 2.25 秒（CPU 約 2.9 秒）。一般情況請用這個。"
   },
   "gpuProfileCompatHelp": {
-    "message": "1.3.0 的 Adreno 設定，不含第 6 輪核心（稍慢）。若「最佳化」出現錯誤譯文或 GPU 停止回應，請改用此項。"
+    "message": "不含第 6 輪核心：批次矩陣向量乘法＋128 寬 softmax（1.3.0 開發版的設定），測試手機上每段約 2.7 秒。新核心在你的裝置上有問題時使用。"
   },
   "gpuProfileInactive": {
     "message": "設定檔只在使用 GPU 時生效（Adreno 上的「自動」或「GPU (WebGPU)」）。"
@@ -1106,5 +1106,71 @@
   },
   "diagGpuAdreno": {
     "message": "Adreno"
+  },
+  "gpuProfileQ4v2": {
+    "message": "純 q4_K 新算法（q4v2-r4）"
+  },
+  "gpuProfileQ4v2Help": {
+    "message": "只用 q4_K 矩陣向量乘法新算法（每組 4 列），不做運算合併。測試手機上每段約 2.29 秒，幾乎跟建議設定一樣快。如果「最佳化」出現錯誤譯文或停止回應，先試這個。"
+  },
+  "gpuProfileR6": {
+    "message": "第 6 輪（每組 2 列・r6）"
+  },
+  "gpuProfileR6Help": {
+    "message": "q4_K 新算法改為每組 2 列，加上兩項運算合併。暫存器壓力較低，適合較舊或較小的 Adreno；測試手機上每段約 2.5 秒。"
+  },
+  "gpuProfileLowMemory": {
+    "message": "低記憶體（1 個槽・n_ctx 1024）"
+  },
+  "gpuProfileLowMemoryHelp": {
+    "message": "與「最佳化」相同的核心，但只用 1 個平行槽（n_ctx 1024），KV 快取減半。建議用於超過 1 GB 的模型（Qwen3 1.7B、Hy-MT2、PLaMo 2B）或記憶體較少的手機；單段速度相近，多段同時翻譯會稍慢。"
+  },
+  "gpuProfileR4": {
+    "message": "第 4 輪相容（r4）"
+  },
+  "gpuProfileR4Help": {
+    "message": "最保守的 GPU 設定：不用第 5、6 輪的矩陣向量乘法改動，提示詞走分塊矩陣乘法、256 寬 softmax。速度最慢（測試手機每段約 3.8 秒），只在其他設定檔都出錯時使用。"
+  },
+  "gpuProfileExperimentalAuto": {
+    "message": "目前的模型標示為「GPU 實驗性」，在 Adreno 上「自動」會用 CPU 執行；設定檔只在手動選擇「GPU (WebGPU)」時生效。"
+  },
+  "modelGpuExperimental": {
+    "message": "GPU 實驗性"
+  },
+  "modelGpuExperimentalHelp": {
+    "message": "在 Adreno GPU 上的結果可能與 CPU 不同；「自動」會用 CPU 執行，想測試 GPU 請手動選「GPU (WebGPU)」。"
+  },
+  "modelDefaultBadge": {
+    "message": "預設"
+  },
+  "modelDownloaded": {
+    "message": "已下載"
+  },
+  "modelLicenseLabel": {
+    "message": "授權"
+  },
+  "modelLargeMobileWarning": {
+    "message": "超過 1 GB：手機上下載與載入較慢、記憶體壓力大，建議搭配「低記憶體」Adreno 設定檔。"
+  },
+  "modelGemmaTerms": {
+    "message": "下載並使用 Gemma 即表示你同意 Gemma 使用條款與禁止用途政策。"
+  },
+  "modelDescQwen3Small": {
+    "message": "最小最快的通用模型，翻譯品質一般，適合速度優先或低階手機。"
+  },
+  "modelDescPlamoSmall": {
+    "message": "翻譯專用模型（預設），日英中翻譯自然，支援名詞表與日文敬體/常體。"
+  },
+  "modelDescGemma": {
+    "message": "Google 的通用指令模型，多語能力均衡。"
+  },
+  "modelDescQwen3Large": {
+    "message": "較大的 Qwen3，中英翻譯明顯優於 0.6B，速度約慢一倍。"
+  },
+  "modelDescHyMt": {
+    "message": "騰訊混元翻譯專用模型，支援 33 種語言互譯，品質佳。"
+  },
+  "modelDescPlamoLarge": {
+    "message": "PLaMo 翻譯的高品質版，檔案最大、手機記憶體壓力最高。"
   }
 }

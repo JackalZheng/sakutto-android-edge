@@ -6,6 +6,8 @@ import {
   type BackendSelection,
 } from './in-browser/backend';
 import { composeWebGpuDebugString, type WebGpuDebugProfile } from '@/shared/gpu-diagnostic';
+import { ADRENO_PROFILE_SPECS } from '@/shared/adreno-profiles';
+import { MODEL_LIST } from './model/catalog';
 
 /**
  * GPU perf breakdown and tuning sweep for the debug harness (pure part).
@@ -23,13 +25,10 @@ export const PERF_CONFIG_TIMEOUT_MS = 300_000;
 /** Suffix of the per-op variant of a config (adds the `perfops` token). */
 export const PERF_OPS_SUFFIX = '#ops';
 
-/** Repeating-layer counts of the harness models, for the half-offload config. */
-export const HARNESS_MODEL_LAYERS: Readonly<Record<string, number>> = {
-  'plamo-3-translate-0.8b-q4_k_m': 16,
-  'qwen3-0.6b-q4_k_m': 28,
-  'qwen3-1.7b-q4_k_m': 28,
-  'gemma-3-1b-it-q4_k_m': 26,
-};
+/** Repeating-layer counts of the harness models (the catalog), for the half-offload config. */
+export const HARNESS_MODEL_LAYERS: Readonly<Record<string, number>> = Object.fromEntries(
+  MODEL_LIST.map((model) => [model.id, model.layers]),
+);
 
 export interface PerfConfig {
   id: string;
@@ -42,7 +41,7 @@ export interface PerfConfig {
   sweep?: boolean;
 }
 
-/** The Adreno default since 1.3.1 (settings "Optimized", round 6 with 4 rows per group). */
+/** The Adreno default since 1.3.0 (settings "Optimized", round 6 with 4 rows per group). */
 export const PERF_DEFAULT_ID = 'gpu-r6-r4';
 
 export function buildPerfConfigs(
@@ -89,7 +88,7 @@ export function buildPerfConfigs(
   configs.push(
     mv(
       'gpu-r6-r4',
-      `Adreno default since 1.3.1 ("Optimized", round 6: ${r6r4.join('+')})`,
+      `Adreno default since 1.3.0 ("Optimized", round 6: ${r6r4.join('+')})`,
       gpu,
       r6r4,
     ),
@@ -108,6 +107,19 @@ export function buildPerfConfigs(
     mv('gpu-mvglu', 'round 6: fused gate+up mat-vec + SWIGLU only', gpu, ['mvglu']),
     mv('gpu-fna', 'round 6: fused RMS_NORM+MUL+ADD(+RMS_NORM+MUL) only', gpu, ['fna']),
     mv('gpu-r6', 'round 6 with 2 rows per group: q4_K mat-vec v2 + mvglu + fna', gpu, r6),
+    // The other settings profiles (1.3.0), so each one the options page offers can be timed.
+    mv(
+      'gpu-r6-r4-1-slot',
+      '"Low memory" profile: 1.3.0 default with 1 slot, n_ctx 1024',
+      { ...gpu, nParallel: 1, nCtx: 1024 },
+      r6r4,
+    ),
+    mv(
+      'gpu-r4',
+      `"Round 4" profile: no batched prompt mat-vec, 256-wide row reductions (${ADRENO_PROFILE_SPECS.r4.tuning.join('+')})`,
+      gpu,
+      ADRENO_PROFILE_SPECS.r4.tuning,
+    ),
   );
   if (half !== null) {
     // Breakdown only: slower than full GPU in every phone sweep, and gpu-r6-half once stalled
@@ -116,12 +128,12 @@ export function buildPerfConfigs(
     configs.push(
       { ...mv('gpu-r5-half', `round 5, ${hybrid}`, { ...gpu, nGpuLayers: half }), sweep: false },
       {
-        ...mv('gpu-r6-r4-half', `1.3.1 default, ${hybrid}`, { ...gpu, nGpuLayers: half }, r6r4),
+        ...mv('gpu-r6-r4-half', `1.3.0 default, ${hybrid}`, { ...gpu, nGpuLayers: half }, r6r4),
         sweep: false,
       },
     );
   }
-  configs.push(mv('gpu-r6-r4-repeat', '1.3.1 default again (thermal drift check)', gpu, r6r4));
+  configs.push(mv('gpu-r6-r4-repeat', '1.3.0 default again (thermal drift check)', gpu, r6r4));
   return configs;
 }
 

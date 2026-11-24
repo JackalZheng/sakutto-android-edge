@@ -2,7 +2,7 @@
 
 > **非公式の移植版:** このリポジトリは、jammaru による [Sakutto](https://github.com/jammaru/sakutto) を **Android 版 Microsoft Edge** に移植した非公式版「Sakutto for Android Edge（非公式移植版）」です。原作者 jammaru とも Preferred Networks, Inc. とも関係ありません。この移植版の問題は原作者ではなく [JackalZheng/sakutto-android-edge/issues](https://github.com/JackalZheng/sakutto-android-edge/issues) へ。上流: <https://github.com/jammaru/sakutto>。移植の詳細: [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md)。この移植版のプライバシーポリシー: <https://jackalzheng.github.io/sakutto-android-edge/privacy/>。以下は上流の README です。
 >
-> **v1.3.1（移植版）:** 設定 →「計算バックエンド」で「自動（推奨）」「GPU (WebGPU)」「CPU」を選べ、検出された GPU が表示されます。Qualcomm Adreno では「自動」がラウンド 6 カーネルの WebGPU を使うようになりました（POCO F5 Pro で 1 段落約 2.25 秒、CPU は約 2.9 秒）。「Adreno GPU プロファイル」は「最適化」（ラウンド 6）と「互換（ラウンド 5）」です。GPU の訳文が文字化けした場合は自動で CPU に切り替わります。Qwen3／Gemma の GPU 実行は引き続き実験的です（デバッグ用ハーネスのみ）。
+> **v1.3.0（移植版）:** 設定 →「モデル」にファイルサイズ順で 6 モデル（Qwen3 0.6B、PLaMo 3 0.8B（既定）、Gemma 3 1B、Qwen3 1.7B、Hy-MT2 1.8B、PLaMo 3 2B）が並びます。Qwen3／Gemma は「GPU 実験的」で、Adreno では「自動」が CPU を使います。設定 →「計算バックエンド」で「自動（推奨）」「GPU (WebGPU)」「CPU」を選べ、検出された GPU が表示されます。Qualcomm Adreno では「自動」がラウンド 6 カーネルの WebGPU を使うようになりました（POCO F5 Pro で 1 段落約 2.25 秒、CPU は約 2.9 秒）。「Adreno GPU プロファイル」は 6 種類（最適化 r6-r4、q4_K 新アルゴリズムのみ、第 6 ラウンド 2 行、省メモリ、互換 r5、第 4 ラウンド互換）で、それぞれ推奨説明付きです。GPU の訳文が文字化けした場合は自動で CPU に切り替わります。
 
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/mhlbjjijfkoghmcjndgdimhdlfkhadfl?logo=googlechrome&logoColor=white&label=Chrome%20Web%20Store)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)
 [![Chrome Web Store users](https://img.shields.io/chrome-web-store/users/mhlbjjijfkoghmcjndgdimhdlfkhadfl?label=users)](https://chrome.google.com/webstore/detail/mhlbjjijfkoghmcjndgdimhdlfkhadfl)

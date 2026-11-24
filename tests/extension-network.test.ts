@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isAllowedRequest } from '../e2e/extension';
+import { MODEL_LIST } from '@/engine/model/catalog';
 
 describe('extension network allowlist', () => {
   it('allows the Hugging Face redirect used by the pinned model', () => {
@@ -12,5 +13,13 @@ describe('extension network allowlist', () => {
     expect(isAllowedRequest('https://cdn-lfs-us-1.hf.co/repos/file')).toBe(true);
     expect(isAllowedRequest('https://cdn-lfs.huggingface.co/repos/file')).toBe(true);
     expect(isAllowedRequest('https://example.com/model.gguf')).toBe(false);
+  });
+
+  it('allows every pinned catalog model URL (all six models)', () => {
+    expect(MODEL_LIST).toHaveLength(6);
+    for (const model of MODEL_LIST) {
+      expect(model.url.startsWith('https://huggingface.co/'), model.id).toBe(true);
+      expect(isAllowedRequest(model.url), model.id).toBe(true);
+    }
   });
 });

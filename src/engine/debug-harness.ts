@@ -115,7 +115,7 @@ export function buildHarnessConfigs(probe: BackendProbe, android: boolean): Harn
     },
     {
       id: 'gpu-release',
-      label: `WebGPU + the 1.3.1 Adreno default profile (round 6: ${ADRENO_R6_TUNING.join('+')}; what Automatic / "Optimized" run on Adreno)`,
+      label: `WebGPU + the 1.3.0 Adreno default profile (round 6: ${ADRENO_R6_TUNING.join('+')}; what Automatic / "Optimized" run on Adreno)`,
       selection: { ...gpu, webgpuTuning: ADRENO_R6_TUNING },
       debugProfile: null,
     },

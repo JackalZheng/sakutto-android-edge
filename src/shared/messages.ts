@@ -178,6 +178,8 @@ export interface EngineSettingsSnapshot {
   tier: TierPreference;
   gpuProfile: AdrenoGpuProfile;
   gpuOutputBroken: boolean;
+  /** The stored translation model (1.3.0); absent from older snapshots. */
+  modelId?: ModelId;
 }
 
 /** Offscreen → background: persist (or clear) the broken-GPU-output flag. */
@@ -195,7 +197,8 @@ export function isEngineSettingsSnapshot(value: unknown): value is EngineSetting
     isRecord(value) &&
     isTierPreference(value.tier) &&
     isAdrenoGpuProfile(value.gpuProfile) &&
-    typeof value.gpuOutputBroken === 'boolean'
+    typeof value.gpuOutputBroken === 'boolean' &&
+    (value.modelId === undefined || isModelId(value.modelId))
   );
 }
 

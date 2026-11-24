@@ -1,5 +1,10 @@
 import { MOBILE_MAX_BATCH, MOBILE_MAX_THREADS } from '@/shared/mobile';
-import type { AdrenoGpuProfile } from '@/shared/settings';
+import {
+  ADRENO_PROFILE_SPECS,
+  ADRENO_R6_TUNING,
+  DEFAULT_ADRENO_GPU_PROFILE,
+  type AdrenoGpuProfile,
+} from '@/shared/adreno-profiles';
 
 export type ComputeTier = 'g' | 'c8' | 'c4' | 'c1';
 
@@ -43,21 +48,19 @@ export interface BackendProbe {
 /**
  * The WebGPU setup on an Adreno GPU (settings: "Adreno GPU profile"). ggml-webgpu applies the
  * Adreno defaults by itself (subgroups off, mat-vec workgroup 64, the new SOFT_MAX, 128-wide row
- * reductions, 16 kernels per submit, batched mat-vec for 5-64-token prompts: round 5); the
- * profile only adds tuning tokens on top:
- * - 'optimized': round 6 (`ADRENO_R6_TUNING`): the q4_K one-column mat-vec v2 with 16-byte loads
- *   and 4 rows per thread group, the fused gate+up mat-vec + SWIGLU, and the fused
- *   RMS_NORM+MUL+ADD[+RMS_NORM+MUL] chain. POCO F5 Pro (Adreno 730), PLaMo 3 0.8B, warm:
- *   total 2.25 s, decode 22.2 t/s vs CPU 2.91 s / 17.3 t/s and round 5 2.69 s / 15.9 t/s;
- * - 'compat': round 5 (the 1.3.0 "optimized" setup, no extra tokens), the fallback if the
- *   round-6 kernels misbehave on some Adreno.
- * 1.3.0's 'hybrid' (half the layers on the GPU) is gone: slower than full GPU in every phone
- * run and it once stalled for 41 s; saved settings fall back to 'optimized'.
+ * reductions, 16 kernels per submit, batched mat-vec for 5-64-token prompts: round 5); a profile
+ * adds tuning tokens on top and may change the slot count (`shared/adreno-profiles.ts`):
+ * - 'optimized' (default): round 6 (`ADRENO_R6_TUNING`), the q4_K mat-vec v2 with 4 rows per
+ *   thread group + fused gate/up SWIGLU + fused norm chain. POCO F5 Pro (Adreno 730), PLaMo 3
+ *   0.8B, warm: total 2.25 s, decode 22.2 t/s vs CPU 2.91 s / 17.3 t/s;
+ * - 'q4v2': only the q4_K mat-vec v2 (4 rows), no fusions (2.29 s);
+ * - 'r6': round 6 with 2 rows per group (2.54 s, lighter register pressure);
+ * - 'low-memory': 'optimized' with one slot (n_ctx 1024), for the > 1 GB models or low-RAM phones;
+ * - 'compat': round 5, the 1.3.0-dev default (2.69 s);
+ * - 'r4': round 4, no batched prompt mat-vec and 256-wide row reductions.
  */
 export type { AdrenoGpuProfile };
-
-/** ggml-webgpu tokens of the 'optimized' Adreno profile (round 6, patch 0025). */
-export const ADRENO_R6_TUNING: readonly string[] = ['q4v2r4', 'mvglu', 'fna'];
+export { ADRENO_R6_TUNING };
 
 /**
  * Adreno: two slots of 1024 tokens (n_ctx 2048). The phone sweep showed no speed difference
@@ -251,23 +254,29 @@ export interface RuntimeContext {
   adreno?: boolean;
   /** Settings: the Adreno WebGPU profile (default 'optimized'). */
   gpuProfile?: AdrenoGpuProfile;
+  /**
+   * The active model drifts from the CPU result on Adreno WebGPU (Qwen3, Gemma 3; see
+   * `ModelEntry.gpuExperimental`): "auto" keeps it on the CPU there.
+   */
+  gpuExperimental?: boolean;
 }
 
 /**
- * The Adreno WebGPU selection for a profile: two slots and the profile's tuning tokens. Other
- * selections are returned unchanged.
+ * The Adreno WebGPU selection for a profile: its slot count (two by default) and its tuning
+ * tokens. Other selections are returned unchanged.
  */
 export function applyAdrenoProfile(
   selection: BackendSelection,
-  profile: AdrenoGpuProfile = 'optimized',
+  profile: AdrenoGpuProfile = DEFAULT_ADRENO_GPU_PROFILE,
 ): BackendSelection {
   if (selection.backend !== 'webgpu') return selection;
-  const slots = Math.min(selection.nParallel, WEBGPU_SLOTS_ADRENO);
+  const spec = ADRENO_PROFILE_SPECS[profile] ?? ADRENO_PROFILE_SPECS[DEFAULT_ADRENO_GPU_PROFILE];
+  const slots = Math.max(1, Math.min(selection.nParallel, spec.slots ?? WEBGPU_SLOTS_ADRENO));
   return {
     ...selection,
     nParallel: slots,
     nCtx: WEBGPU_CONTEXT_PER_SLOT * slots,
-    webgpuTuning: profile === 'compat' ? [] : ADRENO_R6_TUNING,
+    webgpuTuning: [...spec.tuning],
   };
 }
 
@@ -284,6 +293,10 @@ export function applyAdrenoProfile(
  * still watches it, and once WebGPU produced broken output here (`gpuOutputBroken`), "auto"
  * and an explicit GPU choice both run on the CPU until GPU is chosen again in the settings
  * (or the extension is updated, see `background.ts`).
+ *
+ * 1.3.0: with a GPU-experimental model (`gpuExperimental`: Qwen3, Gemma 3, which drift from the
+ * CPU result on Adreno), "auto" on Adreno runs on the CPU; an explicit WebGPU choice still runs
+ * the Adreno profile so the model can be tested there.
  */
 export function resolveSelection(
   preference: TierPreference,
@@ -296,6 +309,7 @@ export function resolveSelection(
   let selection: BackendSelection;
   if (adreno) {
     if (broken && (preference === 'auto' || preference === 'g')) selection = cpu();
+    else if (preference === 'auto' && context.gpuExperimental === true) selection = cpu();
     else selection = applyAdrenoProfile(selectionForTier(preference, probe), context.gpuProfile);
   } else if (context.android && (preference === 'auto' || (preference === 'g' && broken))) {
     selection = cpu();

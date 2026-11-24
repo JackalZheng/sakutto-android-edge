@@ -8,7 +8,9 @@
   import type { EngineCapabilities } from '@/shared/capabilities';
   import type { EngineStatus } from '@/shared/engine-status';
   import { hasBuiltInTranslatorUi, isFirefoxBuild } from '@/shared/browser';
-  import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
+  import { currentUiLanguage, t, tForBrowser, type MessageKey } from '@/shared/i18n';
+  import { ADRENO_GPU_PROFILES } from '@/shared/adreno-profiles';
+  import { DEFAULT_MODEL_ID, isGpuExperimentalModel, type ModelId } from '@/engine/model/catalog';
   import { hasAllSitesAccess, requestAllSitesAccess } from '@/shared/all-sites';
   import {
     requestCacheClear,
@@ -62,15 +64,26 @@
   // Release builds do not ship the harness page (it is in `pnpm build:debug` only).
   const showGpuHarness =
     __SAKUTTO_DEBUG_BUILD__ && (androidEdge || webGpuDebugProfileFromUrl(location.href) !== null);
-  const gpuProfiles: readonly AdrenoGpuProfile[] = ['optimized', 'compat'];
+  // Every profile from `shared/adreno-profiles.ts` (the non-garbling GPU harness setups), each
+  // with its recommendation shown under the selector.
+  const gpuProfiles: readonly AdrenoGpuProfile[] = ADRENO_GPU_PROFILES;
   const gpuProfileHelpKey = {
     optimized: 'gpuProfileOptimizedHelp',
+    q4v2: 'gpuProfileQ4v2Help',
+    r6: 'gpuProfileR6Help',
+    'low-memory': 'gpuProfileLowMemoryHelp',
     compat: 'gpuProfileCompatHelp',
-  } as const;
+    r4: 'gpuProfileR4Help',
+  } as const satisfies Record<AdrenoGpuProfile, MessageKey>;
   const gpuProfileLabelKey = {
     optimized: 'gpuProfileOptimized',
+    q4v2: 'gpuProfileQ4v2',
+    r6: 'gpuProfileR6',
+    'low-memory': 'gpuProfileLowMemory',
     compat: 'gpuProfileCompat',
-  } as const;
+    r4: 'gpuProfileR4',
+  } as const satisfies Record<AdrenoGpuProfile, MessageKey>;
+  let activeModelId = $state<ModelId>(DEFAULT_MODEL_ID);
 
   let settings = $state<Settings | null>(null);
   let settingsError = $state<SettingsError>(null);
@@ -209,9 +222,11 @@
     if (!isAdrenoGpuProfile(select.value)) return;
     const gpuProfile: AdrenoGpuProfile = select.value;
     await updateSettings({ gpuProfile });
-    // The engine reads the profile when the tier is applied; reload only if WebGPU is in use.
-    if (settings?.tier === 'g') {
-      await requestEngineTier('g');
+    // The engine reads the profile when the tier is applied; reload only if WebGPU may be in use
+    // (an explicit GPU choice, or Automatic on an Adreno).
+    const tier = settings?.tier;
+    if (tier === 'g' || (tier === 'auto' && capabilities?.gpuAdreno === true)) {
+      await requestEngineTier(tier);
       engine = await requestEngineStatus();
     }
   }
@@ -437,7 +452,7 @@
 
   <section class="panel">
     <h2>{t('modelHeading')}</h2>
-    <ModelManager />
+    <ModelManager onActiveChange={(id) => (activeModelId = id)} />
     {#if showSlow}
       <p class="muted help">{t('slowDeviceHint')}</p>
     {/if}
@@ -472,7 +487,7 @@
       {#if androidEdge && settings.tier === 'g'}
         <p class="error" role="note">{t('tierGpuMobileWarning')}</p>
       {/if}
-      {#if capabilities?.gpuAdreno === true || androidEdge}
+      {#if (capabilities?.gpuAdreno === true || androidEdge) && (settings.tier === 'g' || (settings.tier === 'auto' && capabilities?.gpuAdreno === true))}
         <label class="field">
           <span>{t('gpuProfileLabel')}</span>
           <select value={settings.gpuProfile} onchange={changeGpuProfile}>
@@ -481,10 +496,12 @@
             {/each}
           </select>
         </label>
-        <p class="muted help">{t(gpuProfileHelpKey[settings.gpuProfile])}</p>
-        {#if settings.tier !== 'g' && !(settings.tier === 'auto' && capabilities?.gpuAdreno === true)}
-          <p class="muted help">{t('gpuProfileInactive')}</p>
+        <p class="muted help" role="note">{t(gpuProfileHelpKey[settings.gpuProfile])}</p>
+        {#if settings.tier === 'auto' && isGpuExperimentalModel(activeModelId)}
+          <p class="muted help">{t('gpuProfileExperimentalAuto')}</p>
         {/if}
+      {:else if capabilities?.gpuAdreno === true || androidEdge}
+        <p class="muted help">{t('gpuProfileInactive')}</p>
       {/if}
       <label class="field">
         <span>{t('idleLabel')}</span>

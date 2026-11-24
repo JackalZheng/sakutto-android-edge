@@ -84,7 +84,6 @@ import {
 import { createWllama } from '@/engine/wllama';
 import type { BackendSelection } from '@/engine/in-browser/backend';
 import { isEngineError } from '@/engine/errors';
-import { DEFAULT_MODEL_ID } from '@/engine/model/catalog';
 import { OpfsModelFileStore } from '@/engine/model/file-store';
 import { ModelManager } from '@/engine/model/manager';
 import { probeCapabilities, probeWebGpuAdapter } from '@/shared/capabilities';
@@ -144,16 +143,16 @@ interface ModelRunner {
   unload(): Promise<void>;
 }
 
-/** The production model goes through ModelManager, as before the switcher. */
+/** A catalog model downloaded through ModelManager (the options page shares the file). */
 function productionRunner(manager: ModelManager, model: HarnessModel): ModelRunner {
   return {
     model,
-    load: async (selection) => (await manager.ensureLoaded(DEFAULT_MODEL_ID, selection)).runtime,
+    load: async (selection) => (await manager.ensureLoaded(model.id, selection)).runtime,
     unload: () => manager.unload(),
   };
 }
 
-/** A harness-only model: read from its own OPFS directory into a fresh runtime. */
+/** A copy an older harness build stored in its own OPFS directory, read into a fresh runtime. */
 function harnessRunner(store: HarnessModelStore, model: HarnessModel): ModelRunner {
   let runtime: LlamaRuntime | null = null;
   const unload = async (): Promise<void> => {
@@ -602,32 +601,31 @@ async function main(): Promise<void> {
     await OpfsModelFileStore.open(HARNESS_MODEL_DIRECTORY),
   );
 
-  const isReady = async (): Promise<boolean> => {
-    if (model.production) {
-      const status = await manager.status();
-      return status.state === 'ready' || status.state === 'loaded';
-    }
-    return harnessStore.isDownloaded(model);
+  // 1.3.0: every harness model is a production model, downloaded through ModelManager (shared
+  // with the options page). A copy an older harness build left in its own directory still loads.
+  const productionReady = async (): Promise<boolean> => {
+    const status = await manager.status(model.id);
+    return status.state === 'ready' || status.state === 'loaded';
   };
+  const legacyReady = (): Promise<boolean> => harnessStore.isDownloaded(model).catch(() => false);
   const refreshModelStatus = async (): Promise<boolean> => {
-    const ready = await isReady();
-    if (model.production) {
-      modelStatusEl.textContent = ready
-        ? 'Downloaded (managed by the options page).'
-        : 'Not downloaded. Download it from the options page.';
-      modelDownloadButton.hidden = true;
-      modelDeleteButton.hidden = true;
-      return ready;
-    }
-    const partial = ready ? 0 : await harnessStore.partialBytes(model);
-    modelStatusEl.textContent = ready
-      ? `Downloaded (${formatModelSize(model.size)}).`
-      : partial > 0
-        ? `Partly downloaded (${formatModelSize(partial)} of ${formatModelSize(model.size)}); Download resumes.`
-        : `Not downloaded (${formatModelSize(model.size)}).`;
-    modelDownloadButton.disabled = ready;
-    modelDeleteButton.disabled = !ready && partial === 0;
-    return ready;
+    const production = await productionReady();
+    const legacy = await legacyReady();
+    const partial =
+      production || legacy ? 0 : (await manager.status(model.id).catch(() => null))?.received;
+    modelStatusEl.textContent = production
+      ? `Downloaded (${formatModelSize(model.size)}, shared with the options page).`
+      : legacy
+        ? `Downloaded by an older harness build (${formatModelSize(model.size)}); Delete removes that copy.`
+        : partial && partial > 0
+          ? `Partly downloaded (${formatModelSize(partial)} of ${formatModelSize(model.size)}); Download resumes.`
+          : `Not downloaded (${formatModelSize(model.size)}).`;
+    modelDownloadButton.hidden = false;
+    modelDeleteButton.hidden = false;
+    modelDownloadButton.disabled = production || legacy;
+    // Production files are deleted from the options page; the harness only removes old copies.
+    modelDeleteButton.disabled = !legacy;
+    return production || legacy;
   };
 
   let downloadController: AbortController | null = null;
@@ -647,11 +645,14 @@ async function main(): Promise<void> {
       modelCancelButton.hidden = false;
       log(`download ${model.id}: ${model.url}`);
       try {
-        await harnessStore.downloadFile(model, downloadController.signal, (progress) => {
-          modelStatusEl.textContent =
-            progress.phase === 'verify'
-              ? 'Verifying sha256…'
-              : `Downloading ${Math.floor(progress.ratio * 100)}% (${formatModelSize(progress.received)} of ${formatModelSize(progress.total)})`;
+        await manager.download(model.id, {
+          signal: downloadController.signal,
+          onProgress: (progress) => {
+            modelStatusEl.textContent =
+              progress.phase === 'verify'
+                ? 'Verifying sha256…'
+                : `Downloading ${Math.floor(progress.ratio * 100)}% (${formatModelSize(progress.received)} of ${formatModelSize(progress.total)})`;
+          },
         });
         log(`download ${model.id}: done, sha256 verified`);
         location.reload();
@@ -669,26 +670,27 @@ async function main(): Promise<void> {
     downloadController?.abort();
   });
   modelDeleteButton.addEventListener('click', () => {
-    if (!confirm(`刪除 ${model.name} 的下載檔（${formatModelSize(model.size)}）？`)) return;
+    if (
+      !confirm(`刪除舊版測試工具留下的 ${model.name} 下載檔（${formatModelSize(model.size)}）？`)
+    ) {
+      return;
+    }
     void (async () => {
       await harnessStore.remove(model);
-      log(`deleted ${model.id}`);
+      log(`deleted the old harness copy of ${model.id}`);
       location.reload();
     })();
   });
 
   if (!(await refreshModelStatus())) {
     statusEl.textContent =
-      `${model.name} is not downloaded. ` +
-      (model.production
-        ? 'Download the model from the options page first, then reopen this page. '
-        : 'Use Download above. ') +
+      `${model.name} is not downloaded. Use Download above (or the options page). ` +
       'The op diagnostics below still work without it.';
     return;
   }
   statusEl.textContent = `${model.name} ready. Keep other Sakutto pages closed while the harness runs.`;
 
-  const runner = model.production
+  const runner = (await productionReady())
     ? productionRunner(manager, model)
     : harnessRunner(harnessStore, model);
   // Layer-index tensor overrides follow the PLaMo 3 layout, so other models skip them.

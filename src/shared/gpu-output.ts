@@ -6,12 +6,13 @@ import { browser } from 'wxt/browser';
  * GPU computes wrong results does not retry it on every page. Choosing WebGPU again in the
  * options clears it.
  *
- * Since 1.3.1 the stored value is the extension version that saw the broken output, and the
- * flag only counts for that version: an update ships new GPU kernels (1.3.1 made the round-6
- * kernels the Adreno default and "auto" use them), so a verdict about the old kernels must not
- * keep the new ones off for good. 1.3.0 and earlier stored `true`, which therefore no longer
- * counts. If the new kernels are broken too, the output guard catches it once and sets the
- * flag again for this version.
+ * Since the 1.3.0 store release the stored value is the extension version that saw the broken
+ * output, and the flag only counts for that version: an update ships new GPU kernels (1.3.0
+ * made the round-6 kernels the Adreno default and "auto" use them), so a verdict about the old
+ * kernels must not keep the new ones off for good. 1.2.x and the 1.3.0 development build stored
+ * `true`, which therefore no longer counts; a 1.3.1 development build stored "1.3.1", which
+ * does not match "1.3.0" either. If the new kernels are broken too, the output guard catches it
+ * once and sets the flag again for this version. GPU-experimental models never set it (host.ts).
  */
 export const GPU_OUTPUT_BROKEN_KEY = 'webgpuOutputBroken';
 

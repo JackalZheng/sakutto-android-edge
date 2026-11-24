@@ -6,12 +6,13 @@
  * useless), the built-in Chrome Translator API does not exist, the
  * service worker / offscreen document is killed more aggressively, and
  * most Android GPUs fall back to the WASM CPU path. The port therefore
- * treats Edge on Android as a touch-first, PLaMo-only, 0.8B-only target.
+ * treats Edge on Android as a touch-first target. Until 1.2.x only PLaMo 3 0.8B was offered;
+ * 1.3.0 offers every catalog model (the settings warn about the > 1 GB ones on a phone).
  */
 
-import { getModel, type ModelId } from '@/engine/model/catalog';
+import { getModel, isModelId, type ModelId } from '@/engine/model/catalog';
 
-/** The only model offered on Edge for Android: 573 MB, not the 1.8 GB 2B. */
+/** The default model on Edge for Android: 573 MB, the one the onboarding downloads. */
 export const MOBILE_MODEL_ID: ModelId = 'plamo-3-translate-0.8b-q4_k_m';
 
 /** Conservative engine limits for a phone: fewer threads, smaller batch. */
@@ -81,8 +82,9 @@ export function warmBeforePageCommand(): boolean {
   return !isTouchRuntime();
 }
 
+/** 1.3.0: every catalog model may be downloaded and used on a phone. */
 export function isMobileModelAllowed(modelId: ModelId): boolean {
-  return modelId === MOBILE_MODEL_ID;
+  return isModelId(modelId);
 }
 
 export function mobileModelSizeBytes(): number {

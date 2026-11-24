@@ -85,7 +85,35 @@ python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json'))
    text page. Keyboard shortcuts and the right-click menu will not
    be there — that is expected on Android.
 
-## v1.3.1: Automatic on Adreno = WebGPU (round 6)
+## v1.3.0 (store release): six models and six Adreno profiles
+
+The store release is numbered 1.3.0 and includes the 1.3.1 development
+notes below.
+
+- **Models** (Settings → Model, smallest file first, all offered on Android):
+
+  | Model                            | Size    | License                 | GPU on Adreno                  |
+  | -------------------------------- | ------- | ----------------------- | ------------------------------ |
+  | Qwen3 0.6B                       | 397 MB  | Apache-2.0              | experimental (Automatic → CPU) |
+  | PLaMo 3 Translate 0.8B (default) | 573 MB  | PLaMo Community License | yes                            |
+  | Gemma 3 1B IT                    | 806 MB  | Gemma Terms of Use      | experimental (Automatic → CPU) |
+  | Qwen3 1.7B                       | 1.11 GB | Apache-2.0              | experimental (Automatic → CPU) |
+  | Hy-MT2 1.8B                      | 1.13 GB | Apache-2.0              | yes                            |
+  | PLaMo 3 Translate 2B             | 1.81 GB | PLaMo Community License | yes                            |
+
+  The chosen model is stored in the settings (`modelId`) and the engine host
+  starts on it. Prompts: `src/engine/prompt/model-prompt.ts`.
+
+- **Adreno GPU profiles** (`src/shared/adreno-profiles.ts`): Optimized
+  (`q4v2r4+mvglu+fna`, 2 slots), q4_K only (`q4v2r4`), Round 6 2 rows
+  (`q4v2r2+mvglu+fna`), Low memory (Optimized with 1 slot, n_ctx 1024),
+  Compatible (round 5, no tokens), Round 4 (`bmv0+rwg256`). The subgroup
+  profiles (`adreno-upstream`, `adreno-subgroups`, `adreno-sg-tiled`) garble
+  and are harness-only; `sub64` lost the device; hybrid was removed.
+- A broken-output verdict on a GPU-experimental model moves that load to the
+  CPU without storing the per-version flag.
+
+## v1.3.1 (development build): Automatic on Adreno = WebGPU (round 6)
 
 - **Automatic on Adreno = WebGPU** with the Adreno profile (Edge for Android
   and Windows on Snapdragon). POCO F5 Pro (Adreno 730, PLaMo 3 0.8B, one

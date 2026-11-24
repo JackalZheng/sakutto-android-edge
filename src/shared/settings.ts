@@ -1,4 +1,10 @@
 import type { GlossaryEntry } from '@/engine/types';
+import {
+  DEFAULT_ADRENO_GPU_PROFILE,
+  isAdrenoGpuProfile,
+  type AdrenoGpuProfile,
+} from './adreno-profiles';
+import { DEFAULT_MODEL_ID, isModelId, type ModelId } from '@/engine/model/catalog';
 import { normalizeGlossary } from './glossary';
 import {
   DEFAULT_TARGET_LANGUAGE,
@@ -36,15 +42,9 @@ export type Formality = 'polite' | 'plain';
 export type DisplayMode = 'replace' | 'bilingual';
 export type TierPreference = 'auto' | 'g' | 'c8' | 'c4' | 'c1';
 
-/**
- * See `applyAdrenoProfile` (engine/in-browser/backend.ts). 1.3.0 also had 'hybrid' (half the
- * layers on the GPU); 1.3.1 removed it, and a stored 'hybrid' normalizes to 'optimized'.
- */
-export type AdrenoGpuProfile = 'optimized' | 'compat';
-
-export function isAdrenoGpuProfile(value: unknown): value is AdrenoGpuProfile {
-  return value === 'optimized' || value === 'compat';
-}
+/** See `shared/adreno-profiles.ts` and `applyAdrenoProfile` (engine/in-browser/backend.ts). */
+export type { AdrenoGpuProfile };
+export { isAdrenoGpuProfile };
 export type TranslationPace = 'fast' | 'quality';
 export type IdleMinutes = 0 | 1 | 5 | 15;
 export const COMPOSE_PLACEMENTS = ['above', 'below', 'corner', 'free'] as const;
@@ -79,6 +79,8 @@ export interface Settings {
   tier: TierPreference;
   /** WebGPU setup on an Adreno GPU; only used when WebGPU is chosen there. */
   gpuProfile: AdrenoGpuProfile;
+  /** The translation model in use (1.3.0); the engine host switches to it when it starts. */
+  modelId: ModelId;
   pace: TranslationPace;
   /** False hides the あA button on message boxes. The shortcut and context menu stay. */
   composeIcon: boolean;
@@ -117,6 +119,7 @@ export type SettingsPatch = Partial<
     | 'idleMinutes'
     | 'tier'
     | 'gpuProfile'
+    | 'modelId'
     | 'pace'
     | 'composeIcon'
     | 'composeTargetLanguage'
@@ -138,7 +141,8 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   glossary: [],
   idleMinutes: 5,
   tier: 'auto',
-  gpuProfile: 'optimized',
+  gpuProfile: DEFAULT_ADRENO_GPU_PROFILE,
+  modelId: DEFAULT_MODEL_ID,
   pace: 'quality',
   composeIcon: true,
   shortcutsEnabled: defaultShortcutEnabled(),
@@ -186,6 +190,7 @@ export function normalizeSettings(value: unknown, uiLanguage: string): Settings 
     idleMinutes: isIdleMinutes(value.idleMinutes) ? value.idleMinutes : defaults.idleMinutes,
     tier: isTierPreference(value.tier) ? value.tier : defaults.tier,
     gpuProfile: isAdrenoGpuProfile(value.gpuProfile) ? value.gpuProfile : defaults.gpuProfile,
+    modelId: isModelId(value.modelId) ? value.modelId : defaults.modelId,
     pace: isTranslationPace(value.pace) ? value.pace : defaults.pace,
     composeIcon: value.composeIcon !== false,
     shortcutsEnabled: normalizeShortcutEnabled(value.shortcutsEnabled),

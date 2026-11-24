@@ -149,9 +149,15 @@ export function fakeEngine(
 export function makeEntry(overrides: Partial<ModelEntry> = {}): ModelEntry {
   return {
     id: 'plamo-3-translate-0.8b-q4_k_m',
+    name: 'PLaMo 3 Translate 0.8B',
     params: '0.8B',
     quantization: 'Q4_K_M',
+    architecture: 'plamo3',
     layers: 16,
+    format: 'plamo3',
+    license: 'plamo-community',
+    gpuExperimental: false,
+    translationModel: true,
     repository: 'pfnet/example-GGUF',
     file: 'model.gguf',
     commit: 'abc123',

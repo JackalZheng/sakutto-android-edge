@@ -5,6 +5,7 @@ import type {
   TranslateSegment,
   TranslationChunk,
 } from '../types';
+import { modelPromptFormat } from '../model/catalog';
 import type { BackendSelection } from './backend';
 import { InBrowserEngine, type InBrowserEngineOptions } from './engine';
 import type { LlamaRuntime } from './runtime';
@@ -12,6 +13,8 @@ import type { LlamaRuntime } from './runtime';
 export interface LoadedRuntime {
   runtime: LlamaRuntime;
   selection: BackendSelection;
+  /** The catalog model id; picks the prompt format (unset: PLaMo 3). */
+  id?: string;
 }
 
 export interface LazyInBrowserEngineOptions {
@@ -202,6 +205,7 @@ export class LazyInBrowserEngine implements IdentifiedEngine {
 
     const engine = new InBrowserEngine(loaded.runtime, {
       contextTokens: Math.floor(loaded.selection.nCtx / Math.max(1, loaded.selection.nParallel)),
+      format: modelPromptFormat(loaded.id ?? ''),
       ...(this.options.config ? { config: this.options.config } : {}),
     });
     this.backends.set(engine, loaded.selection.backend);

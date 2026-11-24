@@ -43,6 +43,8 @@ describe('perf configs', () => {
       'gpu-mvglu',
       'gpu-fna',
       'gpu-r6',
+      'gpu-r6-r4-1-slot',
+      'gpu-r4',
       'gpu-r5-half',
       'gpu-r6-r4-half',
       'gpu-r6-r4-repeat',

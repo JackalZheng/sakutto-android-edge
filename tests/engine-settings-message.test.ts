@@ -28,4 +28,28 @@ describe('engine settings bridge (offscreen has no storage)', () => {
     ).toBe(false);
     expect(isEngineSettingsSnapshot(null)).toBe(false);
   });
+
+  it('carries every 1.3.0 profile and the stored model', () => {
+    for (const gpuProfile of ['optimized', 'q4v2', 'r6', 'low-memory', 'compat', 'r4']) {
+      expect(isEngineSettingsSnapshot({ tier: 'auto', gpuProfile, gpuOutputBroken: false })).toBe(
+        true,
+      );
+    }
+    expect(
+      isEngineSettingsSnapshot({
+        tier: 'auto',
+        gpuProfile: 'optimized',
+        gpuOutputBroken: false,
+        modelId: 'hy-mt2-1.8b-q4_k_m',
+      }),
+    ).toBe(true);
+    expect(
+      isEngineSettingsSnapshot({
+        tier: 'auto',
+        gpuProfile: 'optimized',
+        gpuOutputBroken: false,
+        modelId: 'gpt-5',
+      }),
+    ).toBe(false);
+  });
 });

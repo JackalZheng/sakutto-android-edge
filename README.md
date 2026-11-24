@@ -17,9 +17,9 @@ The extension is free and open source (MIT). It has no ads and no paid features.
 
 Edge for Android port: see [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) — PLaMo-only, 0.8B-only, no keyboard shortcuts, install via Edge Canary / Edge Add-ons.
 
-**v1.3.1 (port):** Settings → Compute backend offers Automatic (recommended), GPU (WebGPU) and CPU, and shows the detected GPU. On Qualcomm Adreno, Automatic now uses WebGPU with the round-6 kernels (about 2.25 s per paragraph vs 2.9 s on the CPU on a POCO F5 Pro); the Adreno GPU profile offers Optimized (round 6) and Compatible (round 5). If the GPU garbles text, Sakutto moves to the CPU by itself. Qwen3/Gemma on GPU remain experimental (debug harness only). See [CHANGELOG.md](CHANGELOG.md).
+**v1.3.0 (port):** Settings → Model lists six models by size (Qwen3 0.6B, PLaMo 3 0.8B default, Gemma 3 1B, Qwen3 1.7B, Hy-MT2 1.8B, PLaMo 3 2B); Qwen3/Gemma are marked GPU experimental and run on the CPU under Automatic on Adreno. Settings → Compute backend offers Automatic (recommended), GPU (WebGPU) and CPU, and shows the detected GPU. On Qualcomm Adreno, Automatic now uses WebGPU with the round-6 kernels (about 2.25 s per paragraph vs 2.9 s on the CPU on a POCO F5 Pro); the Adreno GPU profile offers six setups (Optimized r6-r4, q4_K only, round 6 with 2 rows, Low memory, Compatible r5, Round 4), each with a recommendation. If the GPU garbles text, Sakutto moves to the CPU by itself. See [CHANGELOG.md](CHANGELOG.md).
 
-> **v1.3.1（移植版）：** 設定 →「運算後端」可選「自動（建議）」、「GPU (WebGPU)」、「CPU」，並顯示偵測到的 GPU。在 Qualcomm Adreno 上，「自動」現在會使用第 6 輪核心的 WebGPU（POCO F5 Pro 上每段約 2.25 秒，CPU 約 2.9 秒）；「Adreno GPU 設定檔」可選「最佳化」（第 6 輪）與「相容（第 5 輪）」。GPU 若產生亂碼，Sakutto 會自動改用 CPU。Qwen3／Gemma 的 GPU 執行仍屬實驗性（僅除錯工具）。
+> **v1.3.0（移植版）：** 設定 →「模型」依檔案大小列出 6 個模型（Qwen3 0.6B、PLaMo 3 0.8B（預設）、Gemma 3 1B、Qwen3 1.7B、Hy-MT2 1.8B、PLaMo 3 2B）；Qwen3／Gemma 標示「GPU 實驗性」，在 Adreno 上「自動」會用 CPU。設定 →「運算後端」可選「自動（建議）」、「GPU (WebGPU)」、「CPU」，並顯示偵測到的 GPU。在 Qualcomm Adreno 上，「自動」現在會使用第 6 輪核心的 WebGPU（POCO F5 Pro 上每段約 2.25 秒，CPU 約 2.9 秒）；「Adreno GPU 設定檔」提供 6 種設定（最佳化 r6-r4、純 q4_K 新算法、第 6 輪每組 2 列、低記憶體、相容 r5、第 4 輪相容），各附建議說明。GPU 若產生亂碼，Sakutto 會自動改用 CPU。
 
 ## Install
 
