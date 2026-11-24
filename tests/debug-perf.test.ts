@@ -34,6 +34,7 @@ describe('perf configs', () => {
     const ids = configs.map((c) => c.id);
     expect(ids).toEqual([
       'cpu',
+      'cpu-2-slot',
       'gpu-r6-r4',
       'gpu-r5',
       'gpu-q4v2',
@@ -48,8 +49,9 @@ describe('perf configs', () => {
       'gpu-r5-half',
       'gpu-r6-r4-half',
       'gpu-r6-r4-repeat',
+      'gpu-r6-r4-4-slot',
     ]);
-    for (const config of configs.slice(1)) {
+    for (const config of configs.filter((c) => c.selection.backend === 'webgpu')) {
       expect(config.tuning).toContain('perf');
       expect(config.debugProfile).toBe('adreno-matvec');
       for (const token of config.tuning) expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token)).toBe(true);
@@ -99,6 +101,7 @@ describe('perf configs', () => {
     );
     expect(buildPerfConfigs({ ...probe, webgpu: false }, true, 16).map((c) => c.id)).toEqual([
       'cpu',
+      'cpu-2-slot',
     ]);
   });
 

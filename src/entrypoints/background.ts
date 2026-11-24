@@ -44,6 +44,7 @@ import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
 import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
 import {
   clearCrashedModelLoad,
+  clearGpuCrashedModelLoads,
   isModelLoadCrashQuery,
   isModelLoadMarkUpdate,
   recoverFromCrashedModelLoad,
@@ -242,7 +243,7 @@ export default defineBackground(() => {
     // Load-crash guard (Edge for Android): the engine host marks each model load here, and a
     // new host asks once whether the previous one died inside a load.
     if (isModelLoadMarkUpdate(message)) {
-      void writeModelLoadMark(message.modelId).then(
+      void writeModelLoadMark(message.modelId, message.backend).then(
         () => sendResponse(true),
         () => sendResponse(false),
       );
@@ -251,7 +252,7 @@ export default defineBackground(() => {
 
     if (isModelLoadCrashQuery(message)) {
       void recoverFromCrashedModelLoad().then(
-        (crashed) => sendResponse(crashed),
+        (report) => sendResponse(report),
         () => sendResponse(null),
       );
       return true;
@@ -360,10 +361,15 @@ export default defineBackground(() => {
     }
 
     if (isEngineTierRequest(message)) {
-      void client.setTier(message.tier).then(
-        () => sendResponse(true),
-        () => sendResponse(false),
-      );
+      // WebGPU chosen again: models the load-crash guard moved to the CPU may try it again.
+      const cleared =
+        message.tier === 'g' ? clearGpuCrashedModelLoads().catch(() => undefined) : undefined;
+      void Promise.resolve(cleared)
+        .then(() => client.setTier(message.tier))
+        .then(
+          () => sendResponse(true),
+          () => sendResponse(false),
+        );
       return true;
     }
 
@@ -418,7 +424,8 @@ export default defineBackground(() => {
         async (status) => {
           // Remembered so the engine host comes back on this model after it is released.
           await saveSettings({ modelId: message.modelId }).catch(() => undefined);
-          // Chosen again after a load crash: the guard records it again if it crashes again.
+          // Chosen again after a CPU load crash: the guard records it again if it crashes again
+          // (a WebGPU crash record stays: the model keeps running on the CPU).
           await clearCrashedModelLoad(message.modelId).catch(() => undefined);
           void broadcast({ type: 'model:progress', status });
           sendResponse(status);

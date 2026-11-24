@@ -1,5 +1,6 @@
 import {
   ADRENO_R6_TUNING,
+  applyAdrenoProfile,
   applyMobileLimits,
   selectionForTier,
   type BackendProbe,
@@ -8,6 +9,18 @@ import {
 import { composeWebGpuDebugString, type WebGpuDebugProfile } from '@/shared/gpu-diagnostic';
 import { ADRENO_PROFILE_SPECS } from '@/shared/adreno-profiles';
 import { MODEL_LIST } from './model/catalog';
+import {
+  formatWorkloadRuns,
+  formatWorkloadTable,
+  WORKLOAD_CONFIG_IDS,
+  type WorkloadRun,
+} from './debug-workload';
+
+function withoutTuning(selection: BackendSelection): BackendSelection {
+  const rest = { ...selection };
+  delete rest.webgpuTuning;
+  return rest;
+}
 
 /**
  * GPU perf breakdown and tuning sweep for the debug harness (pure part).
@@ -60,9 +73,21 @@ export function buildPerfConfigs(
       debugProfile: null,
       tuning: [],
     },
+    {
+      // Title vs paragraph comparison only: the CPU with two sequences (each its full compute).
+      id: 'cpu-2-slot',
+      label: `CPU (${cpu.nThreads} threads) with 2 slots (n_ctx 2048), comparison only`,
+      selection: { ...cpu, nParallel: 2, nCtx: 2048 },
+      debugProfile: null,
+      tuning: [],
+      sweep: false,
+    },
   ];
   if (!probe.webgpu) return configs;
-  const gpu = limit(selectionForTier('g', probe));
+  // Adreno: the production slot count (2, `applyAdrenoProfile`); before 1.3.0 the harness ran
+  // the plain WebGPU width (4 slots, n_ctx 4096) here. The tuning comes from each config.
+  const gpuBase = selectionForTier('g', probe);
+  const gpu = limit(probe.adreno === true ? withoutTuning(applyAdrenoProfile(gpuBase)) : gpuBase);
   const mv = (
     id: string,
     label: string,
@@ -134,6 +159,17 @@ export function buildPerfConfigs(
     );
   }
   configs.push(mv('gpu-r6-r4-repeat', '1.3.0 default again (thermal drift check)', gpu, r6r4));
+  // Title vs paragraph comparison only (`WORKLOAD_CONFIG_IDS`): the slot counts the GPU and the
+  // CPU could use. Not in the sweep; nothing in the settings uses them (1.3.0).
+  configs.push({
+    ...mv(
+      'gpu-r6-r4-4-slot',
+      '1.3.0 default with 4 slots (n_ctx 4096), comparison only',
+      { ...gpu, nParallel: 4, nCtx: 4096 },
+      r6r4,
+    ),
+    sweep: false,
+  });
   return configs;
 }
 
@@ -160,6 +196,11 @@ export function resolvePerfConfig(configs: readonly PerfConfig[], id: string): P
  */
 export function perfSweepQueue(configs: readonly PerfConfig[]): string[] {
   return configs.filter((c) => c.sweep !== false).map((c) => c.id);
+}
+
+/** The title vs paragraph comparison: the configs of `WORKLOAD_CONFIG_IDS` this device has. */
+export function workloadQueue(configs: readonly PerfConfig[]): string[] {
+  return WORKLOAD_CONFIG_IDS.filter((id) => configs.some((c) => c.id === id));
 }
 
 /** The breakdown: the chosen config, then its per-op variant only when asked for (WebGPU only). */
@@ -378,6 +419,8 @@ export interface PerfResult {
   gpuOps: GpuOpsSummary | null;
   /** ggml-webgpu load lines worth seeing (device, tuning, adreno). */
   notes: string[];
+  /** Title vs paragraph comparison (`debug-workload.ts`): the measured runs (set B). */
+  workload?: WorkloadRun[];
 }
 
 export function describeSelection(selection: BackendSelection): string {
@@ -467,6 +510,7 @@ export function formatPerfResult(result: PerfResult): string[] {
       }
     }
   }
+  if (result.workload) lines.push(...formatWorkloadRuns(result.workload));
   if (warm ?? cold) lines.push(`  output: ${JSON.stringify((warm ?? cold)!.output.slice(0, 80))}`);
   if (result.error) lines.push(`  ERROR: ${result.error}`);
   return lines;
@@ -477,6 +521,16 @@ export function formatPerfReport(
   results: readonly PerfResult[],
 ): string {
   const lines = ['=== Sakutto GPU perf report ===', ...header, ''];
+  if (results.some((r) => r.workload !== undefined)) {
+    lines.push(
+      ...formatWorkloadTable(
+        results.map((r) => ({ configId: r.configId, runs: r.workload, error: r.error })),
+      ),
+      '',
+    );
+    for (const r of results) lines.push(...formatPerfResult(r), '');
+    return lines.join('\n');
+  }
   lines.push('summary (run 2 = warm; t/s from llama.cpp timings):');
   lines.push('  config               load_ms  ttft_ms  total_ms  prompt_t/s  decode_t/s  ms/token');
   for (const r of results) {
@@ -502,6 +556,8 @@ export function formatPerfReport(
 
 export interface PerfSweepState {
   modelId: string;
+  /** `workload`: the title vs paragraph comparison instead of the fixed-prompt timing. */
+  mode?: 'perf' | 'workload';
   queue: string[];
   /** Set just before a config starts; still set on the next load means the page died. */
   running: string | null;
@@ -511,7 +567,7 @@ export interface PerfSweepState {
 }
 
 export function emptyPerfState(modelId: string): PerfSweepState {
-  return { modelId, queue: [], running: null, partial: null, results: [] };
+  return { modelId, mode: 'perf', queue: [], running: null, partial: null, results: [] };
 }
 
 export function parsePerfState(raw: string | null): PerfSweepState | null {
@@ -527,6 +583,7 @@ export function parsePerfState(raw: string | null): PerfSweepState | null {
     }
     return {
       modelId: value.modelId,
+      mode: value.mode === 'workload' ? 'workload' : 'perf',
       queue: value.queue.filter((id): id is string => typeof id === 'string'),
       running: typeof value.running === 'string' ? value.running : null,
       partial:

@@ -69,7 +69,7 @@ describe('Edge for Android mobile target', () => {
   it('keeps 0.8B as the mobile default and allows every catalog model (1.3.0)', () => {
     expect(MOBILE_MODEL_ID).toBe('plamo-3-translate-0.8b-q4_k_m');
     expect(isMobileModelAllowed('plamo-3-translate-0.8b-q4_k_m')).toBe(true);
-    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(false);
+    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(true);
     expect(isMobileModelAllowed('hy-mt2-1.8b-q4_k_m')).toBe(true);
     expect(isMobileModelAllowed('qwen3-0.6b-q4_k_m')).toBe(true);
     expect(isMobileModelAllowed('nope' as never)).toBe(false);

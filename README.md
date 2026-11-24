@@ -15,7 +15,7 @@ Sakutto is an unofficial extension for Chrome and Firefox that translates web pa
 
 The extension is free and open source (MIT). It has no ads and no paid features. The model weights are not in this repository or in the extension package.
 
-Edge for Android port: see [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) — every model up to Hy-MT2 1.8B (PLaMo 3 2B is desktop-only), no keyboard shortcuts on a phone, install via Edge Canary / Edge Add-ons.
+Edge for Android port: see [docs/EDGE_ANDROID.md](docs/EDGE_ANDROID.md) — every model (the ones over 1 GB run on the CPU on a phone), no keyboard shortcuts on a phone, install via Edge Canary / Edge Add-ons.
 
 **v1.3.0 (port):** Settings → Model lists six models by size (Qwen3 0.6B, PLaMo 3 0.8B default, Gemma 3 1B, Qwen3 1.7B, Hy-MT2 1.8B, PLaMo 3 2B); Qwen3/Gemma are marked GPU experimental and run on the CPU under Automatic on Adreno. Settings → Compute backend offers Automatic (recommended), GPU (WebGPU) and CPU, and shows the detected GPU. On Qualcomm Adreno, Automatic now uses WebGPU with the round-6 kernels (about 2.25 s per paragraph vs 2.9 s on the CPU on a POCO F5 Pro); the Adreno GPU profile offers six setups (Optimized r6-r4, q4_K only, round 6 with 2 rows, Low memory, Compatible r5, Round 4), each with a recommendation. If the GPU garbles text, Sakutto moves to the CPU by itself. See [CHANGELOG.md](CHANGELOG.md).
 

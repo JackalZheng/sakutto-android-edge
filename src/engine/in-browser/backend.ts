@@ -250,6 +250,11 @@ export function applyMobileLimits(selection: BackendSelection): BackendSelection
  * Load limits for a model over 1 GB on a phone: one sequence of 1024 tokens and a 128-token
  * batch. Hy-MT2 1.8B: KV 128 -> 64 MiB (32 full-attention layers), CPU compute (the logits
  * for a whole batch over a 120k vocabulary) 122 -> 61 MiB, WebGPU compute 27 -> 13 MiB.
+ *
+ * Kept on the CPU too (where these models run on a phone, see `phoneKeepsOffGpu`): 1024 tokens
+ * is what every WebGPU slot gets as well, the planner splits a longer block to fit
+ * (`sourceTokenBudget`), and the single CPU sequence never needed more. n_ctx 2048 would only
+ * add 64 MiB of KV (Hy-MT2) to a page that is close to the phone's limit with a 1.1-1.8 GB file.
  */
 export const LARGE_MODEL_PHONE_LIMITS = Object.freeze({ nParallel: 1, nCtx: 1024, nBatch: 128 });
 
@@ -289,6 +294,29 @@ export interface RuntimeContext {
   gpuExperimental?: boolean;
   /** File size of the active model: over 1 GB, a phone loads it with `LARGE_MODEL_PHONE_LIMITS`. */
   modelBytes?: number;
+  /**
+   * The active model crashed the engine page in a WebGPU load on this phone (load-crash guard,
+   * `model-load-guard.ts`): it runs on the CPU until WebGPU is chosen again in the settings.
+   */
+  gpuCrashed?: boolean;
+}
+
+/** True for a model over 1 GB on a phone (Qwen3 1.7B, Hy-MT2 1.8B, PLaMo 3 2B). */
+export function isLargeModelOnPhone(
+  context: Pick<RuntimeContext, 'android' | 'modelBytes'>,
+): boolean {
+  return context.android && (context.modelBytes ?? 0) > LARGE_MODEL_BYTES;
+}
+
+/**
+ * Edge for Android: the active model runs on the CPU even under "auto" on an Adreno or an
+ * explicit WebGPU choice. A model over 1 GB crashed the engine page in its WebGPU load on the
+ * POCO F5 Pro (Hy-MT2 1.8B, PLaMo 3 2B): the GPU buffers come out of the same memory as the page,
+ * on top of the file the page already holds. The same models ran fine on the CPU there. A model
+ * the load-crash guard caught crashing on WebGPU here (`gpuCrashed`) runs on the CPU too.
+ */
+export function phoneKeepsOffGpu(context: RuntimeContext): boolean {
+  return context.android && (isLargeModelOnPhone(context) || context.gpuCrashed === true);
 }
 
 /**
@@ -327,6 +355,9 @@ export function applyAdrenoProfile(
  * 1.3.0: with a GPU-experimental model (`gpuExperimental`: Qwen3, Gemma 3, which drift from the
  * CPU result on Adreno), "auto" on Adreno runs on the CPU; an explicit WebGPU choice still runs
  * the Adreno profile so the model can be tested there.
+ *
+ * 1.3.0 (phone): a model over 1 GB, or one that crashed in a WebGPU load here, runs on the CPU
+ * for "auto" and an explicit WebGPU choice alike (`phoneKeepsOffGpu`). The CPU tiers are kept.
  */
 export function resolveSelection(
   preference: TierPreference,
@@ -337,7 +368,9 @@ export function resolveSelection(
   const broken = context.gpuOutputBroken === true;
   const cpu = (): BackendSelection => selectionForTier('auto', { ...probe, webgpu: false });
   let selection: BackendSelection;
-  if (adreno) {
+  if ((preference === 'auto' || preference === 'g') && phoneKeepsOffGpu(context)) {
+    selection = cpu();
+  } else if (adreno) {
     if (broken && (preference === 'auto' || preference === 'g')) selection = cpu();
     else if (preference === 'auto' && context.gpuExperimental === true) selection = cpu();
     else selection = applyAdrenoProfile(selectionForTier(preference, probe), context.gpuProfile);

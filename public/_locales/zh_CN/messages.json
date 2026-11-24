@@ -1150,7 +1150,7 @@
     "message": "许可"
   },
   "modelLargeMobileWarning": {
-    "message": "超过 1 GB：手机上会自动以省内存方式加载（1 个槽、n_ctx 1024、批次 128），下载和加载较慢、内存压力大。若加载时引擎被关闭，会自动改回 PLaMo 3 0.8B。"
+    "message": "超过 1 GB：手机上以 CPU 运行，选择 WebGPU 也一样（WebGPU 的内存与页面共用同一块 RAM，这些模型用 GPU 加载时页面会被关闭）。以 1 个槽、n_ctx 1024、批次 128 加载，下载和加载较慢。若用 CPU 加载时引擎仍被关闭，会自动改回 PLaMo 3 0.8B。"
   },
   "modelGemmaTerms": {
     "message": "下载并使用 Gemma 即表示你同意 Gemma 使用条款与禁止用途政策。"
@@ -1173,10 +1173,13 @@
   "modelDescPlamoLarge": {
     "message": "PLaMo 翻译的高质量版，文件最大、手机内存压力最高。"
   },
-  "modelTooLargeMobile": {
-    "message": "手机上不提供：PLaMo 3 2B 需要约 1.9 GB 内存（权重 1.7 GB），超过 Edge for Android 一个页面可用的量，加载时会被关闭。已下载的文件可以在这里删除。"
-  },
   "modelLoadCrashed": {
-    "message": "上次在这部手机加载此模型时，翻译引擎被 Edge 关闭了（内存不足），因此已改回 PLaMo 3 0.8B。可以再试一次“使用”，若再次被关闭会自动改回。"
+    "message": "上次在这部手机以 CPU 加载此模型时，翻译引擎被 Edge 关闭了（内存不足），因此已改回 PLaMo 3 0.8B。可以再试一次“使用”，若再次被关闭会自动改回。"
+  },
+  "modelLoadCrashedGpu": {
+    "message": "上次在这部手机以 WebGPU 加载此模型时，翻译引擎被 Edge 关闭了（内存不足），现在改以 CPU 运行。要再试 GPU，请在引擎设置中重新选择 WebGPU。"
+  },
+  "tierLargeModelCpuMobile": {
+    "message": "当前模型超过 1 GB：手机上即使选择 WebGPU 也会以 CPU 运行。GPU 内存与页面共用，这些模型用 WebGPU 加载时页面会被关闭。PLaMo 3 0.8B 等较小的模型仍会使用 WebGPU。"
   }
 }

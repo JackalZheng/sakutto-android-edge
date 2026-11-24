@@ -10,7 +10,13 @@
   import { hasBuiltInTranslatorUi, isFirefoxBuild } from '@/shared/browser';
   import { currentUiLanguage, t, tForBrowser, type MessageKey } from '@/shared/i18n';
   import { ADRENO_GPU_PROFILES } from '@/shared/adreno-profiles';
-  import { DEFAULT_MODEL_ID, isGpuExperimentalModel, type ModelId } from '@/engine/model/catalog';
+  import {
+    DEFAULT_MODEL_ID,
+    getModel,
+    isGpuExperimentalModel,
+    LARGE_MODEL_BYTES,
+    type ModelId,
+  } from '@/engine/model/catalog';
   import { hasAllSitesAccess, requestAllSitesAccess } from '@/shared/all-sites';
   import {
     requestCacheClear,
@@ -486,6 +492,9 @@
       {/if}
       {#if androidEdge && settings.tier === 'g'}
         <p class="error" role="note">{t('tierGpuMobileWarning')}</p>
+      {/if}
+      {#if androidEdge && (settings.tier === 'g' || settings.tier === 'auto') && getModel(activeModelId).size > LARGE_MODEL_BYTES}
+        <p class="muted help" role="note">{t('tierLargeModelCpuMobile')}</p>
       {/if}
       {#if (capabilities?.gpuAdreno === true || androidEdge) && (settings.tier === 'g' || (settings.tier === 'auto' && capabilities?.gpuAdreno === true))}
         <label class="field">

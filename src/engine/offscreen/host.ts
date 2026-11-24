@@ -255,15 +255,18 @@ export class EngineHost {
     const store = await OpfsModelFileStore.open();
     const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
     // Edge for Android: a load mark left by the previous engine page means it was closed
-    // inside a model load (a model too large for the phone). That model is not loaded again
-    // on its own; the background has already moved the settings back to the default.
-    const crashedModel = android ? await requestCrashedModelLoad() : null;
-    // 1.3.0: come back on the model chosen in the settings, if its file is still here (and,
-    // on a phone, if it is one the phone may run: not PLaMo 3 2B, see `isMobileModelAllowed`).
+    // inside a model load. Died on WebGPU: the model stays and runs on the CPU (`gpuCrashed`).
+    // Died on the CPU: it is not loaded again on its own, and the background has already moved
+    // the settings back to the default.
+    const crashReport = android ? await requestCrashedModelLoad() : null;
+    const gpuCrashed = new Set<ModelId>(crashReport?.gpuCrashed ?? []);
+    const cpuCrashedModel =
+      crashReport?.crashed?.backend === 'cpu-wasm' ? crashReport.crashed.modelId : null;
+    // 1.3.0: come back on the model chosen in the settings, if its file is still here.
     if (
       stored?.modelId &&
       stored.modelId !== this.activeModelId &&
-      stored.modelId !== crashedModel &&
+      stored.modelId !== cpuCrashedModel &&
       (!android || isMobileModelAllowed(stored.modelId))
     ) {
       const chosen = await manager.status(stored.modelId).catch(() => null);
@@ -278,6 +281,7 @@ export class EngineHost {
       gpuProfile: stored?.gpuProfile ?? 'optimized',
       gpuExperimental: isGpuExperimentalModel(this.activeModelId),
       modelBytes: getModel(this.activeModelId).size,
+      gpuCrashed: gpuCrashed.has(this.activeModelId),
     };
     let tierPreference: TierPreference = stored?.tier ?? 'auto';
     const selection = resolveSelection(tierPreference, probe, runtime);
@@ -286,8 +290,6 @@ export class EngineHost {
     const chrome = new ChromeTranslatorEngine();
     const load = async (signal: AbortSignal): Promise<LoadedModel> => {
       const modelId = this.activeModelId;
-      // Android: marked for the load-crash guard; cleared when the load ends either way.
-      if (android) await markModelLoad(modelId);
       let result: Awaited<ReturnType<typeof loadWithFallback>>;
       try {
         result = await loadWithFallback(
@@ -295,9 +297,12 @@ export class EngineHost {
             try {
               // Every attempt, the lighter and CPU fallbacks too, gets the phone and
               // large-model limits (`fitSelectionToModel`).
-              return await manager.ensureLoaded(modelId, fitSelectionToModel(selection, runtime), {
-                signal,
-              });
+              const fitted = fitSelectionToModel(selection, runtime);
+              // Android: each attempt is marked with its backend for the load-crash guard,
+              // so a crash on WebGPU falls back to the CPU and only a CPU crash to PLaMo 0.8B.
+              // Cleared when the load ends either way.
+              if (android) await markModelLoad(modelId, fitted.backend);
+              return await manager.ensureLoaded(modelId, fitted, { signal });
             } catch (error) {
               this.noteGpuError(error);
               throw error;
@@ -384,10 +389,15 @@ export class EngineHost {
       },
       clearCache: () => cache.clear(),
       setTier: async (tier: TierPreference) => {
-        // Choosing WebGPU again is the way to retry it after broken output.
+        // Choosing WebGPU again is the way to retry it after broken output, or after a model
+        // crashed in a WebGPU load (the background clears the stored records).
         if (tier === 'g' && runtime.gpuOutputBroken) {
           runtime.gpuOutputBroken = false;
           await saveGpuOutputBroken(false);
+        }
+        if (tier === 'g') {
+          gpuCrashed.clear();
+          runtime.gpuCrashed = false;
         }
         // The Adreno profile is saved before the options page asks for the tier again.
         const latest = await loadEngineSettings();
@@ -402,6 +412,7 @@ export class EngineHost {
       modelChanged: async (modelId: ModelId) => {
         runtime.gpuExperimental = isGpuExperimentalModel(modelId);
         runtime.modelBytes = getModel(modelId).size;
+        runtime.gpuCrashed = gpuCrashed.has(modelId);
         const latest = await loadEngineSettings();
         if (latest) {
           runtime.gpuProfile = latest.gpuProfile;

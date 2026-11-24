@@ -35,9 +35,8 @@
   let { onActiveChange }: Props = $props();
 
   const androidEdge = isAndroidEdgeRuntime();
-  // 1.3.0: every catalog model, smallest file first, on desktop and on Edge for Android. On a
-  // phone a model over `MOBILE_MAX_MODEL_BYTES` (PLaMo 3 2B) stays listed, so a copy that is
-  // already there can be deleted, but it cannot be downloaded or used.
+  // 1.3.0: every catalog model, smallest file first, on desktop and on Edge for Android (where
+  // a model over 1 GB runs on the CPU; see `phoneKeepsOffGpu`).
   const models: readonly ModelEntry[] = MODEL_LIST;
 
   function allowedHere(id: ModelId): boolean {
@@ -113,7 +112,8 @@
     const status = await requestModelUse(id);
     if (status) apply(status);
     setActive(id);
-    if (crashed[id] !== undefined) {
+    // A CPU crash record is cleared by choosing the model again; a WebGPU one stays.
+    if (crashed[id]?.backend === 'cpu-wasm') {
       const next = { ...crashed };
       delete next[id];
       crashed = next;
@@ -173,13 +173,13 @@
       {#if model.gpuExperimental}
         <p class="muted detail">{t('modelGpuExperimentalHelp')}</p>
       {/if}
-      {#if !allowedHere(id)}
-        <p class="muted detail warning">{t('modelTooLargeMobile')}</p>
-      {:else if androidEdge && model.size > LARGE_MODEL_BYTES}
+      {#if androidEdge && model.size > LARGE_MODEL_BYTES}
         <p class="muted detail warning">{t('modelLargeMobileWarning')}</p>
       {/if}
       {#if androidEdge && crashed[id] !== undefined}
-        <p class="muted detail warning" role="status">{t('modelLoadCrashed')}</p>
+        <p class="muted detail warning" role="status">
+          {t(crashed[id]?.backend === 'webgpu' ? 'modelLoadCrashedGpu' : 'modelLoadCrashed')}
+        </p>
       {/if}
       {#if status && (downloading || state === 'partial' || state === 'loading')}
         <p class="muted">

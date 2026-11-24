@@ -149,6 +149,14 @@
         config is cut off after 5 minutes; a crash or device loss only ends that config. Copy the
         report text and paste it back.
       </p>
+      <p>
+        "Titles vs paragraph" runs the production translation pipeline (planner, PLaMo line packing,
+        scheduler waves on the slots, prompt cache as in the extension) for 12 short titles packed
+        as page blocks, the same 12 titles one request each (as headings), and one long paragraph,
+        on cpu, cpu-2-slot, gpu-r6-r4-1-slot, gpu-r6-r4 (2 slots, the Adreno default) and
+        gpu-r6-r4-4-slot, one config per page load. It reports the wall time, the first finished
+        block and every request (start, ttft, prompt and decode timings).
+      </p>
       <label
         >Config
         <select id="perf-config"></select>
@@ -159,6 +167,7 @@
       >
       <button id="run-perf" type="button" disabled>GPU perf breakdown</button>
       <button id="run-perf-sweep" type="button" disabled>Run GPU perf sweep</button>
+      <button id="run-workload" type="button" disabled>Titles vs paragraph (CPU vs GPU)</button>
       <button id="perf-copy" type="button" disabled>Copy report</button>
       <button id="perf-clear" type="button" disabled>Clear perf results</button>
       <pre id="perf-report"></pre>

@@ -48,12 +48,20 @@ import {
   type PerfSweepState,
   perfSweepQueue,
   recordPerfResult,
+  workloadQueue,
   resolvePerfConfig,
   summarizeGpuOps,
   summarizeGpuStats,
   withPerfTimeout,
 } from '@/engine/debug-perf';
 import type { WllamaCompletionTimings } from '@/engine/wllama/module';
+import {
+  runWorkload,
+  WORKLOAD_CONFIG_TIMEOUT_MS,
+  WORKLOAD_KINDS,
+  type WorkloadRun,
+} from '@/engine/debug-workload';
+import { modelPromptFormat } from '@/engine/model/catalog';
 import {
   buildHarnessPrompt,
   describeHarnessModel,
@@ -129,6 +137,7 @@ const perfConfigEl = document.querySelector<HTMLSelectElement>('#perf-config')!;
 const perfRunButton = document.querySelector<HTMLButtonElement>('#run-perf')!;
 const perfOpsEl = document.querySelector<HTMLInputElement>('#perf-ops')!;
 const perfSweepButton = document.querySelector<HTMLButtonElement>('#run-perf-sweep')!;
+const workloadButton = document.querySelector<HTMLButtonElement>('#run-workload')!;
 const perfCopyButton = document.querySelector<HTMLButtonElement>('#perf-copy')!;
 const perfClearButton = document.querySelector<HTMLButtonElement>('#perf-clear')!;
 const perfReportEl = document.querySelector<HTMLElement>('#perf-report')!;
@@ -450,6 +459,64 @@ async function runPerfConfig(
   return result;
 }
 
+/**
+ * The title vs paragraph comparison for one config (`debug-workload.ts`): load, then each
+ * workload twice (set A warms up, set B is recorded), through the production engine.
+ */
+async function runWorkloadConfig(
+  runner: ModelRunner,
+  config: PerfConfig,
+  result: PerfResult,
+  progress: (result: PerfResult) => void,
+): Promise<PerfResult> {
+  log(`--- workload ${runner.model.name}: ${config.id} (${config.label}) ---`);
+  log(`  ${result.selectionText} debug=${result.debugString ?? 'none'}`);
+  try {
+    if (config.selection.backend === 'webgpu') {
+      setWebGpuDebugProfile(config.debugProfile);
+      setWebGpuDebugTuning(config.tuning.filter((t) => t !== 'perf'));
+    } else {
+      resetWebGpuDebugProfile();
+    }
+    await runner.unload();
+    const loadStarted = performance.now();
+    const runtime = await runner.load(config.selection);
+    result.loadMs = performance.now() - loadStarted;
+    log(
+      `  load: ${Math.round(result.loadMs)} ms (threads ${runtime.threads}, slots ${runtime.parallel})`,
+    );
+    if (config.selection.backend === 'webgpu') {
+      result.gpuEvidence = gpuEvidence(lastWebGpuLoadLog());
+    }
+    result.workload = [];
+    progress(result);
+    const options = {
+      format: modelPromptFormat(runner.model.id),
+      contextTokens: Math.floor(config.selection.nCtx / Math.max(1, config.selection.nParallel)),
+    };
+    for (const kind of WORKLOAD_KINDS) {
+      await runWorkload(runtime, kind, 'A', options);
+      const run: WorkloadRun = await runWorkload(runtime, kind, 'B', options);
+      result.workload.push(run);
+      progress(result);
+      log(
+        `  ${kind}: wall ${run.wallMs} ms, first final ${run.firstFinalMs ?? 'n/a'} ms, ` +
+          `${run.requests.length} requests, max ${run.maxConcurrent} at once`,
+      );
+    }
+    result.notes.push(...runtimeProblemLines());
+    result.ok = result.workload.every((run) => run.error === null);
+    if (!result.ok) result.error = result.workload.find((run) => run.error)?.error ?? null;
+  } catch (error) {
+    result.error = describeErrorChain(error);
+    log(`  FAILED: ${result.error}`);
+    result.notes.push(...runtimeProblemLines());
+  } finally {
+    resetWebGpuDebugProfile();
+  }
+  return result;
+}
+
 function renderResults(
   configs: readonly HarnessConfig[],
   results: readonly HarnessRunResult[],
@@ -559,6 +626,7 @@ async function main(): Promise<void> {
     hardwareConcurrency: capabilities.hardwareConcurrency,
     fastBatches: capabilities.gpuFastBatches === true,
     sharedMemory: capabilities.crossOriginIsolated,
+    adreno: capabilities.gpuAdreno === true,
   };
   const allConfigs = buildHarnessConfigs(probe, isAndroidEdgeRuntime());
   const cpuConfig = allConfigs.find((c) => c.id === 'cpu');
@@ -712,6 +780,7 @@ async function main(): Promise<void> {
     ...opsAllButtons,
     perfRunButton,
     perfSweepButton,
+    workloadButton,
     perfClearButton,
     ...configsEl.querySelectorAll<HTMLButtonElement>('button'),
   ];
@@ -756,7 +825,9 @@ async function main(): Promise<void> {
     `adapter: vendor=${describe(diag.vendor)} architecture=${describe(diag.architecture)} description=${describe(diag.description)}`,
     `subgroups=${describe(diag.subgroups)} shader-f16=${describe(diag.shaderF16)} maxStorageBufferBindingSize=${describe(diag.maxStorageBufferBindingSize)}`,
     `hardwareConcurrency=${capabilities.hardwareConcurrency} crossOriginIsolated=${capabilities.crossOriginIsolated} android=${isAndroidEdgeRuntime()}`,
-    `prompt: harness paragraph (${HARNESS_SOURCE_TEXT.length} chars), max ${HARNESS_MAX_TOKENS} tokens, greedy, prompt cache off`,
+    readPerf().mode === 'workload'
+      ? `workload: production engine (${modelPromptFormat(model.id)} prompts), en -> zh-TW, set A warm-up, set B measured`
+      : `prompt: harness paragraph (${HARNESS_SOURCE_TEXT.length} chars), max ${HARNESS_MAX_TOKENS} tokens, greedy, prompt cache off`,
   ];
   const renderPerf = (): void => {
     const state = readPerf();
@@ -764,17 +835,22 @@ async function main(): Promise<void> {
       state.results.length > 0 ? formatPerfReport(perfHeader(), state.results) : '';
     perfCopyButton.disabled = state.results.length === 0;
   };
-  const startPerf = (queue: readonly string[]): void => {
+  const startPerf = (queue: readonly string[], mode: 'perf' | 'workload' = 'perf'): void => {
     const state = readPerf();
+    const sameRun = state.modelId === model.id && (state.mode ?? 'perf') === mode;
     writePerf({
       modelId: model.id,
+      mode,
       queue: [...queue],
       running: null,
       partial: null,
-      results: state.modelId === model.id ? state.results : [],
+      results: sameRun ? state.results : [],
     });
     location.reload();
   };
+  workloadButton.addEventListener('click', () => {
+    startPerf(workloadQueue(perfConfigs), 'workload');
+  });
   perfRunButton.addEventListener('click', () => {
     startPerf(perfBreakdownQueue(perfConfigs, perfConfigEl.value, perfOpsEl.checked));
   });
@@ -830,15 +906,19 @@ async function main(): Promise<void> {
     if (!config) {
       writePerf({ ...current, queue: current.queue.slice(1) });
     } else {
-      statusEl.textContent = `GPU perf: ${config.id} (${current.queue.length} left in the queue)…`;
+      statusEl.textContent = `${current.mode === 'workload' ? 'Titles vs paragraph' : 'GPU perf'}: ${config.id} (${current.queue.length} left in the queue)…`;
       const partial = newPerfResult(config, model.id);
       writePerf({ ...current, running: config.id, partial });
       let result: PerfResult;
       try {
+        const progress = (value: PerfResult): void => {
+          writePerf({ ...readPerf(), partial: value });
+        };
         result = await withPerfTimeout(
-          runPerfConfig(runner, config, prompt, partial, (value) => {
-            writePerf({ ...readPerf(), partial: value });
-          }),
+          current.mode === 'workload'
+            ? runWorkloadConfig(runner, config, partial, progress)
+            : runPerfConfig(runner, config, prompt, partial, progress),
+          current.mode === 'workload' ? WORKLOAD_CONFIG_TIMEOUT_MS : undefined,
         );
       } catch (error) {
         // Timed out: keep what the config got to, plus any device-lost lines.

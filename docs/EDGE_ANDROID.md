@@ -34,7 +34,7 @@ Firefox build; it is not marked Android-compatible).
 | Built-in translator | Chrome Translator API for 11 extra languages                             | **Not available on Edge** — PLaMo only, like Firefox (`hasBuiltInTranslatorUi()` is false on Edge)                              |
 | Keyboard shortcuts  | Alt+A / Alt+B / Alt+S / Alt+T                                            | Same `suggested_key` as Chrome since 1.3.0 (desktop Edge binds them; Android ignores `commands`). Popup / in-page UI on a phone |
 | Right-click menu    | `contextMenus`                                                           | Declared, but guarded: `installPageActions()` skips it silently when the API is absent on Android                               |
-| Model               | 0.8B (573 MB) or 2B (1.8 GB)                                             | **0.8B only.** `ModelManager` hides 2B on Android Edge, and the background refuses 2B downloads / `useModel` calls there too    |
+| Model               | 0.8B (573 MB) or 2B (1.8 GB)                                             | **Every model since 1.3.0.** Over 1 GB (Qwen3 1.7B, Hy-MT2 1.8B, PLaMo 3 2B) they run on the CPU (`phoneKeepsOffGpu`)           |
 | Touch UI            | Desktop-sized controls                                                   | `base.css`: 44px minimum targets on `(pointer: coarse)`, 14px body text                                                         |
 | Permissions         | offscreen, storage, unlimitedStorage, activeTab, scripting, contextMenus | Same set — Microsoft lists `offscreen` as supported on Android                                                                  |
 | Package check       | `verify-package.ts` chrome/firefox                                       | Now accepts `--browser edge` (same permission set as Chrome)                                                                    |
@@ -90,7 +90,7 @@ python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json'))
 The store release is numbered 1.3.0 and includes the 1.3.1 development
 notes below.
 
-- **Models** (Settings → Model, smallest file first; on Android every model except PLaMo 3 2B):
+- **Models** (Settings → Model, smallest file first; on Android all six, the ones over 1 GB on the CPU):
 
   | Model                            | Size    | License                 | GPU on Adreno                  |
   | -------------------------------- | ------- | ----------------------- | ------------------------------ |
@@ -116,14 +116,30 @@ notes below.
   | Hy-MT2 1.8B  | 194 + 882 MiB     | 128 MiB             | 148 MiB | ~1.32 GiB | ~1.19 GiB                      |
   | PLaMo 3 2B   | 363 + 1358 MiB    | 96 MiB              | ~150    | ~1.92 GiB | ~1.84 GiB                      |
 
-  Hy-MT2 and PLaMo 2B closed Edge for Android while loading on a POCO F5
-  Pro. Models over 1 GB load with `LARGE_MODEL_PHONE_LIMITS` (1 slot,
-  n_ctx 1024, n_batch 128; `fitSelectionToModel`, every attempt including the
-  CPU fallback). PLaMo 3 2B is over `MOBILE_MAX_MODEL_BYTES` and not offered
-  on Android. The load-crash guard (`src/shared/model-load-guard.ts`) marks
-  each load; a new engine page that finds a mark left behind does not load
-  that model again, resets the settings to PLaMo 3 0.8B and the model list
-  says so.
+  Hy-MT2 and PLaMo 2B closed Edge for Android while loading on WebGPU on a
+  POCO F5 Pro, and both ran fine on the CPU there (the CPU path allocates no
+  GPU buffers on top of the WASM heap). On a phone, a model over 1 GB runs on
+  the CPU under Automatic and an explicit WebGPU choice alike
+  (`phoneKeepsOffGpu` in `backend.ts`; the CPU tiers stay as chosen), and
+  loads with `LARGE_MODEL_PHONE_LIMITS` (1 slot, n_ctx 1024, n_batch 128;
+  `fitSelectionToModel`, every attempt). n_ctx 1024 is kept on the CPU too:
+  it is what every WebGPU slot gets, the planner splits longer blocks, and
+  2048 would only add KV (Hy-MT2 +64 MiB) next to a 1.1-1.8 GB file.
+
+  The load-crash guard (`src/shared/model-load-guard.ts`) marks each load
+  attempt with its backend. A new engine page that finds a mark left behind:
+  - WebGPU: keeps the model and runs it on the CPU (`gpuCrashed`) until
+    WebGPU is chosen again in the engine settings;
+  - CPU: does not load that model again, resets the settings to PLaMo 3
+    0.8B.
+    The model list says which one happened.
+
+- **Title speed, CPU vs WebGPU**: see "Titles vs paragraph" in the debug
+  harness (GPU performance section). It runs 12 titles packed, 12 titles one
+  request each (headings), and one paragraph through the production engine
+  on cpu, cpu-2-slot, gpu-r6-r4-1-slot, gpu-r6-r4 (2 slots) and
+  gpu-r6-r4-4-slot, one config per page load, and reports wall time, first
+  finished block and each request's ttft / prompt / decode timings.
 
 - **Adreno GPU profiles** (`src/shared/adreno-profiles.ts`): Optimized
   (`q4v2r4+mvglu+fna`, 2 slots), q4_K only (`q4v2r4`), Round 6 2 rows
@@ -212,4 +228,4 @@ CPU. The diagnostics list shows the detected GPU and the active backend.
   browser extension.
 - No Chrome Web Store release for Android (Chrome for Android
   does not run extensions at all).
-- No 2B model on mobile, no Chrome-only languages on Edge.
+- No Chrome-only languages on Edge. Models over 1 GB run on the CPU on a phone.

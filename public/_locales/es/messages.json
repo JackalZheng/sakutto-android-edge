@@ -1150,7 +1150,7 @@
     "message": "License"
   },
   "modelLargeMobileWarning": {
-    "message": "Over 1 GB: on a phone it loads in a memory-saving setup (1 slot, n_ctx 1024, batch 128); downloading and loading are slower and memory is tight. If the engine is closed while it loads, Sakutto goes back to PLaMo 3 0.8B."
+    "message": "Over 1 GB: on a phone this model runs on the CPU, also when WebGPU is selected (WebGPU memory comes out of the same RAM as the page, and these models closed it while loading). It loads with 1 slot, n_ctx 1024 and batch 128; downloading and loading are slower. If the engine still closes while it loads, Sakutto goes back to PLaMo 3 0.8B."
   },
   "modelGemmaTerms": {
     "message": "Downloading and using Gemma means you agree to the Gemma Terms of Use and its Prohibited Use Policy."
@@ -1173,10 +1173,13 @@
   "modelDescPlamoLarge": {
     "message": "The high-quality PLaMo translation model. The largest file and the heaviest on phone memory."
   },
-  "modelTooLargeMobile": {
-    "message": "Not available on a phone: PLaMo 3 2B needs about 1.9 GB of memory (1.7 GB of weights), more than Edge for Android gives one page, which closes while it loads. A copy already downloaded can be deleted here."
-  },
   "modelLoadCrashed": {
-    "message": "The last time this model loaded on this phone, Edge closed the translation engine (out of memory), so Sakutto went back to PLaMo 3 0.8B. You can choose Use again; if it closes again, Sakutto goes back again."
+    "message": "The last time this model loaded on this phone (on the CPU), Edge closed the translation engine (out of memory), so Sakutto went back to PLaMo 3 0.8B. You can choose Use again; if it closes again, Sakutto goes back again."
+  },
+  "modelLoadCrashedGpu": {
+    "message": "The last time this model loaded on WebGPU on this phone, Edge closed the translation engine (out of memory). It now runs on the CPU. Choose WebGPU again in the engine settings to retry the GPU."
+  },
+  "tierLargeModelCpuMobile": {
+    "message": "The current model is over 1 GB: on a phone it runs on the CPU even with WebGPU selected. GPU memory is shared with the page, and loading these models on WebGPU closed it. PLaMo 3 0.8B and the smaller models still use WebGPU."
   }
 }

@@ -42,57 +42,125 @@ beforeEach(() => {
 });
 
 describe('model load-crash guard', () => {
-  it('blames a recent mark, never the default model or a stale mark', () => {
+  it('blames a recent mark with its backend; the default model only on WebGPU', () => {
     const now = 1_000_000_000;
-    expect(guard.crashedModelFromMark({ modelId: 'hy-mt2-1.8b-q4_k_m', at: now - 5000 }, now)).toBe(
-      'hy-mt2-1.8b-q4_k_m',
-    );
     expect(
-      guard.crashedModelFromMark({ modelId: 'plamo-3-translate-0.8b-q4_k_m', at: now }, now),
+      guard.crashedLoadFromMark(
+        { modelId: 'hy-mt2-1.8b-q4_k_m', at: now - 5000, backend: 'cpu-wasm' },
+        now,
+      ),
+    ).toEqual({ modelId: 'hy-mt2-1.8b-q4_k_m', backend: 'cpu-wasm' });
+    // A dcdcf54 mark has no backend: that build loaded these models on WebGPU.
+    expect(guard.crashedLoadFromMark({ modelId: 'hy-mt2-1.8b-q4_k_m', at: now }, now)).toEqual({
+      modelId: 'hy-mt2-1.8b-q4_k_m',
+      backend: 'webgpu',
+    });
+    expect(
+      guard.crashedLoadFromMark(
+        { modelId: 'plamo-3-translate-0.8b-q4_k_m', at: now, backend: 'cpu-wasm' },
+        now,
+      ),
     ).toBeNull();
     expect(
-      guard.crashedModelFromMark(
+      guard.crashedLoadFromMark(
+        { modelId: 'plamo-3-translate-0.8b-q4_k_m', at: now, backend: 'webgpu' },
+        now,
+      ),
+    ).toEqual({ modelId: 'plamo-3-translate-0.8b-q4_k_m', backend: 'webgpu' });
+    expect(
+      guard.crashedLoadFromMark(
         { modelId: 'hy-mt2-1.8b-q4_k_m', at: now - guard.MODEL_LOAD_CRASH_WINDOW_MS - 1 },
         now,
       ),
     ).toBeNull();
-    expect(guard.crashedModelFromMark({ modelId: 'nope', at: now }, now)).toBeNull();
-    expect(guard.crashedModelFromMark(undefined, now)).toBeNull();
+    expect(guard.crashedLoadFromMark({ modelId: 'nope', at: now }, now)).toBeNull();
+    expect(guard.crashedLoadFromMark(undefined, now)).toBeNull();
   });
 
-  it('a mark left behind moves the settings back to the default and records the model', async () => {
-    await guard.writeModelLoadMark('hy-mt2-1.8b-q4_k_m');
+  it('a crash on WebGPU keeps the model and reports it for the CPU', async () => {
+    state.settings.modelId = 'plamo-3-translate-2b-q4_k_m';
+    await guard.writeModelLoadMark('plamo-3-translate-2b-q4_k_m', 'webgpu');
 
-    expect(await guard.recoverFromCrashedModelLoad()).toBe('hy-mt2-1.8b-q4_k_m');
+    expect(await guard.recoverFromCrashedModelLoad()).toEqual({
+      crashed: { modelId: 'plamo-3-translate-2b-q4_k_m', backend: 'webgpu' },
+      gpuCrashed: ['plamo-3-translate-2b-q4_k_m'],
+    });
+    expect(state.settings.modelId).toBe('plamo-3-translate-2b-q4_k_m');
+    // Later engine pages still get it, so it stays on the CPU.
+    expect(await guard.requestCrashedModelLoad()).toEqual({
+      crashed: null,
+      gpuCrashed: ['plamo-3-translate-2b-q4_k_m'],
+    });
+    // Choosing the model again keeps the GPU record; choosing WebGPU again clears it.
+    await guard.clearCrashedModelLoad('plamo-3-translate-2b-q4_k_m');
+    expect(Object.keys(await guard.loadCrashedModelLoads())).toEqual([
+      'plamo-3-translate-2b-q4_k_m',
+    ]);
+    await guard.clearGpuCrashedModelLoads();
+    expect(await guard.loadCrashedModelLoads()).toEqual({});
+  });
+
+  it('a crash on the CPU moves the settings back to the default and records the model', async () => {
+    await guard.writeModelLoadMark('hy-mt2-1.8b-q4_k_m', 'cpu-wasm');
+
+    expect(await guard.recoverFromCrashedModelLoad()).toEqual({
+      crashed: { modelId: 'hy-mt2-1.8b-q4_k_m', backend: 'cpu-wasm' },
+      gpuCrashed: [],
+    });
     expect(state.settings.modelId).toBe('plamo-3-translate-0.8b-q4_k_m');
     expect(state.values.has(guard.MODEL_LOAD_PENDING_KEY)).toBe(false);
     expect(Object.keys(await guard.loadCrashedModelLoads())).toEqual(['hy-mt2-1.8b-q4_k_m']);
 
     // Asked again by the same host: nothing new.
-    expect(await guard.recoverFromCrashedModelLoad()).toBeNull();
+    expect((await guard.recoverFromCrashedModelLoad()).crashed).toBeNull();
   });
 
   it('a finished load leaves nothing to blame', async () => {
-    await guard.markModelLoad('hy-mt2-1.8b-q4_k_m');
+    await guard.markModelLoad('hy-mt2-1.8b-q4_k_m', 'webgpu');
     await guard.markModelLoad(null);
 
-    expect(await guard.requestCrashedModelLoad()).toBeNull();
+    expect(await guard.requestCrashedModelLoad()).toEqual({ crashed: null, gpuCrashed: [] });
     expect(state.settings.modelId).toBe('hy-mt2-1.8b-q4_k_m');
   });
 
-  it('choosing the model again clears its crash record', async () => {
-    await guard.writeModelLoadMark('qwen3-1.7b-q4_k_m');
+  it('choosing the model again clears its CPU crash record', async () => {
+    await guard.writeModelLoadMark('qwen3-1.7b-q4_k_m', 'cpu-wasm');
     await guard.takeCrashedModelLoad();
     await guard.clearCrashedModelLoad('qwen3-1.7b-q4_k_m');
     expect(await guard.loadCrashedModelLoads()).toEqual({});
   });
 
+  it('reads a dcdcf54 crash record (a bare timestamp) as a WebGPU crash', () => {
+    expect(guard.normalizeCrashedModelLoads({ 'hy-mt2-1.8b-q4_k_m': 5, junk: 1 })).toEqual({
+      'hy-mt2-1.8b-q4_k_m': { at: 5, backend: 'webgpu' },
+    });
+  });
+
   it('accepts only well-formed guard messages', () => {
     expect(guard.isModelLoadMarkUpdate({ type: 'engine:model-load', modelId: null })).toBe(true);
     expect(
-      guard.isModelLoadMarkUpdate({ type: 'engine:model-load', modelId: 'hy-mt2-1.8b-q4_k_m' }),
+      guard.isModelLoadMarkUpdate({
+        type: 'engine:model-load',
+        modelId: 'hy-mt2-1.8b-q4_k_m',
+        backend: 'webgpu',
+      }),
     ).toBe(true);
+    expect(
+      guard.isModelLoadMarkUpdate({
+        type: 'engine:model-load',
+        modelId: 'hy-mt2-1.8b-q4_k_m',
+        backend: 'metal',
+      }),
+    ).toBe(false);
     expect(guard.isModelLoadMarkUpdate({ type: 'engine:model-load', modelId: 'x' })).toBe(false);
     expect(guard.isModelLoadCrashQuery({ type: 'engine:model-load-crash' })).toBe(true);
+    expect(guard.isModelLoadCrashReport({ crashed: null, gpuCrashed: [] })).toBe(true);
+    expect(
+      guard.isModelLoadCrashReport({
+        crashed: { modelId: 'hy-mt2-1.8b-q4_k_m', backend: 'webgpu' },
+        gpuCrashed: ['hy-mt2-1.8b-q4_k_m'],
+      }),
+    ).toBe(true);
+    expect(guard.isModelLoadCrashReport('hy-mt2-1.8b-q4_k_m')).toBe(false);
   });
 });
