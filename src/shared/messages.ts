@@ -27,9 +27,18 @@ export interface PageInfoRequest {
 
 export type PageCommandName = 'toggle' | 'restore' | 'bilingual' | 'selection' | 'compose';
 
+/**
+ * Where a page command came from. Only a browser keyboard command (`shortcut`) is subject to
+ * the shortcut on/off and "cleared in the browser" gate; the popup button, the context menu
+ * and the in-page UI (`action`) always run.
+ */
+export type PageCommandSource = 'shortcut' | 'action';
+
 export interface PageCommandRequest {
   type: 'page:command';
   command: PageCommandName;
+  /** Missing on messages from older builds: treated as `action`. */
+  source?: PageCommandSource;
 }
 
 export interface PageStateRequest {
@@ -399,6 +408,7 @@ export async function requestPageCommand(
   tabId: number,
   command: PageCommandName,
   frameId?: number,
+  source: PageCommandSource = 'action',
 ): Promise<PageViewState | null> {
   try {
     const response: unknown = await browser.tabs.sendMessage(
@@ -406,6 +416,7 @@ export async function requestPageCommand(
       {
         type: 'page:command',
         command,
+        source,
       } satisfies PageCommandRequest,
       frameId === undefined ? {} : { frameId },
     );

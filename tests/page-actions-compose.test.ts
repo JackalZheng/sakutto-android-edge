@@ -38,7 +38,7 @@ describe('compose command routing', () => {
     expect(actions).toContain("const allFrames = command === 'compose'");
     expect(actions).toContain('allFrames: true');
     expect(actions).toContain('document.hasFocus()');
-    expect(actions).toContain('requestPageCommand(tabId, command, frameId)');
+    expect(actions).toContain('requestPageCommand(tabId, command, frameId, source)');
     expect(messages).toContain('frameId?: number');
     expect(messages).toContain('{ frameId }');
     expect(bridge).toContain('allFrames?: boolean');

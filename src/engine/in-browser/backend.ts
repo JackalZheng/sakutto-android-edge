@@ -1,3 +1,4 @@
+import { LARGE_MODEL_BYTES } from '@/engine/model/catalog';
 import { MOBILE_MAX_BATCH, MOBILE_MAX_THREADS } from '@/shared/mobile';
 import {
   ADRENO_PROFILE_SPECS,
@@ -245,6 +246,33 @@ export function applyMobileLimits(selection: BackendSelection): BackendSelection
   };
 }
 
+/**
+ * Load limits for a model over 1 GB on a phone: one sequence of 1024 tokens and a 128-token
+ * batch. Hy-MT2 1.8B: KV 128 -> 64 MiB (32 full-attention layers), CPU compute (the logits
+ * for a whole batch over a 120k vocabulary) 122 -> 61 MiB, WebGPU compute 27 -> 13 MiB.
+ */
+export const LARGE_MODEL_PHONE_LIMITS = Object.freeze({ nParallel: 1, nCtx: 1024, nBatch: 128 });
+
+/**
+ * The selection a phone actually loads: the phone caps, and for a model over 1 GB the
+ * large-model limits. Applied to every attempt, including the lighter and CPU fallbacks,
+ * which are derived without the caps. Other runtimes are returned unchanged.
+ */
+export function fitSelectionToModel(
+  selection: BackendSelection,
+  context: Pick<RuntimeContext, 'android' | 'modelBytes'>,
+): BackendSelection {
+  if (!context.android) return selection;
+  const capped = applyMobileLimits(selection);
+  if ((context.modelBytes ?? 0) <= LARGE_MODEL_BYTES) return capped;
+  return {
+    ...capped,
+    nParallel: LARGE_MODEL_PHONE_LIMITS.nParallel,
+    nCtx: LARGE_MODEL_PHONE_LIMITS.nCtx,
+    nBatch: Math.min(capped.nBatch ?? MOBILE_MAX_BATCH, LARGE_MODEL_PHONE_LIMITS.nBatch),
+  };
+}
+
 export interface RuntimeContext {
   /** Edge for Android: phone caps, and WebGPU only on an explicit choice. */
   android: boolean;
@@ -259,6 +287,8 @@ export interface RuntimeContext {
    * `ModelEntry.gpuExperimental`): "auto" keeps it on the CPU there.
    */
   gpuExperimental?: boolean;
+  /** File size of the active model: over 1 GB, a phone loads it with `LARGE_MODEL_PHONE_LIMITS`. */
+  modelBytes?: number;
 }
 
 /**
@@ -316,7 +346,7 @@ export function resolveSelection(
   } else {
     selection = selectionForTier(preference, probe);
   }
-  return context.android ? applyMobileLimits(selection) : selection;
+  return fitSelectionToModel(selection, context);
 }
 
 /** Where to run after WebGPU produced broken output: the CPU, with the phone caps. */
@@ -325,7 +355,7 @@ export function cpuAfterBrokenOutput(
   context: RuntimeContext,
 ): BackendSelection {
   const cpu = cpuFallback(selection) ?? selection;
-  return context.android ? applyMobileLimits(cpu) : cpu;
+  return fitSelectionToModel(cpu, context);
 }
 
 /**

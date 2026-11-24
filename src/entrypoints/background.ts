@@ -42,6 +42,13 @@ import {
 import { ensureSettings, loadSettings, saveSettings } from '@/shared/storage';
 import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
 import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
+import {
+  clearCrashedModelLoad,
+  isModelLoadCrashQuery,
+  isModelLoadMarkUpdate,
+  recoverFromCrashedModelLoad,
+  writeModelLoadMark,
+} from '@/shared/model-load-guard';
 
 const CAPABILITIES_CACHE_KEY = 'engineCapabilities';
 
@@ -232,6 +239,24 @@ export default defineBackground(() => {
       return true;
     }
 
+    // Load-crash guard (Edge for Android): the engine host marks each model load here, and a
+    // new host asks once whether the previous one died inside a load.
+    if (isModelLoadMarkUpdate(message)) {
+      void writeModelLoadMark(message.modelId).then(
+        () => sendResponse(true),
+        () => sendResponse(false),
+      );
+      return true;
+    }
+
+    if (isModelLoadCrashQuery(message)) {
+      void recoverFromCrashedModelLoad().then(
+        (crashed) => sendResponse(crashed),
+        () => sendResponse(null),
+      );
+      return true;
+    }
+
     if (isGpuOutputBrokenUpdate(message)) {
       void saveGpuOutputBroken(message.broken).then(
         () => sendResponse(true),
@@ -393,6 +418,8 @@ export default defineBackground(() => {
         async (status) => {
           // Remembered so the engine host comes back on this model after it is released.
           await saveSettings({ modelId: message.modelId }).catch(() => undefined);
+          // Chosen again after a load crash: the guard records it again if it crashes again.
+          await clearCrashedModelLoad(message.modelId).catch(() => undefined);
           void broadcast({ type: 'model:progress', status });
           sendResponse(status);
         },

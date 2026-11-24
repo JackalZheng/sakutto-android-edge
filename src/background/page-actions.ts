@@ -5,7 +5,11 @@ import { isAndroidEdgeRuntime } from '@/shared/mobile';
 import type { Settings } from '@/shared/settings';
 import { loadSettings } from '@/shared/storage';
 import { ensureContentScript } from '@/shared/page-bridge';
-import { requestPageCommand, type PageCommandName } from '@/shared/messages';
+import {
+  requestPageCommand,
+  type PageCommandName,
+  type PageCommandSource,
+} from '@/shared/messages';
 import { noteShortcutCommandAssigned } from '@/shared/shortcut-assignment';
 import { isShortcutCommand, SHORTCUT_PAGE_COMMANDS } from '@/shared/shortcuts';
 
@@ -23,7 +27,7 @@ export function installPageActions(translations?: PageTranslationCanceller): voi
     browser.commands.onCommand.addListener((command) => {
       if (!isShortcutCommand(command)) return;
       void noteShortcutCommandAssigned(command);
-      void runOnActiveTab(SHORTCUT_PAGE_COMMANDS[command]);
+      void runOnActiveTab(SHORTCUT_PAGE_COMMANDS[command], 'shortcut');
     });
   }
 
@@ -80,11 +84,11 @@ function installMenus(): void {
   });
 }
 
-async function runOnActiveTab(command: PageCommandName): Promise<void> {
+async function runOnActiveTab(command: PageCommandName, source: PageCommandSource): Promise<void> {
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   const tabId = tabs[0]?.id;
   if (tabId === undefined) return;
-  await runCommand(tabId, command);
+  await runCommand(tabId, command, source);
 }
 
 /** The frame whose document has a real focused control, if scripting can see it. */
@@ -110,11 +114,15 @@ async function focusedContentFrameId(tabId: number): Promise<number | undefined>
   }
 }
 
-async function runCommand(tabId: number, command: PageCommandName): Promise<void> {
+async function runCommand(
+  tabId: number,
+  command: PageCommandName,
+  source: PageCommandSource = 'action',
+): Promise<void> {
   const allFrames = command === 'compose';
   if (!(await ensureContentScript(tabId, { allFrames }))) return;
   const frameId = allFrames ? await focusedContentFrameId(tabId) : undefined;
-  await requestPageCommand(tabId, command, frameId);
+  await requestPageCommand(tabId, command, frameId, source);
 }
 
 /**

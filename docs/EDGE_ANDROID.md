@@ -28,16 +28,16 @@ Firefox build; it is not marked Android-compatible).
 
 ## What changed in this branch (`edge-android`)
 
-| Area                | Desktop Chrome                                                           | Edge for Android (this branch)                                                                                               |
-| ------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Target              | `wxt build`                                                              | `wxt build -b edge` / `pnpm build:edge`                                                                                      |
-| Built-in translator | Chrome Translator API for 11 extra languages                             | **Not available on Edge** — PLaMo only, like Firefox (`hasBuiltInTranslatorUi()` is false on Edge)                           |
-| Keyboard shortcuts  | Alt+A / Alt+B / Alt+S / Alt+T                                            | **No `suggested_key` in the manifest** — a phone has no Alt key. Actions live in the popup and the in-page UI                |
-| Right-click menu    | `contextMenus`                                                           | Declared, but guarded: `installPageActions()` skips it silently when the API is absent on Android                            |
-| Model               | 0.8B (573 MB) or 2B (1.8 GB)                                             | **0.8B only.** `ModelManager` hides 2B on Android Edge, and the background refuses 2B downloads / `useModel` calls there too |
-| Touch UI            | Desktop-sized controls                                                   | `base.css`: 44px minimum targets on `(pointer: coarse)`, 14px body text                                                      |
-| Permissions         | offscreen, storage, unlimitedStorage, activeTab, scripting, contextMenus | Same set — Microsoft lists `offscreen` as supported on Android                                                               |
-| Package check       | `verify-package.ts` chrome/firefox                                       | Now accepts `--browser edge` (same permission set as Chrome)                                                                 |
+| Area                | Desktop Chrome                                                           | Edge for Android (this branch)                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Target              | `wxt build`                                                              | `wxt build -b edge` / `pnpm build:edge`                                                                                         |
+| Built-in translator | Chrome Translator API for 11 extra languages                             | **Not available on Edge** — PLaMo only, like Firefox (`hasBuiltInTranslatorUi()` is false on Edge)                              |
+| Keyboard shortcuts  | Alt+A / Alt+B / Alt+S / Alt+T                                            | Same `suggested_key` as Chrome since 1.3.0 (desktop Edge binds them; Android ignores `commands`). Popup / in-page UI on a phone |
+| Right-click menu    | `contextMenus`                                                           | Declared, but guarded: `installPageActions()` skips it silently when the API is absent on Android                               |
+| Model               | 0.8B (573 MB) or 2B (1.8 GB)                                             | **0.8B only.** `ModelManager` hides 2B on Android Edge, and the background refuses 2B downloads / `useModel` calls there too    |
+| Touch UI            | Desktop-sized controls                                                   | `base.css`: 44px minimum targets on `(pointer: coarse)`, 14px body text                                                         |
+| Permissions         | offscreen, storage, unlimitedStorage, activeTab, scripting, contextMenus | Same set — Microsoft lists `offscreen` as supported on Android                                                                  |
+| Package check       | `verify-package.ts` chrome/firefox                                       | Now accepts `--browser edge` (same permission set as Chrome)                                                                    |
 
 New code: `src/shared/mobile.ts` (`isAndroidEdgeRuntime()` via the
 `EdgA/` user-agent token, `MOBILE_MODEL_ID`, mobile limits),
@@ -66,7 +66,7 @@ Then check the built manifest:
 ```sh
 python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json')))"
 # permissions: offscreen, storage, unlimitedStorage, activeTab, scripting, contextMenus
-# commands: four actions, no suggested_key
+# commands: four actions, suggested_key Alt+A / Alt+B / Alt+S / Alt+T
 # no minimum_chrome_version, no browser_specific_settings
 ```
 
@@ -90,7 +90,7 @@ python3 -c "import json; print(json.load(open('.output/edge-mv3/manifest.json'))
 The store release is numbered 1.3.0 and includes the 1.3.1 development
 notes below.
 
-- **Models** (Settings → Model, smallest file first, all offered on Android):
+- **Models** (Settings → Model, smallest file first; on Android every model except PLaMo 3 2B):
 
   | Model                            | Size    | License                 | GPU on Adreno                  |
   | -------------------------------- | ------- | ----------------------- | ------------------------------ |
@@ -102,7 +102,28 @@ notes below.
   | PLaMo 3 Translate 2B             | 1.81 GB | PLaMo Community License | yes                            |
 
   The chosen model is stored in the settings (`modelId`) and the engine host
-  starts on it. Prompts: `src/engine/prompt/model-prompt.ts`.
+  starts on it. Prompts: `src/engine/prompt/model-prompt.ts`. Qwen3, Gemma 3
+  and Hy-MT2 get one block per request with the inline `<i1>` tags removed;
+  only PLaMo gets newline-packed requests and the tags.
+
+- **Memory on a phone** (llama.cpp buffers, Q4_K_M, the phone's 128 MiB
+  `maxStorageBufferBindingSize` sends the big embedding/output matrices to
+  the CPU; on Adreno both sides are the same RAM):
+
+  | Model        | Weights CPU + GPU | KV (2 slots / 2048) | Compute | Total     | With 1 slot / 1024 / batch 128 |
+  | ------------ | ----------------- | ------------------- | ------- | --------- | ------------------------------ |
+  | PLaMo 3 0.8B | 218 + 326 MiB     | 16 MiB              | 133 MiB | ~0.7 GiB  | (not applied, < 1 GB)          |
+  | Hy-MT2 1.8B  | 194 + 882 MiB     | 128 MiB             | 148 MiB | ~1.32 GiB | ~1.19 GiB                      |
+  | PLaMo 3 2B   | 363 + 1358 MiB    | 96 MiB              | ~150    | ~1.92 GiB | ~1.84 GiB                      |
+
+  Hy-MT2 and PLaMo 2B closed Edge for Android while loading on a POCO F5
+  Pro. Models over 1 GB load with `LARGE_MODEL_PHONE_LIMITS` (1 slot,
+  n_ctx 1024, n_batch 128; `fitSelectionToModel`, every attempt including the
+  CPU fallback). PLaMo 3 2B is over `MOBILE_MAX_MODEL_BYTES` and not offered
+  on Android. The load-crash guard (`src/shared/model-load-guard.ts`) marks
+  each load; a new engine page that finds a mark left behind does not load
+  that model again, resets the settings to PLaMo 3 0.8B and the model list
+  says so.
 
 - **Adreno GPU profiles** (`src/shared/adreno-profiles.ts`): Optimized
   (`q4v2r4+mvglu+fna`, 2 slots), q4_K only (`q4v2r4`), Round 6 2 rows

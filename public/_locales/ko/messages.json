@@ -1150,7 +1150,7 @@
     "message": "라이선스"
   },
   "modelLargeMobileWarning": {
-    "message": "1GB 초과: 폰에서는 다운로드와 로드가 느리고 메모리 부담이 큽니다. Adreno \"저메모리\" 프로필을 권장합니다."
+    "message": "1 GB 초과: 휴대폰에서는 메모리 절약 설정(슬롯 1개, n_ctx 1024, 배치 128)으로 자동으로 불러옵니다. 다운로드와 로딩이 느리고 메모리가 빠듯합니다. 불러오는 중에 엔진이 닫히면 PLaMo 3 0.8B로 되돌립니다."
   },
   "modelGemmaTerms": {
     "message": "Gemma를 다운로드해 사용하면 Gemma 이용 약관과 금지된 사용 정책에 동의하는 것입니다."
@@ -1172,5 +1172,11 @@
   },
   "modelDescPlamoLarge": {
     "message": "PLaMo 번역의 고품질판. 파일이 가장 크고 폰 메모리 부담도 가장 큽니다."
+  },
+  "modelTooLargeMobile": {
+    "message": "휴대폰에서는 사용할 수 없습니다: PLaMo 3 2B는 약 1.9 GB 메모리(가중치 1.7 GB)가 필요해 Edge for Android가 한 페이지에 주는 양을 넘고, 불러오는 중에 닫힙니다. 이미 받은 파일은 여기서 삭제할 수 있습니다."
+  },
+  "modelLoadCrashed": {
+    "message": "지난번 이 휴대폰에서 이 모델을 불러올 때 Edge가 번역 엔진을 닫았습니다(메모리 부족). 그래서 PLaMo 3 0.8B로 되돌렸습니다. 다시 「사용」을 누를 수 있으며, 또 닫히면 자동으로 되돌립니다."
   }
 }

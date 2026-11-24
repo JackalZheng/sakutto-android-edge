@@ -85,7 +85,14 @@ export class InBrowserEngine implements IdentifiedEngine {
   constructor(runtime: LlamaRuntime, options: InBrowserEngineOptions = {}) {
     this.runtime = runtime;
     this.format = options.format ?? 'plamo3';
-    this.config = { ...DEFAULT_PLAN_CONFIG, ...options.config };
+    this.config = {
+      ...DEFAULT_PLAN_CONFIG,
+      ...options.config,
+      // Only PLaMo keeps the line count of a packed request. Qwen3 / Gemma 3 / Hy-MT2 merge,
+      // drop or answer the lines (Qwen3 0.6B even switched language), and every miss is
+      // translated again line by line: each short block was translated two or three times.
+      ...(packsLines(this.format) ? {} : { maxBatchTokens: 0 }),
+    };
     this.contextTokens = options.contextTokens ?? CONTEXT_TOKENS;
     this.scheduler = options.scheduler ?? new JobScheduler(runtime.parallel, runtime.parallel > 1);
   }
@@ -416,11 +423,17 @@ export class InBrowserEngine implements IdentifiedEngine {
       );
     }
 
-    const glossary = sanitizeGlossary(options.glossary ?? []).filter((entry) =>
-      text.includes(entry.source),
+    // The page's inline-markup tags (<i1>…</i1>) are a PLaMo convention; a chat model drops
+    // or mangles them, and the page then translated the block again as plain text. It gets
+    // the plain text, and the page paints its plain answer (session acceptTranslation).
+    const modelText = keepsInlineTags(this.format) ? text : stripInlineTags(text);
+    const glossary = sanitizeGlossary(options.glossary ?? []).filter(
+      (entry) =>
+        modelText.includes(entry.source) &&
+        (keepsInlineTags(this.format) || !INLINE_TAG_ONLY.test(entry.source)),
     );
     const promptInput: ModelPromptInput = {
-      text,
+      text: modelText,
       tgt,
       ...(src !== null ? { src } : {}),
       ...(tgt === 'ja' ? { form: options.form } : {}),
@@ -448,6 +461,26 @@ export class InBrowserEngine implements IdentifiedEngine {
 
     return output;
   }
+}
+
+const INLINE_TAG = /<\/?i\d+>/g;
+const INLINE_TAG_ONLY = /^<\/?i\d+>$/;
+
+/** Whether a prompt format is trusted with newline-packed short blocks. */
+export function packsLines(format: PromptFormat): boolean {
+  return format === 'plamo3';
+}
+
+/** Whether a prompt format keeps the page's inline-markup placeholders. */
+export function keepsInlineTags(format: PromptFormat): boolean {
+  return format === 'plamo3';
+}
+
+export function stripInlineTags(text: string): string {
+  return text
+    .replace(INLINE_TAG, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function isOversized(error: unknown): boolean {

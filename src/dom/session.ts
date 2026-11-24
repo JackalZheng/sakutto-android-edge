@@ -1381,6 +1381,13 @@ export class PageSession {
     }
     const verdict = assessTranslation(output, placeholderIds(item.model));
     if (verdict.ok) return verdict.text;
+    // A model that dropped every inline tag (the chat models never keep them) already gave
+    // the plain translation a flattened retry would ask for: paint it as plain text instead
+    // of translating the block again. Only a mangled tag is worth the retry.
+    if (!/<\/?i\d/.test(output) && verdict.plain.length > 0) {
+      item.flatten = true;
+      return verdict.plain;
+    }
     if (item.attempts < 1) {
       item.attempts += 1;
       item.flatten = true;

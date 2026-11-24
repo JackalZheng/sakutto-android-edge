@@ -1150,7 +1150,7 @@
     "message": "授權"
   },
   "modelLargeMobileWarning": {
-    "message": "超過 1 GB：手機上下載與載入較慢、記憶體壓力大，建議搭配「低記憶體」Adreno 設定檔。"
+    "message": "超過 1 GB：手機上會自動用省記憶體方式載入（1 個槽、n_ctx 1024、批次 128），下載與載入較慢、記憶體壓力大。若載入時引擎被關掉，會自動改回 PLaMo 3 0.8B。"
   },
   "modelGemmaTerms": {
     "message": "下載並使用 Gemma 即表示你同意 Gemma 使用條款與禁止用途政策。"
@@ -1172,5 +1172,11 @@
   },
   "modelDescPlamoLarge": {
     "message": "PLaMo 翻譯的高品質版，檔案最大、手機記憶體壓力最高。"
+  },
+  "modelTooLargeMobile": {
+    "message": "手機上不提供：PLaMo 3 2B 需要約 1.9 GB 記憶體（權重 1.7 GB），超過 Edge for Android 一個分頁能用的量，載入時會被關掉。已下載的檔案可以在這裡刪除。"
+  },
+  "modelLoadCrashed": {
+    "message": "上次在這支手機載入這個模型時，翻譯引擎被 Edge 關掉了（記憶體不足），所以已改回 PLaMo 3 0.8B。可以再試一次「使用」，若再次被關掉會自動改回。"
   }
 }

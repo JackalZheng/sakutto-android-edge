@@ -82,9 +82,28 @@ export function warmBeforePageCommand(): boolean {
   return !isTouchRuntime();
 }
 
-/** 1.3.0: every catalog model may be downloaded and used on a phone. */
+/**
+ * The largest model file offered on Edge for Android.
+ *
+ * Byte math (llama.cpp buffers, Q4_K_M, measured with the same build on the box; on a phone
+ * the Adreno "GPU memory" is the same RAM as the tab's WASM heap):
+ * - PLaMo 3 0.8B (works): weights 544 MiB (CPU 218: token_embd + the 129 MiB output matrix,
+ *   which is over the 128 MiB storage-binding limit; GPU 326), KV 16, compute 133: ~0.7 GiB.
+ * - Hy-MT2 1.8B, 2 slots / n_ctx 2048 / n_batch 256: weights 1076 MiB (CPU 194 tied
+ *   token_embd, GPU 882), KV 128 (32 full-attention layers), compute 148: ~1.32 GiB.
+ *   With the phone's large-model limits (1 slot, n_ctx 1024, n_batch 128): ~1.19 GiB.
+ * - PLaMo 3 2B, same defaults: weights 1721 MiB (CPU 363, GPU 1358), KV 96, compute ~150:
+ *   ~1.92 GiB; with the large-model limits still ~1.84 GiB, ~2.0 GiB on the CPU path.
+ * Edge for Android closed the engine (and the tab) on both on a POCO F5 Pro. The 2B weights
+ * alone are 1.7 GiB, so no load option brings it near the 0.8B footprint: it is not offered
+ * on a phone (as before 1.3.0). Hy-MT2 stays, with the large-model limits and the load-crash
+ * guard (`shared/model-load-guard.ts`) to fall back to PLaMo 3 0.8B if it closes again.
+ */
+export const MOBILE_MAX_MODEL_BYTES = 1_500_000_000;
+
+/** 1.3.0: every catalog model up to `MOBILE_MAX_MODEL_BYTES` may be used on a phone. */
 export function isMobileModelAllowed(modelId: ModelId): boolean {
-  return isModelId(modelId);
+  return isModelId(modelId) && getModel(modelId).size <= MOBILE_MAX_MODEL_BYTES;
 }
 
 export function mobileModelSizeBytes(): number {

@@ -1150,7 +1150,7 @@
     "message": "许可"
   },
   "modelLargeMobileWarning": {
-    "message": "超过 1 GB：手机上下载与加载较慢、内存压力大，建议搭配“低内存”Adreno 配置。"
+    "message": "超过 1 GB：手机上会自动以省内存方式加载（1 个槽、n_ctx 1024、批次 128），下载和加载较慢、内存压力大。若加载时引擎被关闭，会自动改回 PLaMo 3 0.8B。"
   },
   "modelGemmaTerms": {
     "message": "下载并使用 Gemma 即表示你同意 Gemma 使用条款与禁止用途政策。"
@@ -1172,5 +1172,11 @@
   },
   "modelDescPlamoLarge": {
     "message": "PLaMo 翻译的高质量版，文件最大、手机内存压力最高。"
+  },
+  "modelTooLargeMobile": {
+    "message": "手机上不提供：PLaMo 3 2B 需要约 1.9 GB 内存（权重 1.7 GB），超过 Edge for Android 一个页面可用的量，加载时会被关闭。已下载的文件可以在这里删除。"
+  },
+  "modelLoadCrashed": {
+    "message": "上次在这部手机加载此模型时，翻译引擎被 Edge 关闭了（内存不足），因此已改回 PLaMo 3 0.8B。可以再试一次“使用”，若再次被关闭会自动改回。"
   }
 }

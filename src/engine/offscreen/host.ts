@@ -7,7 +7,8 @@ import type { EngineStatus, ModelStatus } from '@/shared/engine-status';
 import { advanceModelStatus } from '@/shared/model-progress';
 import { loadSettings } from '@/shared/storage';
 import type { TierPreference } from '@/shared/settings';
-import { isAndroidEdgeRuntime } from '@/shared/mobile';
+import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
+import { markModelLoad, requestCrashedModelLoad } from '@/shared/model-load-guard';
 import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
 import { requestEngineSettings, type EngineSettingsSnapshot } from '@/shared/messages';
 import { looksLikeBrokenTranslation } from '../text/garbage';
@@ -20,6 +21,7 @@ import { isAbortError, isEngineError } from '../errors';
 import {
   cpuAfterBrokenOutput,
   cpuFallback,
+  fitSelectionToModel,
   isGpuLoadFallback,
   lighterSelection,
   resolveSelection,
@@ -252,8 +254,18 @@ export class EngineHost {
     // settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
     const store = await OpfsModelFileStore.open();
     const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
-    // 1.3.0: come back on the model chosen in the settings, if its file is still here.
-    if (stored?.modelId && stored.modelId !== this.activeModelId) {
+    // Edge for Android: a load mark left by the previous engine page means it was closed
+    // inside a model load (a model too large for the phone). That model is not loaded again
+    // on its own; the background has already moved the settings back to the default.
+    const crashedModel = android ? await requestCrashedModelLoad() : null;
+    // 1.3.0: come back on the model chosen in the settings, if its file is still here (and,
+    // on a phone, if it is one the phone may run: not PLaMo 3 2B, see `isMobileModelAllowed`).
+    if (
+      stored?.modelId &&
+      stored.modelId !== this.activeModelId &&
+      stored.modelId !== crashedModel &&
+      (!android || isMobileModelAllowed(stored.modelId))
+    ) {
       const chosen = await manager.status(stored.modelId).catch(() => null);
       if (chosen && (chosen.state === 'ready' || chosen.state === 'loaded')) {
         this.activeModelId = stored.modelId;
@@ -265,6 +277,7 @@ export class EngineHost {
       adreno: probe.adreno,
       gpuProfile: stored?.gpuProfile ?? 'optimized',
       gpuExperimental: isGpuExperimentalModel(this.activeModelId),
+      modelBytes: getModel(this.activeModelId).size,
     };
     let tierPreference: TierPreference = stored?.tier ?? 'auto';
     const selection = resolveSelection(tierPreference, probe, runtime);
@@ -272,18 +285,30 @@ export class EngineHost {
     const cache = await openCache();
     const chrome = new ChromeTranslatorEngine();
     const load = async (signal: AbortSignal): Promise<LoadedModel> => {
-      const result = await loadWithFallback(
-        async (selection) => {
-          try {
-            return await manager.ensureLoaded(this.activeModelId, selection, { signal });
-          } catch (error) {
-            this.noteGpuError(error);
-            throw error;
-          }
-        },
-        selectionState.current,
-        signal,
-      );
+      const modelId = this.activeModelId;
+      // Android: marked for the load-crash guard; cleared when the load ends either way.
+      if (android) await markModelLoad(modelId);
+      let result: Awaited<ReturnType<typeof loadWithFallback>>;
+      try {
+        result = await loadWithFallback(
+          async (selection) => {
+            try {
+              // Every attempt, the lighter and CPU fallbacks too, gets the phone and
+              // large-model limits (`fitSelectionToModel`).
+              return await manager.ensureLoaded(modelId, fitSelectionToModel(selection, runtime), {
+                signal,
+              });
+            } catch (error) {
+              this.noteGpuError(error);
+              throw error;
+            }
+          },
+          selectionState.current,
+          signal,
+        );
+      } finally {
+        if (android) await markModelLoad(null);
+      }
       if (isGpuLoadFallback(selectionState.current, result.selection)) {
         this.gpuFallback = true;
       }
@@ -376,6 +401,7 @@ export class EngineHost {
       },
       modelChanged: async (modelId: ModelId) => {
         runtime.gpuExperimental = isGpuExperimentalModel(modelId);
+        runtime.modelBytes = getModel(modelId).size;
         const latest = await loadEngineSettings();
         if (latest) {
           runtime.gpuProfile = latest.gpuProfile;
@@ -946,6 +972,7 @@ async function loadEngineSettings(): Promise<EngineSettingsSnapshot | null> {
       tier: settings.tier,
       gpuProfile: settings.gpuProfile,
       gpuOutputBroken: await loadGpuOutputBroken(),
+      modelId: settings.modelId,
     };
   } catch {
     return null;

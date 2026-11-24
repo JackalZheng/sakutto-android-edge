@@ -75,21 +75,14 @@ export function commandSuggestions(
 }
 
 /**
- * Edge commands for Android: the same four actions, but with no
- * `suggested_key`. A phone has no Alt+A keyboard to bind, and a
- * suggested key would only mislead the settings page. The actions
- * remain reachable from the popup and from the content-script UI.
+ * Edge commands: the same four actions and the same Alt+A / Alt+B / Alt+S / Alt+T suggested
+ * keys as Chrome. Edge on a desktop binds them at install; Edge for Android has no keyboard
+ * and ignores `commands`, and its settings page shows the gesture panel instead of the keys.
+ * 1.2.x–1.3.0-dev Edge packages left `suggested_key` out, so desktop Edge/Chromium got no
+ * shortcut at install.
  */
-export function edgeCommands(): Record<
-  (typeof SHORTCUT_COMMANDS)[number],
-  { description: string }
-> {
-  return {
-    'translate-page': { description: COMMAND_MESSAGES['translate-page'] },
-    'toggle-bilingual': { description: COMMAND_MESSAGES['toggle-bilingual'] },
-    'translate-selection': { description: COMMAND_MESSAGES['translate-selection'] },
-    'translate-compose': { description: COMMAND_MESSAGES['translate-compose'] },
-  };
+export function edgeCommands(): ReturnType<typeof commandSuggestions> {
+  return commandSuggestions('chrome');
 }
 
 export function firefoxGeckoSettings(): {

@@ -165,8 +165,11 @@ describe('Edge manifest', () => {
       'translate-page',
       'translate-selection',
     ]);
-    for (const command of Object.values(commands)) {
-      expect(command.suggested_key).toBeUndefined();
-    }
+    // Regression (1.3.0): the Edge package must keep the Chrome suggested keys.
+    expect(commands).toEqual(chromeManifest.commands);
+    expect(commands['translate-page']?.suggested_key).toEqual({ default: 'Alt+A' });
+    expect(commands['toggle-bilingual']?.suggested_key).toEqual({ default: 'Alt+B' });
+    expect(commands['translate-selection']?.suggested_key).toEqual({ default: 'Alt+S' });
+    expect(commands['translate-compose']?.suggested_key).toEqual({ default: 'Alt+T' });
   });
 });

@@ -768,6 +768,32 @@ describe('page session', () => {
     expect(document.querySelector('a')?.getAttribute('href')).toBe('/osaka');
   });
 
+  it('paints a plain answer for a tagged block without translating it again', async () => {
+    // Regression (1.3.0): Qwen3 / Gemma 3 / Hy-MT2 never return the <i1> tags, and the
+    // flattened retry translated every block with a link a second time.
+    document.documentElement.lang = 'en';
+    document.body.innerHTML = '<p id="lead">See <a href="/osaka">Osaka</a> today.</p>';
+    const seen: string[] = [];
+    const session = start(
+      document,
+      engineOf(async function* (segments) {
+        const text = segments.map((segment) => segment.text).join('');
+        seen.push(text);
+        for (const segment of segments) {
+          yield { id: segment.id, final: '今天看看大阪。', engine: 'plamo' as const };
+        }
+      }),
+    );
+
+    await session.translate();
+    await session.whenIdle();
+
+    expect(seen).toHaveLength(1);
+    expect(document.body.innerHTML).not.toMatch(/<i\d/);
+    expect(document.body.textContent).toContain('今天看看大阪。');
+    expect(document.documentElement.dataset.sakuttoProgress).toBe('1/1');
+  });
+
   it('runs a selection after the current page chunk and before the next one', async () => {
     document.documentElement.lang = 'en';
     document.body.innerHTML = `<p>${'First paragraph of the page. '.repeat(8)}</p><p>Second paragraph</p>`;

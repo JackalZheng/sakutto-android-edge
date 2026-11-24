@@ -24,6 +24,7 @@
   } from '@/shared/messages';
   import { loadSettings } from '@/shared/storage';
   import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
+  import { loadCrashedModelLoads, type CrashedModelLoads } from '@/shared/model-load-guard';
   import { formatByteSize } from './format';
 
   interface Props {
@@ -34,10 +35,17 @@
   let { onActiveChange }: Props = $props();
 
   const androidEdge = isAndroidEdgeRuntime();
-  // 1.3.0: every catalog model, smallest file first, on desktop and on Edge for Android.
-  const models: readonly ModelEntry[] = MODEL_LIST.filter((model) =>
-    androidEdge ? isMobileModelAllowed(model.id) : true,
-  );
+  // 1.3.0: every catalog model, smallest file first, on desktop and on Edge for Android. On a
+  // phone a model over `MOBILE_MAX_MODEL_BYTES` (PLaMo 3 2B) stays listed, so a copy that is
+  // already there can be deleted, but it cannot be downloaded or used.
+  const models: readonly ModelEntry[] = MODEL_LIST;
+
+  function allowedHere(id: ModelId): boolean {
+    return !androidEdge || isMobileModelAllowed(id);
+  }
+
+  /** Models whose load closed the engine page on this phone (`shared/model-load-guard.ts`). */
+  let crashed = $state<CrashedModelLoads>({});
 
   const descriptionKey: Record<ModelId, MessageKey> = {
     'qwen3-0.6b-q4_k_m': 'modelDescQwen3Small',
@@ -84,6 +92,7 @@
       if (status) next[model.id] = status;
     }
     statuses = next;
+    if (androidEdge) crashed = await loadCrashedModelLoads();
   }
 
   async function download(id: ModelId) {
@@ -104,6 +113,11 @@
     const status = await requestModelUse(id);
     if (status) apply(status);
     setActive(id);
+    if (crashed[id] !== undefined) {
+      const next = { ...crashed };
+      delete next[id];
+      crashed = next;
+    }
     busy = null;
   }
 
@@ -159,8 +173,13 @@
       {#if model.gpuExperimental}
         <p class="muted detail">{t('modelGpuExperimentalHelp')}</p>
       {/if}
-      {#if androidEdge && model.size > LARGE_MODEL_BYTES}
+      {#if !allowedHere(id)}
+        <p class="muted detail warning">{t('modelTooLargeMobile')}</p>
+      {:else if androidEdge && model.size > LARGE_MODEL_BYTES}
         <p class="muted detail warning">{t('modelLargeMobileWarning')}</p>
+      {/if}
+      {#if androidEdge && crashed[id] !== undefined}
+        <p class="muted detail warning" role="status">{t('modelLoadCrashed')}</p>
       {/if}
       {#if status && (downloading || state === 'partial' || state === 'loading')}
         <p class="muted">
@@ -178,7 +197,7 @@
             {t('downloadCancel')}
           </button>
         {:else if state === 'ready' || state === 'loaded'}
-          {#if activeId !== id}
+          {#if activeId !== id && allowedHere(id)}
             <button
               class="button"
               type="button"
@@ -193,7 +212,7 @@
           <!-- The file is here and the runtime is reading it. A Download button in this
                state is a start control for something that is already under way. -->
           <p class="muted">{t('runtimeLoading')}</p>
-        {:else}
+        {:else if allowedHere(id)}
           <button
             class="button"
             type="button"

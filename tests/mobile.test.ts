@@ -69,12 +69,13 @@ describe('Edge for Android mobile target', () => {
   it('keeps 0.8B as the mobile default and allows every catalog model (1.3.0)', () => {
     expect(MOBILE_MODEL_ID).toBe('plamo-3-translate-0.8b-q4_k_m');
     expect(isMobileModelAllowed('plamo-3-translate-0.8b-q4_k_m')).toBe(true);
-    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(true);
+    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(false);
+    expect(isMobileModelAllowed('hy-mt2-1.8b-q4_k_m')).toBe(true);
     expect(isMobileModelAllowed('qwen3-0.6b-q4_k_m')).toBe(true);
     expect(isMobileModelAllowed('nope' as never)).toBe(false);
   });
 
-  it('declares Edge commands with no keyboard shortcut', () => {
+  it('declares Edge commands with the Chrome suggested keys', () => {
     const commands = edgeCommands();
     expect(Object.keys(commands).sort()).toEqual([
       'toggle-bilingual',
@@ -82,8 +83,11 @@ describe('Edge for Android mobile target', () => {
       'translate-page',
       'translate-selection',
     ]);
+    expect(commands['translate-page'].suggested_key).toEqual({ default: 'Alt+A' });
+    expect(commands['toggle-bilingual'].suggested_key).toEqual({ default: 'Alt+B' });
+    expect(commands['translate-selection'].suggested_key).toEqual({ default: 'Alt+S' });
+    expect(commands['translate-compose'].suggested_key).toEqual({ default: 'Alt+T' });
     for (const command of Object.values(commands)) {
-      expect(command).not.toHaveProperty('suggested_key');
       expect(typeof command.description).toBe('string');
     }
   });
