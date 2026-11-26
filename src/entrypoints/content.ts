@@ -27,6 +27,7 @@ import {
   displayShortcut,
   emptyShortcutAssigned,
   matchesShortcut,
+  pageCommandAllowed,
   SHORTCUT_PAGE_COMMANDS,
   type ShortcutAssigned,
   type ShortcutCommand,
@@ -41,6 +42,7 @@ import {
   requestEngineStatus,
   requestEngineWarm,
   type PageCommandName,
+  type PageCommandSource,
   type PageInfo,
   type ShortcutQueryResult,
   type ShortcutSnapshot,
@@ -432,7 +434,7 @@ export default defineContentScript({
       return session;
     })();
 
-    const run = async (command: PageCommandName) => {
+    const run = async (command: PageCommandName, source: PageCommandSource | undefined) => {
       const now = Date.now();
       // Compose re-entry is owned by the controller so a Chrome command that found no field
       // cannot swallow the page keydown (or a second command) that does.
@@ -442,7 +444,11 @@ export default defineContentScript({
       lastCommand = command;
       lastCommandAt = now;
       const session = await sessionPromise;
-      if (!commandEnabled(shortcutSnapshot, shortcutAssigned, shortcutsEnabled, command)) {
+      if (
+        !pageCommandAllowed(source, () =>
+          commandEnabled(shortcutSnapshot, shortcutAssigned, shortcutsEnabled, command),
+        )
+      ) {
         return session.state();
       }
       if (!__SAKUTTO_FAKE_ENGINE__) {
@@ -501,7 +507,7 @@ export default defineContentScript({
           sendResponse(session.state());
           return;
         }
-        if (isPageCommandRequest(message)) sendResponse(await run(message.command));
+        if (isPageCommandRequest(message)) sendResponse(await run(message.command, message.source));
       });
       return true;
     });
@@ -512,6 +518,7 @@ async function requestEngineTier(session: PageSession, retry = false): Promise<v
   try {
     const status = await requestEngineStatus();
     if (status?.tier) session.setTier(status.tier);
+    if (status) session.setEngineSlots(status.parallel);
     if (retry || status?.model.state === 'loaded') session.retryUntranslated();
   } catch {
     // A load broadcast still re-queues the blocks that failed while the model loaded.

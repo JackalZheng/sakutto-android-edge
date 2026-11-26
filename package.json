@@ -1,6 +1,6 @@
 {
   "name": "sakutto",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "description": "Local web page translation with PLaMo 3 Translate.",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "lint:firefox": "node scripts/web-ext-lint.ts",
     "icons": "node scripts/generate-icons.mjs",
     "build:wllama": "node scripts/wllama/build.ts",
+    "build:wllama:debug": "SAKUTTO_WLLAMA_DEBUG=1 node scripts/wllama/build.ts",
     "wllama:check": "node scripts/wllama/build.ts --check",
     "verify:wllama": "node scripts/verify-wllama.mjs",
     "postinstall": "wxt prepare",
@@ -50,6 +51,7 @@
     "build:edge": "node scripts/verify-wllama.mjs && node scripts/sync-licenses.mjs && wxt build -b edge",
     "build:edge-android": "node scripts/verify-wllama.mjs && node scripts/sync-licenses.mjs && wxt build -b edge",
     "zip:edge": "node scripts/verify-wllama.mjs && node scripts/sync-licenses.mjs && wxt zip -b edge && node scripts/verify-package.ts --browser edge",
+    "build:debug": "node scripts/verify-wllama.mjs && node scripts/sync-licenses.mjs && SAKUTTO_DEBUG_BUILD=1 wxt build -b edge",
     "build:edge-fake": "SAKUTTO_FAKE_ENGINE=1 wxt build -b edge"
   },
   "devDependencies": {

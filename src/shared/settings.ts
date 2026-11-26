@@ -1,4 +1,10 @@
 import type { GlossaryEntry } from '@/engine/types';
+import {
+  DEFAULT_ADRENO_GPU_PROFILE,
+  isAdrenoGpuProfile,
+  type AdrenoGpuProfile,
+} from './adreno-profiles';
+import { DEFAULT_MODEL_ID, isModelId, type ModelId } from '@/engine/model/catalog';
 import { normalizeGlossary } from './glossary';
 import {
   DEFAULT_TARGET_LANGUAGE,
@@ -35,6 +41,10 @@ export const PLAMO_NOTICE_VERSION = '2026-11-06';
 export type Formality = 'polite' | 'plain';
 export type DisplayMode = 'replace' | 'bilingual';
 export type TierPreference = 'auto' | 'g' | 'c8' | 'c4' | 'c1';
+
+/** See `shared/adreno-profiles.ts` and `applyAdrenoProfile` (engine/in-browser/backend.ts). */
+export type { AdrenoGpuProfile };
+export { isAdrenoGpuProfile };
 export type TranslationPace = 'fast' | 'quality';
 export type IdleMinutes = 0 | 1 | 5 | 15;
 export const COMPOSE_PLACEMENTS = ['above', 'below', 'corner', 'free'] as const;
@@ -67,6 +77,10 @@ export interface Settings {
   glossary: GlossaryEntry[];
   idleMinutes: IdleMinutes;
   tier: TierPreference;
+  /** WebGPU setup on an Adreno GPU; only used when WebGPU is chosen there. */
+  gpuProfile: AdrenoGpuProfile;
+  /** The translation model in use (1.3.0); the engine host switches to it when it starts. */
+  modelId: ModelId;
   pace: TranslationPace;
   /** False hides the あA button on message boxes. The shortcut and context menu stay. */
   composeIcon: boolean;
@@ -85,6 +99,12 @@ export interface Settings {
   composeInstantReplace: boolean;
   /** Where the compose preview bar sits. Sites may override this from the bar menu. */
   composePlacement: ComposePlacement;
+  /**
+   * Touch runtimes (Edge for Android): put the floating translate button on every page
+   * the extension may access, without opening the popup there first. Sites set to "never"
+   * are skipped.
+   */
+  fabEverywhere: boolean;
 }
 
 export type SettingsPatch = Partial<
@@ -98,11 +118,14 @@ export type SettingsPatch = Partial<
     | 'glossary'
     | 'idleMinutes'
     | 'tier'
+    | 'gpuProfile'
+    | 'modelId'
     | 'pace'
     | 'composeIcon'
     | 'composeTargetLanguage'
     | 'composeInstantReplace'
     | 'composePlacement'
+    | 'fabEverywhere'
   >
 > & {
   shortcutsEnabled?: Partial<ShortcutEnabled>;
@@ -118,12 +141,15 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   glossary: [],
   idleMinutes: 5,
   tier: 'auto',
+  gpuProfile: DEFAULT_ADRENO_GPU_PROFILE,
+  modelId: DEFAULT_MODEL_ID,
   pace: 'quality',
   composeIcon: true,
   shortcutsEnabled: defaultShortcutEnabled(),
   composeTargetLanguage: null,
   composeInstantReplace: false,
   composePlacement: 'above',
+  fabEverywhere: true,
 });
 
 export function createDefaultSettings(uiLanguage: string): Settings {
@@ -163,12 +189,15 @@ export function normalizeSettings(value: unknown, uiLanguage: string): Settings 
     glossary: normalizeGlossary(value.glossary),
     idleMinutes: isIdleMinutes(value.idleMinutes) ? value.idleMinutes : defaults.idleMinutes,
     tier: isTierPreference(value.tier) ? value.tier : defaults.tier,
+    gpuProfile: isAdrenoGpuProfile(value.gpuProfile) ? value.gpuProfile : defaults.gpuProfile,
+    modelId: isModelId(value.modelId) ? value.modelId : defaults.modelId,
     pace: isTranslationPace(value.pace) ? value.pace : defaults.pace,
     composeIcon: value.composeIcon !== false,
     shortcutsEnabled: normalizeShortcutEnabled(value.shortcutsEnabled),
     composeTargetLanguage: normalizeComposeTarget(value.composeTargetLanguage),
     composeInstantReplace: value.composeInstantReplace === true,
     composePlacement: isComposePlacement(value.composePlacement) ? value.composePlacement : 'above',
+    fabEverywhere: value.fabEverywhere !== false,
   };
 }
 

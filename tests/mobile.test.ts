@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MOBILE_MODEL_ID,
+  isAndroidEdgeRuntime,
   isAndroidEdgeUserAgent,
+  isAndroidRuntime,
+  isAndroidRuntimeUserAgent,
   isEdgeUserAgent,
   isMobileModelAllowed,
   warmBeforePageCommand,
@@ -50,13 +53,29 @@ describe('Edge for Android mobile target', () => {
     expect(isEdgeUserAgent(DESKTOP_EDGE_UA)).toBe(true);
   });
 
-  it('only allows the 0.8B model on mobile', () => {
-    expect(MOBILE_MODEL_ID).toBe('plamo-3-translate-0.8b-q4_k_m');
-    expect(isMobileModelAllowed('plamo-3-translate-0.8b-q4_k_m')).toBe(true);
-    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(false);
+  it('counts any Android browser (no EdgA, e.g. Quetta) as the Android runtime', () => {
+    expect(isAndroidRuntimeUserAgent(CHROME_ANDROID_UA)).toBe(true);
+    expect(isAndroidRuntimeUserAgent(EDGE_ANDROID_UA)).toBe(true);
+    expect(isAndroidRuntimeUserAgent(DESKTOP_EDGE_UA)).toBe(false);
+    expect(isAndroidRuntimeUserAgent(DESKTOP_EDGE_UA, { platform: 'Android' })).toBe(true);
+    vi.stubGlobal('navigator', { userAgent: CHROME_ANDROID_UA });
+    expect(isAndroidRuntime()).toBe(true);
+    expect(isAndroidEdgeRuntime()).toBe(true);
+    vi.stubGlobal('navigator', { userAgent: DESKTOP_EDGE_UA });
+    expect(isAndroidRuntime()).toBe(false);
+    expect(isAndroidEdgeRuntime()).toBe(false);
   });
 
-  it('declares Edge commands with no keyboard shortcut', () => {
+  it('keeps 0.8B as the mobile default and allows every catalog model (1.3.0)', () => {
+    expect(MOBILE_MODEL_ID).toBe('plamo-3-translate-0.8b-q4_k_m');
+    expect(isMobileModelAllowed('plamo-3-translate-0.8b-q4_k_m')).toBe(true);
+    expect(isMobileModelAllowed('plamo-3-translate-2b-q4_k_m')).toBe(true);
+    expect(isMobileModelAllowed('hy-mt2-1.8b-q4_k_m')).toBe(true);
+    expect(isMobileModelAllowed('qwen3-0.6b-q4_k_m')).toBe(true);
+    expect(isMobileModelAllowed('nope' as never)).toBe(false);
+  });
+
+  it('declares Edge commands with the Chrome suggested keys', () => {
     const commands = edgeCommands();
     expect(Object.keys(commands).sort()).toEqual([
       'toggle-bilingual',
@@ -64,8 +83,11 @@ describe('Edge for Android mobile target', () => {
       'translate-page',
       'translate-selection',
     ]);
+    expect(commands['translate-page'].suggested_key).toEqual({ default: 'Alt+A' });
+    expect(commands['toggle-bilingual'].suggested_key).toEqual({ default: 'Alt+B' });
+    expect(commands['translate-selection'].suggested_key).toEqual({ default: 'Alt+S' });
+    expect(commands['translate-compose'].suggested_key).toEqual({ default: 'Alt+T' });
     for (const command of Object.values(commands)) {
-      expect(command).not.toHaveProperty('suggested_key');
       expect(typeof command.description).toBe('string');
     }
   });

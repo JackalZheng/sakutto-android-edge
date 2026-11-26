@@ -8,7 +8,16 @@
   import type { EngineCapabilities } from '@/shared/capabilities';
   import type { EngineStatus } from '@/shared/engine-status';
   import { hasBuiltInTranslatorUi, isFirefoxBuild } from '@/shared/browser';
-  import { currentUiLanguage, t, tForBrowser } from '@/shared/i18n';
+  import { currentUiLanguage, t, tForBrowser, type MessageKey } from '@/shared/i18n';
+  import { ADRENO_GPU_PROFILES } from '@/shared/adreno-profiles';
+  import {
+    DEFAULT_MODEL_ID,
+    getModel,
+    isGpuExperimentalModel,
+    LARGE_MODEL_BYTES,
+    type ModelId,
+  } from '@/engine/model/catalog';
+  import { hasAllSitesAccess, requestAllSitesAccess } from '@/shared/all-sites';
   import {
     requestCacheClear,
     requestEngineCapabilities,
@@ -18,9 +27,16 @@
   } from '@/shared/messages';
   import type { QualitySample } from '@/shared/quality';
   import { PLAMO_OFFICIAL_LINKS, PROJECT_LINKS } from '@/shared/plamo-license';
-  import type { IdleMinutes, Settings, SettingsPatch, TierPreference } from '@/shared/settings';
-  import { isIdleMinutes, isTierPreference } from '@/shared/settings';
+  import type {
+    AdrenoGpuProfile,
+    IdleMinutes,
+    Settings,
+    SettingsPatch,
+    TierPreference,
+  } from '@/shared/settings';
+  import { isAdrenoGpuProfile, isIdleMinutes, isTierPreference } from '@/shared/settings';
   import { isAndroidEdgeRuntime } from '@/shared/mobile';
+  import { webGpuDebugProfileFromUrl } from '@/shared/gpu-diagnostic';
   import type { TargetLanguage } from '@/shared/languages';
   import { loadSettings, saveSettings, subscribeSettings } from '@/shared/storage';
   import EngineStatusView from '@/ui/EngineStatus.svelte';
@@ -46,6 +62,34 @@
   const projectLinks = PROJECT_LINKS;
   /** Edge for Android has no keyboard, so this panel shows gestures, not shortcuts. */
   const androidEdge = isAndroidEdgeRuntime();
+  /**
+   * The GPU harness is a debug tool with no address-bar entry on phones: show
+   * its button on Android Edge, or on desktop when the settings page was opened
+   * with a WebGPU debug profile (?webgpuDebug=…), the same signal the engine uses.
+   */
+  // Release builds do not ship the harness page (it is in `pnpm build:debug` only).
+  const showGpuHarness =
+    __SAKUTTO_DEBUG_BUILD__ && (androidEdge || webGpuDebugProfileFromUrl(location.href) !== null);
+  // Every profile from `shared/adreno-profiles.ts` (the non-garbling GPU harness setups), each
+  // with its recommendation shown under the selector.
+  const gpuProfiles: readonly AdrenoGpuProfile[] = ADRENO_GPU_PROFILES;
+  const gpuProfileHelpKey = {
+    optimized: 'gpuProfileOptimizedHelp',
+    q4v2: 'gpuProfileQ4v2Help',
+    r6: 'gpuProfileR6Help',
+    'low-memory': 'gpuProfileLowMemoryHelp',
+    compat: 'gpuProfileCompatHelp',
+    r4: 'gpuProfileR4Help',
+  } as const satisfies Record<AdrenoGpuProfile, MessageKey>;
+  const gpuProfileLabelKey = {
+    optimized: 'gpuProfileOptimized',
+    q4v2: 'gpuProfileQ4v2',
+    r6: 'gpuProfileR6',
+    'low-memory': 'gpuProfileLowMemory',
+    compat: 'gpuProfileCompat',
+    r4: 'gpuProfileR4',
+  } as const satisfies Record<AdrenoGpuProfile, MessageKey>;
+  let activeModelId = $state<ModelId>(DEFAULT_MODEL_ID);
 
   let settings = $state<Settings | null>(null);
   let settingsError = $state<SettingsError>(null);
@@ -61,6 +105,9 @@
   let quality = $state<QualitySample | null>(null);
   let cacheState = $state<CacheState>(null);
   let actionFailed = $state(false);
+  let harnessOpenFailed = $state(false);
+  let allSites = $state<boolean | null>(null);
+  let allSitesFailed = $state(false);
 
   let siteList = $derived(
     Object.values(rules).sort((left, right) => left.host.localeCompare(right.host)),
@@ -82,6 +129,22 @@
     });
     return t(label.key, label.substitutions);
   });
+
+  async function changeFabEverywhere(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    allSitesFailed = false;
+    // The grant prompt has to open inside this click, before anything else is awaited.
+    if (input.checked && allSites !== true) {
+      allSites = await requestAllSitesAccess();
+      allSitesFailed = !allSites;
+    }
+    await updateSettings({ fabEverywhere: input.checked });
+  }
+
+  async function grantAllSites() {
+    allSites = await requestAllSitesAccess();
+    allSitesFailed = !allSites;
+  }
 
   async function updateSettings(patch: SettingsPatch) {
     try {
@@ -160,6 +223,20 @@
     engine = await requestEngineStatus();
   }
 
+  async function changeGpuProfile(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (!isAdrenoGpuProfile(select.value)) return;
+    const gpuProfile: AdrenoGpuProfile = select.value;
+    await updateSettings({ gpuProfile });
+    // The engine reads the profile when the tier is applied; reload only if WebGPU may be in use
+    // (an explicit GPU choice, or Automatic on an Adreno).
+    const tier = settings?.tier;
+    if (tier === 'g' || (tier === 'auto' && capabilities?.gpuAdreno === true)) {
+      await requestEngineTier(tier);
+      engine = await requestEngineStatus();
+    }
+  }
+
   async function changeIdle(event: Event) {
     const select = event.currentTarget as HTMLSelectElement;
     const minutes = Number(select.value);
@@ -190,6 +267,15 @@
     }
   }
 
+  async function openGpuHarness() {
+    harnessOpenFailed = false;
+    try {
+      await browser.tabs.create({ url: browser.runtime.getURL('/gpu-harness.html') });
+    } catch {
+      harnessOpenFailed = true;
+    }
+  }
+
   onMount(() => {
     const unsubscribe = subscribeSettings((next) => {
       settings = next;
@@ -200,6 +286,11 @@
     });
     void loadStoredSettings();
     void loadRules();
+    if (androidEdge) {
+      void hasAllSitesAccess().then((granted) => {
+        allSites = granted;
+      });
+    }
     void requestEngineStatus().then((status) => {
       engine = status;
     });
@@ -228,6 +319,21 @@
     <h2>{t('settingsLabel')}</h2>
     {#if settings}
       <SettingsFields {settings} {uiLanguage} onChange={updateSettings} />
+      {#if androidEdge}
+        <label class="check">
+          <input type="checkbox" checked={settings.fabEverywhere} onchange={changeFabEverywhere} />
+          <span>{t('fabEverywhereSetting')}</span>
+        </label>
+        <p class="muted help">{t('fabEverywhereSettingHelp')}</p>
+        {#if settings.fabEverywhere && allSites === false}
+          <button class="link-button" type="button" onclick={grantAllSites}>
+            {t('fabEverywhereGrant')}
+          </button>
+        {/if}
+        {#if allSitesFailed}
+          <p class="error" role="alert">{t('fabEverywhereGrantFailed')}</p>
+        {/if}
+      {/if}
       <p class="muted help">{t('optionsDefaultHint')}</p>
       {#if settingsError === 'save'}
         <p class="error" role="alert">{t('errorSaveSettings')}</p>
@@ -352,7 +458,7 @@
 
   <section class="panel">
     <h2>{t('modelHeading')}</h2>
-    <ModelManager />
+    <ModelManager onActiveChange={(id) => (activeModelId = id)} />
     {#if showSlow}
       <p class="muted help">{t('slowDeviceHint')}</p>
     {/if}
@@ -381,6 +487,31 @@
         </select>
       </label>
       <p class="muted help">{t('tierHelp')}</p>
+      {#if capabilities?.gpuAdreno === true || androidEdge}
+        <p class="muted help">{t('tierAdrenoAutoHelp')}</p>
+      {/if}
+      {#if androidEdge && settings.tier === 'g'}
+        <p class="error" role="note">{t('tierGpuMobileWarning')}</p>
+      {/if}
+      {#if androidEdge && (settings.tier === 'g' || settings.tier === 'auto') && getModel(activeModelId).size > LARGE_MODEL_BYTES}
+        <p class="muted help" role="note">{t('tierLargeModelCpuMobile')}</p>
+      {/if}
+      {#if (capabilities?.gpuAdreno === true || androidEdge) && (settings.tier === 'g' || (settings.tier === 'auto' && capabilities?.gpuAdreno === true))}
+        <label class="field">
+          <span>{t('gpuProfileLabel')}</span>
+          <select value={settings.gpuProfile} onchange={changeGpuProfile}>
+            {#each gpuProfiles as profile (profile)}
+              <option value={profile}>{t(gpuProfileLabelKey[profile])}</option>
+            {/each}
+          </select>
+        </label>
+        <p class="muted help" role="note">{t(gpuProfileHelpKey[settings.gpuProfile])}</p>
+        {#if settings.tier === 'auto' && isGpuExperimentalModel(activeModelId)}
+          <p class="muted help">{t('gpuProfileExperimentalAuto')}</p>
+        {/if}
+      {:else if capabilities?.gpuAdreno === true || androidEdge}
+        <p class="muted help">{t('gpuProfileInactive')}</p>
+      {/if}
       <label class="field">
         <span>{t('idleLabel')}</span>
         <select value={String(settings.idleMinutes)} onchange={changeIdle}>
@@ -394,6 +525,14 @@
     <p class="engine-line">{engineLine}</p>
     <h3>{t('diagHeading')}</h3>
     <dl class="diag">
+      <div>
+        <dt>{t('diagGpu')}</dt>
+        <dd>
+          {capabilities?.gpuName ?? t('diagGpuNone')}{capabilities?.gpuAdreno === true
+            ? ` · ${t('diagGpuAdreno')}`
+            : ''}
+        </dd>
+      </div>
       <div>
         <dt>{t('diagBackend')}</dt>
         <dd>
@@ -416,6 +555,15 @@
     <p class="muted help">{t('diagRateHint')}</p>
     <EngineStatusView {capabilities} failed={capabilitiesFailed} detailed />
     <GpuDiagnosticView diagnostic={engine?.gpuDiagnostic} />
+    {#if showGpuHarness}
+      <button class="button secondary" type="button" onclick={openGpuHarness}>
+        {t('openGpuHarness')}
+      </button>
+      <p class="muted help">{t('gpuHarnessHelp')}</p>
+      {#if harnessOpenFailed}
+        <p class="error" role="alert">{t('errorAction')}</p>
+      {/if}
+    {/if}
   </section>
 
   <section class="panel">
@@ -503,6 +651,13 @@
 </main>
 
 <style>
+  .check {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text);
+    font-size: 13px;
+  }
   .page {
     display: grid;
     gap: var(--space-4);

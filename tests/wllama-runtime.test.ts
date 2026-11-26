@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { selectBackend } from '@/engine/in-browser/backend';
-import { createWllamaRuntime, gpuEvidence, isRuntimeDead } from '@/engine/in-browser/runtime';
+import {
+  createWllamaRuntime,
+  gpuEvidence,
+  isGarbledOutputFailure,
+  isRuntimeDead,
+  setRuntimeLogListener,
+} from '@/engine/in-browser/runtime';
 import type { WllamaLogger } from '@/engine/wllama/module';
 
 const native = vi.hoisted(() => ({
   log: [] as string[],
   loadModel: vi.fn(),
+  completion: vi.fn(),
+  logger: null as WllamaLogger | null,
   exit: vi.fn(async () => undefined),
 }));
 
@@ -13,8 +21,16 @@ vi.mock('@/engine/wllama', () => ({
   createWllama: vi.fn(async (options: { logger: WllamaLogger }) => ({
     loadModel: vi.fn(async (...args: unknown[]) => {
       native.loadModel(...args);
+      native.logger = options.logger;
       for (const line of native.log) options.logger.log(line);
     }),
+    createCompletion: vi.fn(
+      async (params: { onData: (chunk: unknown) => void; [key: string]: unknown }) => {
+        native.completion(params);
+        params.onData({ choices: [{ text: 'a' }] });
+        params.onData({ choices: [{ text: '' }], timings: { prompt_n: 3, predicted_n: 1 } });
+      },
+    ),
     exit: native.exit,
   })),
 }));
@@ -216,5 +232,69 @@ describe('a dead WASM runtime', () => {
     expect(isRuntimeDead('RuntimeError: Aborted()')).toBe(true);
     expect(isRuntimeDead(new Error('request exceeds the available context size'))).toBe(false);
     expect(isRuntimeDead(undefined)).toBe(false);
+  });
+});
+
+describe('garbled GPU output', () => {
+  it('is told from a lost device by the worker message in the cause chain', () => {
+    const json = new Error('[json.exception.type_error.316] invalid UTF-8 byte at index 3: 0xFF');
+    const wrapped = new Error('wllama action failed', { cause: json });
+    const typed = new RangeError('Invalid typed array length: -12');
+
+    expect(isGarbledOutputFailure(json)).toBe(true);
+    expect(isGarbledOutputFailure(wrapped)).toBe(true);
+    expect(isGarbledOutputFailure(typed)).toBe(true);
+    expect(isGarbledOutputFailure('RuntimeError: Aborted(invalid UTF-8 byte)')).toBe(true);
+    expect(isGarbledOutputFailure(new Error('Device lost! Reason: 1'))).toBe(false);
+    expect(isGarbledOutputFailure(undefined)).toBe(false);
+  });
+});
+
+describe('debug harness perf hooks', () => {
+  it('passes n_ubatch, the prompt-cache override and the timings through', async () => {
+    native.log = ['load_tensors: offloaded 29/29 layers to GPU'];
+    native.completion.mockClear();
+    const runtime = await createWllamaRuntime(new Blob(), {
+      ...gpu,
+      nParallel: 1,
+      debugLoad: { nUbatch: 256 },
+    });
+    expect(native.loadModel.mock.calls[0]?.[1]).toMatchObject({ n_ubatch: 256 });
+    const tokens: string[] = [];
+    const timings: unknown[] = [];
+    await runtime.complete({
+      prompt: 'p',
+      maxTokens: 4,
+      signal: new AbortController().signal,
+      cachePrompt: false,
+      onToken: (text) => tokens.push(text),
+      onTimings: (value) => timings.push(value),
+    });
+    expect(native.completion.mock.calls[0]?.[0]).toMatchObject({ cache_prompt: false });
+    expect(tokens).toEqual(['a']);
+    expect(timings).toEqual([{ prompt_n: 3, predicted_n: 1 }]);
+  });
+
+  it('keeps the 1-slot prompt cache when no override is given', async () => {
+    native.completion.mockClear();
+    const runtime = await createWllamaRuntime(new Blob(), { ...gpu, nParallel: 1 });
+    expect(native.loadModel.mock.calls.at(-1)?.[1]).not.toHaveProperty('n_ubatch');
+    await runtime.complete({
+      prompt: 'p',
+      maxTokens: 4,
+      signal: new AbortController().signal,
+      onToken: () => undefined,
+    });
+    expect(native.completion.mock.calls[0]?.[0]).toMatchObject({ cache_prompt: true });
+  });
+
+  it('hands post-load log lines to the listener', async () => {
+    await createWllamaRuntime(new Blob(), gpu);
+    const seen: string[] = [];
+    setRuntimeLogListener((line) => seen.push(line));
+    native.logger?.log('SAKUTTO_GPUSTAT g=1 n=1');
+    setRuntimeLogListener(null);
+    native.logger?.log('SAKUTTO_GPUSTAT g=2 n=1');
+    expect(seen).toEqual(['SAKUTTO_GPUSTAT g=1 n=1']);
   });
 });

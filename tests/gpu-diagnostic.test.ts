@@ -17,7 +17,10 @@ import {
   resetWebGpuDebugProfile,
   resolveWebGpuDebugProfile,
   setWebGpuDebugProfile,
+  setWebGpuDebugTuning,
+  composeWebGpuDebugString,
   subgroupShadersEnabled,
+  webGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
 
 const amdLike = {
@@ -124,6 +127,35 @@ describe('gpu diagnostic', () => {
     });
     expect(wave.subgroupMinSize).toBe(32);
     expect(wave.subgroupMaxSize).toBe(32);
+  });
+
+  it('accepts the Adreno mat-vec profiles of patch 0017', () => {
+    for (const profile of [
+      'adreno-subgroups',
+      'adreno-matvec',
+      'adreno-sg-tiled',
+      'adreno-submit-64',
+      'no-matvec',
+      'as-adreno',
+    ]) {
+      expect(isWebGpuDebugProfile(profile)).toBe(true);
+    }
+  });
+
+  it('overlays missing subgroups for the no-subgroups profile', () => {
+    expect(isWebGpuDebugProfile('no-subgroups')).toBe(true);
+    setWebGpuDebugProfile('no-subgroups');
+    const overlay = applyDebugOverlay({
+      ...EMPTY_GPU_DIAGNOSTIC,
+      subgroups: true,
+      features: ['shader-f16', 'subgroups'],
+      subgroupMinSize: 64,
+      subgroupMaxSize: 128,
+    });
+    expect(overlay.subgroups).toBe(false);
+    expect(overlay.features).toEqual(['shader-f16']);
+    expect(overlay.subgroupMinSize).toBe(64);
+    expect(overlay.subgroupMaxSize).toBe(128);
   });
 
   it('does not double the reject-max-limits description', () => {
@@ -277,5 +309,36 @@ describe('gpu diagnostic', () => {
         askHost: async () => 'reject-max-limits',
       }),
     ).resolves.toBe('no-f16');
+  });
+});
+
+describe('webgpu tuning tokens (patch 0021)', () => {
+  it('joins the profile and valid tokens with +', () => {
+    expect(composeWebGpuDebugString('adreno-matvec', ['sub32', 'perf'])).toBe(
+      'adreno-matvec+sub32+perf',
+    );
+    expect(composeWebGpuDebugString(null, ['perf'])).toBe('off+perf');
+    expect(composeWebGpuDebugString('adreno-matvec', ['rwg128', 'smup', 'smnc', 'rwg7'])).toBe(
+      'adreno-matvec+rwg128+smup+smnc',
+    );
+    expect(composeWebGpuDebugString('adreno-matvec', ['bogus', 'sub7'])).toBe('adreno-matvec');
+    expect(composeWebGpuDebugString('off', [])).toBeNull();
+  });
+
+  it('sets the worker global and still reports the base profile', () => {
+    setWebGpuDebugProfile('adreno-matvec');
+    setWebGpuDebugTuning(['mvwg64', 'perfops']);
+    expect((globalThis as { __SAKUTTO_WEBGPU_DEBUG__?: unknown }).__SAKUTTO_WEBGPU_DEBUG__).toBe(
+      'adreno-matvec+mvwg64+perfops',
+    );
+    expect(webGpuDebugProfile()).toBe('adreno-matvec');
+    resetWebGpuDebugProfile();
+    (globalThis as { __SAKUTTO_WEBGPU_DEBUG__?: unknown }).__SAKUTTO_WEBGPU_DEBUG__ =
+      'no-matvec+sub64';
+    expect(webGpuDebugProfile()).toBe('no-matvec');
+    resetWebGpuDebugProfile();
+    expect((globalThis as { __SAKUTTO_WEBGPU_DEBUG__?: unknown }).__SAKUTTO_WEBGPU_DEBUG__).toBe(
+      undefined,
+    );
   });
 });

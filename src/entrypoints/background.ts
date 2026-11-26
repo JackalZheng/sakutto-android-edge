@@ -27,6 +27,9 @@ import {
   isModelUseRequest,
   isQualitySampleRequest,
   isWebGpuDebugQuery,
+  isEngineSettingsQuery,
+  isGpuOutputBrokenUpdate,
+  type EngineSettingsSnapshot,
   requestEngineProbe,
   type ModelProgressMessage,
 } from '@/shared/messages';
@@ -36,8 +39,17 @@ import {
   isWebGpuDebugProfile,
   type WebGpuDebugProfile,
 } from '@/shared/gpu-diagnostic';
-import { ensureSettings } from '@/shared/storage';
+import { ensureSettings, loadSettings, saveSettings } from '@/shared/storage';
+import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
 import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
+import {
+  clearCrashedModelLoad,
+  clearGpuCrashedModelLoads,
+  isModelLoadCrashQuery,
+  isModelLoadMarkUpdate,
+  recoverFromCrashedModelLoad,
+  writeModelLoadMark,
+} from '@/shared/model-load-guard';
 
 const CAPABILITIES_CACHE_KEY = 'engineCapabilities';
 
@@ -107,8 +119,7 @@ export default defineBackground(() => {
   }
 
   function startDownload(modelId: ModelId): boolean {
-    // Edge for Android: refuse the 1.8 GB 2B model even if an old UI
-    // still asks for it. The background is the last line of defence.
+    // Edge for Android: only catalog models (1.3.0 offers all six there).
     if (isAndroidEdgeRuntime() && !isMobileModelAllowed(modelId)) return false;
     if (downloads.has(modelId)) return true;
 
@@ -187,7 +198,14 @@ export default defineBackground(() => {
     warmStarted = true;
     const settings = await ensureSettings();
     if (!hasLicenseConsent(settings)) return;
-    const status = await client.modelStatus(DEFAULT_MODEL_ID).catch(() => null);
+    let status = await client.modelStatus(settings.modelId).catch(() => null);
+    // The stored model was deleted outside the settings: warm the default if it is there.
+    if (
+      settings.modelId !== DEFAULT_MODEL_ID &&
+      (!status || (status.state !== 'ready' && status.state !== 'loaded'))
+    ) {
+      status = await client.modelStatus(DEFAULT_MODEL_ID).catch(() => null);
+    }
     if (!status || (status.state !== 'ready' && status.state !== 'loaded')) return;
     const warmed = await client.warmModel().catch(() => null);
     if (warmed) await broadcast({ type: 'model:progress', status: warmed });
@@ -205,6 +223,46 @@ export default defineBackground(() => {
 
     if (isEngineCapabilitiesRequest(message)) {
       void getEngineCapabilities().then(sendResponse, () => sendResponse(null));
+      return true;
+    }
+
+    if (isEngineSettingsQuery(message)) {
+      void Promise.all([ensureSettings(), loadGpuOutputBroken()]).then(
+        ([settings, gpuOutputBroken]) =>
+          sendResponse({
+            tier: settings.tier,
+            gpuProfile: settings.gpuProfile,
+            gpuOutputBroken,
+            modelId: settings.modelId,
+          } satisfies EngineSettingsSnapshot),
+        () => sendResponse(null),
+      );
+      return true;
+    }
+
+    // Load-crash guard (Edge for Android): the engine host marks each model load here, and a
+    // new host asks once whether the previous one died inside a load.
+    if (isModelLoadMarkUpdate(message)) {
+      void writeModelLoadMark(message.modelId, message.backend).then(
+        () => sendResponse(true),
+        () => sendResponse(false),
+      );
+      return true;
+    }
+
+    if (isModelLoadCrashQuery(message)) {
+      void recoverFromCrashedModelLoad().then(
+        (report) => sendResponse(report),
+        () => sendResponse(null),
+      );
+      return true;
+    }
+
+    if (isGpuOutputBrokenUpdate(message)) {
+      void saveGpuOutputBroken(message.broken).then(
+        () => sendResponse(true),
+        () => sendResponse(false),
+      );
       return true;
     }
 
@@ -303,10 +361,15 @@ export default defineBackground(() => {
     }
 
     if (isEngineTierRequest(message)) {
-      void client.setTier(message.tier).then(
-        () => sendResponse(true),
-        () => sendResponse(false),
-      );
+      // WebGPU chosen again: models the load-crash guard moved to the CPU may try it again.
+      const cleared =
+        message.tier === 'g' ? clearGpuCrashedModelLoads().catch(() => undefined) : undefined;
+      void Promise.resolve(cleared)
+        .then(() => client.setTier(message.tier))
+        .then(
+          () => sendResponse(true),
+          () => sendResponse(false),
+        );
       return true;
     }
 
@@ -338,7 +401,12 @@ export default defineBackground(() => {
 
     if (isModelDeleteRequest(message)) {
       void deleteModel(message.modelId).then(
-        (status) => {
+        async (status) => {
+          // Deleting the model in use sends the engine back to the default (host.ts).
+          const settings = await loadSettings().catch(() => null);
+          if (settings?.modelId === message.modelId && message.modelId !== DEFAULT_MODEL_ID) {
+            await saveSettings({ modelId: DEFAULT_MODEL_ID }).catch(() => undefined);
+          }
           if (status) void broadcast({ type: 'model:progress', status });
           sendResponse(status);
         },
@@ -353,7 +421,12 @@ export default defineBackground(() => {
         return true;
       }
       void client.useModel(message.modelId).then(
-        (status) => {
+        async (status) => {
+          // Remembered so the engine host comes back on this model after it is released.
+          await saveSettings({ modelId: message.modelId }).catch(() => undefined);
+          // Chosen again after a CPU load crash: the guard records it again if it crashes again
+          // (a WebGPU crash record stays: the model keeps running on the CPU).
+          await clearCrashedModelLoad(message.modelId).catch(() => undefined);
           void broadcast({ type: 'model:progress', status });
           sendResponse(status);
         },

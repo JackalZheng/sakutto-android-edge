@@ -1,0 +1,453 @@
+ggml-webgpu: batched mat-vec and tiled-matmul knobs for prompt MUL_MAT on Adreno (round 5).
+
+POCO F5 Pro (Adreno 740), PLaMo 3 0.8B, round-4 per-op run of a 38-token prompt: the tiled
+q4_K / q6_K matmul (n > 4) took 78% of the prompt graph. Without subgroup matrices the tiled
+shader computes 32x32 outputs per 64-thread workgroup (4x4 per thread), dequantizes each 32-wide
+K tile of the weights into f16 shared memory once per 32-column N tile, and reads 8 scalar f16
+values from shared memory per 16 FMAs with tile rows 256 bytes apart (all 8 threads of a tile row
+on one bank). For n = 38 it also computes 64 columns.
+
+- Batched mat-vec: for 4 < n <= bmv (Adreno default 64; token bmv0 = off, bmv8..256), MUL_MAT with
+  2D operands goes through the workgroup-reduction mat-vec shader in batches of 4 columns
+  (bmvc2/bmvc8), one dispatch for the full batches (as broadcast2 batches) and one for the rest.
+  The columns of a batch share one read and dequantization of the weights.
+- Tiled matmul knobs (off by default): mmt4x4|8x4|4x8|8x8 outputs per thread, mmwg8x8|16x8|8x16|
+  16x16|8x4|16x4 threads, mmpad (shared-memory rows padded to TILE_K + 2 halves; float types and
+  k-quants only). Shapes over 16 KiB of workgroup storage or 256 invocations fall back to 4x4 x 8x8.
+- Adreno SOFT_MAX / fused RMS_NORM row workgroups 128 (round-4 sweep: rwg128 best); rwg256 restores.
+- Native only: SAKUTTO_WEBGPU_TRACE_PIPELINES=1 lists the shader variants a run compiles.
+
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -93,6 +93,8 @@
+ #define WEBGPU_DEFAULT_COMMAND_SUBMIT_BATCH_SIZE 64u
+ // Sakutto patch 0017: shorter command buffers on Adreno (GPU timeout per submission).
+ #define WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE 16u
++// Sakutto patch 0023: Adreno default for the batched mat-vec crossover (MUL_MAT with 4 < n <= this).
++#define GGML_WEBGPU_SAKUTTO_ADRENO_BMV_MAX_N 64u
+ #define WEBGPU_NUM_PARAM_SLOT_SAFETY_MARGIN      10u
+ #define WEBGPU_RUNTIME_WAIT_TIMEOUT_MS           30000u
+ #define WEBGPU_RUNTIME_WAIT_TIMEOUT_NS           (WEBGPU_RUNTIME_WAIT_TIMEOUT_MS * 1e6)
+@@ -1894,6 +1896,103 @@
+     });
+ }
+ 
++// Sakutto patch 0023: `columns`-wide batches of a plain (non-MMVQ) mat-vec product, starting at
++// column `first_column`. The batches run as broadcast2 batches of one dispatch: batch b reads
++// src1 columns first_column + b * columns ... and writes the same dst columns. 2D operands only.
++static void ggml_webgpu_append_mv_columns(webgpu_context &                    ctx,
++                                          ggml_tensor *                       src0,
++                                          ggml_tensor *                       src1,
++                                          ggml_tensor *                       dst,
++                                          uint32_t                            columns,
++                                          uint32_t                            batches,
++                                          uint32_t                            first_column,
++                                          std::vector<webgpu_dispatch_desc> & dispatches) {
++    ggml_tensor src1_view = *src1;
++    src1_view.ne[1]       = columns;
++    src1_view.ne[2]       = batches;
++    ggml_tensor dst_view  = *dst;
++    dst_view.ne[1]        = columns;
++    dst_view.ne[2]        = batches;
++
++    ggml_webgpu_shader_lib_context shader_lib_ctx = {};
++    shader_lib_ctx.src0                           = src0;
++    shader_lib_ctx.src1                           = &src1_view;
++    shader_lib_ctx.dst                            = &dst_view;
++    shader_lib_ctx.max_wg_size                    = ctx->global_ctx->capabilities.limits.maxComputeInvocationsPerWorkgroup;
++    shader_lib_ctx.supports_subgroups             = ctx->global_ctx->capabilities.supports_subgroups;
++    shader_lib_ctx.supports_subgroup_matrix       = ctx->global_ctx->capabilities.supports_subgroup_matrix;
++    shader_lib_ctx.sg_mat_m                       = ctx->global_ctx->capabilities.sg_mat_m;
++    shader_lib_ctx.sg_mat_n                       = ctx->global_ctx->capabilities.sg_mat_n;
++    shader_lib_ctx.sg_mat_k                       = ctx->global_ctx->capabilities.sg_mat_k;
++    shader_lib_ctx.min_subgroup_size              = ctx->global_ctx->capabilities.min_subgroup_size;
++    shader_lib_ctx.max_subgroup_size              = ctx->global_ctx->capabilities.max_subgroup_size;
++    shader_lib_ctx.supports_dot_product           = ctx->global_ctx->capabilities.supports_dot_product;
++    shader_lib_ctx.vendor                         = ctx->global_ctx->vendor;
++
++    webgpu_pipeline pipeline  = ctx->shader_lib->get_mul_mat_vec_pipeline(shader_lib_ctx, false);
++    auto *          decisions = static_cast<ggml_webgpu_mul_mat_vec_shader_decisions *>(pipeline.context.get());
++
++    const uint32_t        m          = (uint32_t) dst->ne[0];
++    const uint32_t        stride_11  = (uint32_t) (src1->nb[1] / ggml_type_size(src1->type));
++    std::vector<uint32_t> params     = {
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src0) / ggml_type_size(src0->type)),
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src1) / ggml_type_size(src1->type)) + first_column * stride_11,
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, dst) / ggml_type_size(dst->type)) + first_column * m,
++        m,
++        columns,
++        (uint32_t) src0->ne[0],
++        (uint32_t) (src0->nb[1] / ggml_type_size(src0->type)),
++        stride_11,
++        (uint32_t) (src0->nb[2] / ggml_type_size(src0->type)),
++        columns * stride_11,
++        (uint32_t) (src0->nb[3] / ggml_type_size(src0->type)),
++        (uint32_t) (src1->nb[3] / ggml_type_size(src1->type)),
++        1,
++        1,
++        batches,
++        1,
++    };
++
++    std::vector<wgpu::BindGroupEntry> entries = {
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 0, src0),
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 1, src1),
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 2, dst),
++    };
++
++    uint32_t wg_x = 1;
++    uint32_t wg_y = 1;
++    compute_2d_workgroups(CEIL_DIV(m, decisions->outputs_per_wg) * batches,
++                          ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x, wg_y);
++    dispatches.push_back({
++        pipeline, std::move(params), std::move(entries), { wg_x, wg_y }
++    });
++}
++
++static bool ggml_webgpu_sakutto_use_batched_mv(webgpu_context & ctx,
++                                               ggml_tensor *    src0,
++                                               ggml_tensor *    src1,
++                                               ggml_tensor *    dst) {
++    const int64_t n = dst->ne[1];
++    if (ggml_webgpu_sakutto_bmv_max_n == 0 || n <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS ||
++        n > (int64_t) ggml_webgpu_sakutto_bmv_max_n || ctx->global_ctx->disable_mat_vec) {
++        return false;
++    }
++    if (src0->ne[2] != 1 || src0->ne[3] != 1 || src1->ne[2] != 1 || src1->ne[3] != 1) {
++        return false;
++    }
++    if (src1->type != GGML_TYPE_F32 && src1->type != GGML_TYPE_F16) {
++        return false;
++    }
++    if (dst->type != GGML_TYPE_F32 || dst->nb[1] != (size_t) dst->ne[0] * sizeof(float) ||
++        src1->nb[0] != ggml_type_size(src1->type)) {
++        return false;
++    }
++    if (ggml_webgpu_tensor_binding_overlap(ctx->global_ctx, src0, src1)) {
++        return false;
++    }
++    return true;
++}
++
+ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+                                              ggml_tensor *    src0,
+                                              ggml_tensor *    src1,
+@@ -1915,6 +2014,22 @@
+         return ggml_backend_webgpu_build_multi(ctx, dispatches);
+     }
+ 
++    // Sakutto patch 0023: batched mat-vec for small n (no subgroup matrices; the tiled shader
++    // re-reads and re-dequantizes the weights per 32-column tile and is shared-memory bound).
++    if (ggml_webgpu_sakutto_use_batched_mv(ctx, src0, src1, dst)) {
++        std::vector<webgpu_dispatch_desc> dispatches;
++        const uint32_t                    cols    = ggml_webgpu_sakutto_bmv_cols;
++        const uint32_t                    batches = (uint32_t) dst->ne[1] / cols;
++        const uint32_t                    rest    = (uint32_t) dst->ne[1] % cols;
++        if (batches > 0) {
++            ggml_webgpu_append_mv_columns(ctx, src0, src1, dst, cols, batches, 0, dispatches);
++        }
++        if (rest > 0) {
++            ggml_webgpu_append_mv_columns(ctx, src0, src1, dst, rest, 1, batches * cols, dispatches);
++        }
++        return ggml_backend_webgpu_build_multi(ctx, dispatches);
++    }
++
+     // Determine if this is a mat-vec operation
+     bool use_mat_vec = (dst->ne[1] <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS) && !ctx->global_ctx->disable_mat_vec;
+ 
+@@ -5512,7 +5627,9 @@
+         ggml_webgpu_sakutto_mv_wg_size = 64;
+     }
+     if (is_adreno) {
+-        ggml_webgpu_sakutto_row_wg_size     = 256;
++        // Patch 0023: 128 (round-4 phone sweep: rwg128 decode 17.5 tok/s vs 17.0 at 256). Token rwg256
++        // restores the patch-0022 default.
++        ggml_webgpu_sakutto_row_wg_size     = 128;
+         ggml_webgpu_sakutto_softmax_nocache = true;
+     }
+     for (const uint32_t n : { 64u, 128u, 256u, 512u, 1024u }) {
+@@ -5552,6 +5669,61 @@
+             GGML_LOG_INFO("ggml_webgpu: tuning: mat-vec outputs per workgroup %u\n", n);
+         }
+     }
++    // Sakutto patch 0023: prompt-stage MUL_MAT knobs (see ggml-webgpu-shader-lib.hpp).
++    ggml_webgpu_sakutto_bmv_max_n = 0;
++    ggml_webgpu_sakutto_bmv_cols  = 4;
++    ggml_webgpu_sakutto_mm_tile_m = 0;
++    ggml_webgpu_sakutto_mm_tile_n = 0;
++    ggml_webgpu_sakutto_mm_wg_m   = 0;
++    ggml_webgpu_sakutto_mm_wg_n   = 0;
++    ggml_webgpu_sakutto_mm_pad    = false;
++    // Adreno default: batched mat-vec up to n = 64 (round-4 per-op run: the tiled q4_K/q6_K matmul was
++    // 78% of a 38-token prompt). bmv0 restores the round-4 behaviour (tiled for every n > 4).
++    if (adreno_safe && !ctx->webgpu_global_ctx->disable_mat_vec) {
++        ggml_webgpu_sakutto_bmv_max_n = GGML_WEBGPU_SAKUTTO_ADRENO_BMV_MAX_N;
++    }
++    for (const uint32_t n : { 0u, 8u, 16u, 32u, 48u, 64u, 96u, 128u, 256u }) {
++        const std::string token = "bmv" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_bmv_max_n = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: batched mat-vec for 4 < n <= %u%s\n", n, n == 0 ? " (off)" : "");
++        }
++    }
++    for (const uint32_t n : { 2u, 4u, 8u }) {
++        const std::string token = "bmvc" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_bmv_cols = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: batched mat-vec %u columns per batch\n", n);
++        }
++    }
++    {
++        const uint32_t tiles[][2] = {
++            { 4, 4 }, { 8, 4 }, { 4, 8 }, { 8, 8 }
++        };
++        for (const auto & t : tiles) {
++            const std::string token = "mmt" + std::to_string(t[0]) + "x" + std::to_string(t[1]);
++            if (ggml_webgpu_debug_has_token(token.c_str())) {
++                ggml_webgpu_sakutto_mm_tile_m = t[0];
++                ggml_webgpu_sakutto_mm_tile_n = t[1];
++                GGML_LOG_INFO("ggml_webgpu: tuning: tiled matmul %ux%u outputs per thread\n", t[0], t[1]);
++            }
++        }
++        const uint32_t wgs[][2] = {
++            { 8, 8 }, { 16, 8 }, { 8, 16 }, { 16, 16 }, { 8, 4 }, { 16, 4 }
++        };
++        for (const auto & w : wgs) {
++            const std::string token = "mmwg" + std::to_string(w[0]) + "x" + std::to_string(w[1]);
++            if (ggml_webgpu_debug_has_token(token.c_str())) {
++                ggml_webgpu_sakutto_mm_wg_m = w[0];
++                ggml_webgpu_sakutto_mm_wg_n = w[1];
++                GGML_LOG_INFO("ggml_webgpu: tuning: tiled matmul %ux%u threads per workgroup\n", w[0], w[1]);
++            }
++        }
++        if (ggml_webgpu_debug_has_token("mmpad")) {
++            ggml_webgpu_sakutto_mm_pad = true;
++            GGML_LOG_INFO("ggml_webgpu: tuning: tiled matmul padded shared-memory rows\n");
++        }
++    }
+     ctx->webgpu_global_ctx->sakutto_perf_ops = ggml_webgpu_debug_has_token("perfops");
+     ctx->webgpu_global_ctx->sakutto_perf =
+         ctx->webgpu_global_ctx->sakutto_perf_ops || ggml_webgpu_debug_has_token("perf");
+@@ -5559,6 +5731,16 @@
+         GGML_LOG_INFO("ggml_webgpu: perf diagnostics on%s\n",
+                       ctx->webgpu_global_ctx->sakutto_perf_ops ? " (per-op submit+wait timing)" : "");
+     }
++    if (adreno_safe) {
++        GGML_LOG_INFO("ggml_webgpu: adreno: prompt MUL_MAT: batched mat-vec for 4 < n <= %u (%u columns per batch), "
++                      "tiled %ux%u x %ux%u%s above\n",
++                      ggml_webgpu_sakutto_bmv_max_n, ggml_webgpu_sakutto_bmv_cols,
++                      ggml_webgpu_sakutto_mm_tile_m ? ggml_webgpu_sakutto_mm_tile_m : WEBGPU_MUL_MAT_TILE_M,
++                      ggml_webgpu_sakutto_mm_tile_n ? ggml_webgpu_sakutto_mm_tile_n : WEBGPU_MUL_MAT_TILE_N,
++                      ggml_webgpu_sakutto_mm_wg_m ? ggml_webgpu_sakutto_mm_wg_m : WEBGPU_MUL_MAT_WG_SIZE_M,
++                      ggml_webgpu_sakutto_mm_wg_n ? ggml_webgpu_sakutto_mm_wg_n : WEBGPU_MUL_MAT_WG_SIZE_N,
++                      ggml_webgpu_sakutto_mm_pad ? " padded" : "");
++    }
+     if (is_adreno) {
+         GGML_LOG_INFO("ggml_webgpu: adreno: soft_max %s, row reductions %u wide\n",
+                       ggml_webgpu_sakutto_softmax_nocache ? "without private cache" : "upstream",
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -65,6 +65,20 @@
+ inline uint32_t ggml_webgpu_sakutto_row_reduce_wg(uint32_t max_wg_size) {
+     return ggml_webgpu_sakutto_row_wg_size != 0 ? std::min(max_wg_size, ggml_webgpu_sakutto_row_wg_size) : max_wg_size;
+ }
++// Sakutto patch 0023: prompt-stage MUL_MAT (n > 4) without subgroup matrices (Adreno).
++// - Batched mat-vec: for 4 < n <= sakutto_bmv_max_n (0 = off), the product runs through the
++//   (non-MMVQ) mat-vec shader in batches of sakutto_bmv_cols columns, the columns of a batch
++//   sharing one read and one dequantization of the weights, instead of through the tiled matmul.
++// - Tiled matmul overrides (0 = upstream: 4x4 outputs per thread, 8x8 threads) and SHMEM_PAD
++//   (shared-memory rows of TILE_K + 2 halves, so the threads of a tile row do not all hit the
++//   same bank). Set once per device from the debug profile tokens bmv*, bmvc*, mmt*, mmwg*, mmpad.
++inline uint32_t ggml_webgpu_sakutto_bmv_max_n = 0;
++inline uint32_t ggml_webgpu_sakutto_bmv_cols  = 4;
++inline uint32_t ggml_webgpu_sakutto_mm_tile_m = 0;
++inline uint32_t ggml_webgpu_sakutto_mm_tile_n = 0;
++inline uint32_t ggml_webgpu_sakutto_mm_wg_m   = 0;
++inline uint32_t ggml_webgpu_sakutto_mm_wg_n   = 0;
++inline bool     ggml_webgpu_sakutto_mm_pad    = false;
+ 
+ #define WEBGPU_MUL_MAT_VEC_FLOAT_OUTPUTS_PER_WG    4
+ #define WEBGPU_MUL_MAT_VEC_LEGACY_Q_OUTPUTS_PER_WG 4
+@@ -2485,9 +2499,49 @@
+             tile_k = is_quant ? WEBGPU_MUL_MAT_REG_TILE_K_QUANT : WEBGPU_MUL_MAT_REG_TILE_K_FLOAT;
+         }
+ 
+-        // Tiles
+-        defines.push_back("TILE_M=" + std::to_string(WEBGPU_MUL_MAT_TILE_M) + "u");
+-        defines.push_back("TILE_N=" + std::to_string(WEBGPU_MUL_MAT_TILE_N) + "u");
++        // Tiles. Sakutto patch 0023: tunable register tile / workgroup shape (reg-tile shader only).
++        uint32_t reg_tile_m = WEBGPU_MUL_MAT_TILE_M;
++        uint32_t reg_tile_n = WEBGPU_MUL_MAT_TILE_N;
++        uint32_t reg_wg_m   = WEBGPU_MUL_MAT_WG_SIZE_M;
++        uint32_t reg_wg_n   = WEBGPU_MUL_MAT_WG_SIZE_N;
++        bool     reg_pad    = false;
++        if (!key.use_subgroup_matrix) {
++            if (ggml_webgpu_sakutto_mm_tile_m != 0 && ggml_webgpu_sakutto_mm_tile_n != 0) {
++                reg_tile_m = ggml_webgpu_sakutto_mm_tile_m;
++                reg_tile_n = ggml_webgpu_sakutto_mm_tile_n;
++            }
++            if (ggml_webgpu_sakutto_mm_wg_m != 0 && ggml_webgpu_sakutto_mm_wg_n != 0) {
++                reg_wg_m = ggml_webgpu_sakutto_mm_wg_m;
++                reg_wg_n = ggml_webgpu_sakutto_mm_wg_n;
++            }
++            // Padding only where every shared-memory store goes through store_shmem /
++            // store_shmem_kquants (float types and k-quants); the other quant loaders index shmem directly.
++            const ggml_type t = context.src0->type;
++            reg_pad = ggml_webgpu_sakutto_mm_pad &&
++                      (t == GGML_TYPE_F32 || t == GGML_TYPE_F16 || t == GGML_TYPE_Q2_K || t == GGML_TYPE_Q3_K ||
++                       t == GGML_TYPE_Q4_K || t == GGML_TYPE_Q5_K || t == GGML_TYPE_Q6_K);
++            // Stay inside the WebGPU default limits (16 KiB workgroup storage, 256 invocations).
++            const uint32_t shmem_rows  = reg_wg_m * reg_tile_m + reg_wg_n * reg_tile_n;
++            const uint32_t shmem_bytes = shmem_rows * (tile_k + (reg_pad ? 2u : 0u)) * 2u;
++            if (shmem_bytes > 16384u || reg_wg_m * reg_wg_n > 256u) {
++                reg_tile_m = WEBGPU_MUL_MAT_TILE_M;
++                reg_tile_n = WEBGPU_MUL_MAT_TILE_N;
++                reg_wg_m   = WEBGPU_MUL_MAT_WG_SIZE_M;
++                reg_wg_n   = WEBGPU_MUL_MAT_WG_SIZE_N;
++            }
++            if (reg_tile_m != WEBGPU_MUL_MAT_TILE_M || reg_tile_n != WEBGPU_MUL_MAT_TILE_N) {
++                variant += "_t" + std::to_string(reg_tile_m) + "x" + std::to_string(reg_tile_n);
++            }
++            if (reg_wg_m != WEBGPU_MUL_MAT_WG_SIZE_M || reg_wg_n != WEBGPU_MUL_MAT_WG_SIZE_N) {
++                variant += "_wg" + std::to_string(reg_wg_m) + "x" + std::to_string(reg_wg_n);
++            }
++            if (reg_pad) {
++                defines.push_back("SHMEM_PAD");
++                variant += "_pad";
++            }
++        }
++        defines.push_back("TILE_M=" + std::to_string(reg_tile_m) + "u");
++        defines.push_back("TILE_N=" + std::to_string(reg_tile_n) + "u");
+ 
+         // Subgroup matrix specifics
+         if (key.use_subgroup_matrix) {
+@@ -2514,8 +2568,8 @@
+         }
+ 
+         if (!key.use_subgroup_matrix) {
+-            defines.push_back("WORKGROUP_SIZE_M=" + std::to_string(WEBGPU_MUL_MAT_WG_SIZE_M) + "u");
+-            defines.push_back("WORKGROUP_SIZE_N=" + std::to_string(WEBGPU_MUL_MAT_WG_SIZE_N) + "u");
++            defines.push_back("WORKGROUP_SIZE_M=" + std::to_string(reg_wg_m) + "u");
++            defines.push_back("WORKGROUP_SIZE_N=" + std::to_string(reg_wg_n) + "u");
+             defines.push_back("TILE_K=" + std::to_string(tile_k) + "u");
+         }
+ 
+@@ -2523,8 +2577,8 @@
+ 
+         auto decisions                 = std::make_shared<ggml_webgpu_mul_mat_shader_decisions>();
+         decisions->tile_k              = tile_k;
+-        decisions->tile_m              = WEBGPU_MUL_MAT_TILE_M;
+-        decisions->tile_n              = WEBGPU_MUL_MAT_TILE_N;
++        decisions->tile_m              = reg_tile_m;
++        decisions->tile_n              = reg_tile_n;
+         decisions->use_subgroup_matrix = key.use_subgroup_matrix;
+         if (key.use_subgroup_matrix) {
+             decisions->subgroup_m        = WEBGPU_MUL_MAT_SUBGROUP_M;
+@@ -2533,9 +2587,9 @@
+             decisions->subgroup_matrix_n = WEBGPU_MUL_MAT_SUBGROUP_MATRIX_N;
+             decisions->wg_size           = context.max_subgroup_size;
+         } else {
+-            decisions->wg_size_m       = WEBGPU_MUL_MAT_WG_SIZE_M;
+-            decisions->wg_size_n       = WEBGPU_MUL_MAT_WG_SIZE_N;
+-            decisions->wg_size         = WEBGPU_MUL_MAT_WG_SIZE_M * WEBGPU_MUL_MAT_WG_SIZE_N;
++            decisions->wg_size_m       = reg_wg_m;
++            decisions->wg_size_n       = reg_wg_n;
++            decisions->wg_size         = reg_wg_m * reg_wg_n;
+             decisions->mul_mat_wg_size = WEBGPU_MUL_MAT_WG_SIZE;
+         }
+ 
+@@ -3751,6 +3805,12 @@
+     static webgpu_pipeline ggml_webgpu_create_pipeline(wgpu::Device & device,
+                                                        std::string    shader_code,
+                                                        std::string    label) {
++#ifndef __EMSCRIPTEN__
++        // Sakutto patch 0023: native validation, list the shader variants a run compiles.
++        if (getenv("SAKUTTO_WEBGPU_TRACE_PIPELINES") != nullptr) {
++            fprintf(stderr, "SAKUTTO_PIPELINE %s\n", label.c_str());
++        }
++#endif
+         wgpu::ShaderSourceWGSL shader_source;
+         shader_source.code = shader_code.c_str();
+ 
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_reg_tile.wgsl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_reg_tile.wgsl
+@@ -63,7 +63,12 @@
+ const TILE_SRC0_SHMEM = TILE_K * WORKGROUP_SIZE_M * TILE_M;
+ const TILE_SRC1_SHMEM = TILE_K * WORKGROUP_SIZE_N * TILE_N;
+ 
++#ifdef SHMEM_PAD
++const SHMEM_ROWS = (TILE_SRC0_SHMEM + TILE_SRC1_SHMEM) / TILE_K;
++var<workgroup> shmem: array<f16, SHMEM_ROWS * (TILE_K + SHMEM_PAD_HALVES)>;
++#else
+ var<workgroup> shmem: array<f16, TILE_SRC0_SHMEM + TILE_SRC1_SHMEM>;
++#endif
+ 
+ @compute @workgroup_size(TOTAL_WORKGROUP_SIZE)
+ fn main(@builtin(workgroup_id) wg_id: vec3<u32>,
+@@ -127,12 +132,12 @@
+             for (var tm = 0u; tm < TILE_M; tm++) {
+                 let src0_m = local_m * TILE_M + tm;
+                 let src0_idx = k_inner + src0_m * TILE_K;
+-                src0_tile[tm] = shmem[src0_idx];
++                src0_tile[tm] = shmem[shmem_slot(src0_idx)];
+             }
+             for (var tn = 0u; tn < TILE_N; tn++) {
+                 let src1_n = local_n * TILE_N + tn;
+                 let src1_idx = src1_n * TILE_K + k_inner;
+-                let src1_val = shmem[TILE_SRC0_SHMEM + src1_idx];
++                let src1_val = shmem[shmem_slot(TILE_SRC0_SHMEM + src1_idx)];
+                 for (var tm = 0u; tm < TILE_M; tm++) {
+                       acc[tm][tn] += f32(src0_tile[tm]) * f32(src1_val);
+                 }
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl
+@@ -5,6 +5,20 @@
+ #define SRC1 src1
+ #endif
+ 
++// Sakutto patch 0023: SHMEM_PAD stores row r of a TILE_K-wide tile (src0 rows first, then src1)
++// at r * (TILE_K + 2): rows 17 words apart instead of TILE_K / 2, so the threads reading one k
++// column of different rows hit different banks. Stores of 4 consecutive values stay in one row.
++#ifdef SHMEM_PAD
++const SHMEM_PAD_HALVES = 2u;
++fn shmem_slot(idx: u32) -> u32 {
++    return idx + (idx / TILE_K) * SHMEM_PAD_HALVES;
++}
++#else
++fn shmem_slot(idx: u32) -> u32 {
++    return idx;
++}
++#endif
++
+ #ifdef VEC
+ #define VEC_SIZE 4
+ #define SHMEM_TYPE vec4<f16>
+@@ -12,7 +26,8 @@
+ #define SRC0_TYPE vec4<SRC0_INNER_TYPE>
+ #define SRC1_TYPE vec4<SRC1_INNER_TYPE>
+ 
+-fn store_shmem(val: vec4<f16>, idx: u32) {
++fn store_shmem(val: vec4<f16>, idx_in: u32) {
++    let idx = shmem_slot(idx_in);
+     shmem[idx] = val.x;
+     shmem[idx + 1] = val.y;
+     shmem[idx + 2] = val.z;
+@@ -28,7 +43,7 @@
+ #define SRC1_TYPE SRC1_INNER_TYPE
+ 
+ fn store_shmem(val: f16, idx: u32) {
+-    shmem[idx] = val;
++    shmem[shmem_slot(idx)] = val;
+ }
+ #endif // SCALAR
+ 
+@@ -345,7 +360,8 @@
+ const BLOCK_SIZE = 256u;
+ const NQ = 4u;
+ 
+-fn store_shmem_kquants(val: vec4<f16>, idx: u32) {
++fn store_shmem_kquants(val: vec4<f16>, idx_in: u32) {
++    let idx = shmem_slot(idx_in);
+     shmem[idx] = val.x;
+     shmem[idx + 1] = val.y;
+     shmem[idx + 2] = val.z;

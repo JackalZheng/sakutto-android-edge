@@ -1,0 +1,84 @@
+Debug harness: llama.cpp --override-tensor rules through the load call.
+
+The GPU harness needs to place some layers' weights on the CPU while the
+rest stay on WebGPU (e.g. only the SWA layers or only the full-attention
+layers of PLaMo 3 on the GPU). wllama has no tensor_buft_overrides field,
+so the reserved kv_overrides key "sakutto.tensor_buft_overrides" carries
+"regex=BUFT,regex=BUFT" rules (BUFT = buffer type name, e.g. CPU) that are
+parsed into params.tensor_buft_overrides instead of a GGUF metadata
+override. Also terminates params.kv_overrides with the empty entry
+common_model_params_to_llama asserts on (wllama never added it). The
+production load never sends kv_overrides, so it is unaffected.
+
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -169,6 +169,46 @@
+   throw std::runtime_error("Invalid reasoning format: " + s);
+ }
+ 
++// Sakutto debug harness: parse "pattern=BUFT,pattern=BUFT" (llama.cpp's
++// --override-tensor syntax) into params.tensor_buft_overrides. BUFT is a
++// buffer type name such as "CPU" or "WebGPU". Patterns are leaked on purpose:
++// llama.cpp keeps raw pointers for the lifetime of the model.
++inline static void sakutto_parse_tensor_buft_overrides(const std::string &spec, common_params &params)
++{
++  if (!params.tensor_buft_overrides.empty() && params.tensor_buft_overrides.back().pattern == nullptr)
++    params.tensor_buft_overrides.pop_back();
++  size_t start = 0;
++  while (start <= spec.size())
++  {
++    size_t comma = spec.find(',', start);
++    std::string item = spec.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
++    if (!item.empty())
++    {
++      size_t eq = item.rfind('=');
++      if (eq == std::string::npos)
++        throw std::runtime_error("Invalid tensor override, expected pattern=buffer_type: " + item);
++      std::string pattern = item.substr(0, eq);
++      std::string buft_name = item.substr(eq + 1);
++      ggml_backend_buffer_type_t buft = nullptr;
++      for (size_t d = 0; d < ggml_backend_dev_count() && buft == nullptr; d++)
++      {
++        ggml_backend_dev_t dev = ggml_backend_dev_get(d);
++        ggml_backend_buffer_type_t cand = ggml_backend_dev_buffer_type(dev);
++        if (cand && buft_name == ggml_backend_buft_name(cand))
++          buft = cand;
++      }
++      if (buft == nullptr)
++        throw std::runtime_error("Unknown buffer type in tensor override: " + buft_name);
++      fprintf(stderr, "@@INFO@@sakutto: tensor override %s -> %s\n", pattern.c_str(), buft_name.c_str());
++      params.tensor_buft_overrides.push_back({strdup(pattern.c_str()), buft});
++    }
++    if (comma == std::string::npos)
++      break;
++    start = comma + 1;
++  }
++  params.tensor_buft_overrides.push_back({nullptr, nullptr});
++}
++
+ inline static llama_model_kv_override parse_kv_override(const std::string &key, const std::string &val_str)
+ {
+   llama_model_kv_override kvo;
+@@ -582,7 +622,22 @@
+       if (keys.size() != vals.size())
+         throw app_exception("kv_overrides_keys and kv_overrides_vals must have the same length");
+       for (size_t i = 0; i < keys.size(); i++)
++      {
++        // Sakutto debug harness: "sakutto.tensor_buft_overrides" carries
++        // llama.cpp -ot style "regex=BUFT[,regex=BUFT...]" rules instead of a
++        // GGUF metadata override (no glue message change needed).
++        if (keys[i] == "sakutto.tensor_buft_overrides")
++        {
++          sakutto_parse_tensor_buft_overrides(vals[i], params);
++          continue;
++        }
+         params.kv_overrides.push_back(parse_kv_override(keys[i], vals[i]));
++      }
++      if (!params.kv_overrides.empty())
++      {
++        params.kv_overrides.emplace_back();
++        params.kv_overrides.back().key[0] = 0;
++      }
+     }
+ 
+     // reasoning

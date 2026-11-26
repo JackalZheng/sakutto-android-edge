@@ -1,8 +1,8 @@
-import { abortError, EngineError, isAbortError } from '../errors';
-import { gpuFailureExcerpt } from '@/shared/gpu-diagnostic';
+import { abortError, EngineError, GARBLED_OUTPUT_DETAIL, isAbortError } from '../errors';
+import { gpuFailureExcerpt, setWebGpuDebugTuning } from '@/shared/gpu-diagnostic';
 import { TRANSLATION_STOP_TOKENS } from '../prompt/pfml3';
 import { createWllama } from '../wllama';
-import type { WllamaConfig } from '../wllama/module';
+import type { WllamaCompletionTimings, WllamaConfig } from '../wllama/module';
 import type { BackendKind, BackendSelection } from './backend';
 
 export interface CompletionRequest {
@@ -10,6 +10,12 @@ export interface CompletionRequest {
   maxTokens: number;
   signal: AbortSignal;
   onToken: (text: string) => void;
+  /** Stop strings for this request; the PLaMo translation stops when omitted (debug harness only). */
+  stop?: readonly string[];
+  /** llama.cpp's timings for this request, when the worker sends them (debug harness only). */
+  onTimings?: (timings: WllamaCompletionTimings) => void;
+  /** Overrides prompt-cache reuse; a perf run turns it off to time a warm prompt eval. */
+  cachePrompt?: boolean;
 }
 
 export interface LlamaRuntime {
@@ -78,6 +84,27 @@ export function forwardCompletionToken(
  * worker posts back. A failure the model itself reports is a typed WllamaError instead, and
  * leaves the runtime usable.
  */
+/**
+ * Failures that come from garbled output rather than from the GPU: tokens that decode to
+ * invalid UTF-8 made the worker's JSON step throw ("invalid UTF-8 byte", wllama patch 0018
+ * now replaces such bytes) or left it with a broken result buffer ("Invalid typed array
+ * length"). Reads the cause chain, where the worker's message usually is.
+ */
+export function isGarbledOutputFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    const text =
+      typeof current === 'string'
+        ? current
+        : current instanceof Error
+          ? `${current.name}: ${current.message}`
+          : '';
+    if (/invalid UTF-8|Invalid typed array length/iu.test(text)) return true;
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return false;
+}
+
 export function isRuntimeDead(error: unknown): boolean {
   if (typeof error === 'string') return true;
   return error instanceof Error && error.name === 'RuntimeError';
@@ -86,11 +113,34 @@ export function isRuntimeDead(error: unknown): boolean {
 export type GpuEvidence = 'engaged' | 'missing' | 'unknown';
 
 let lastWebGpuLines: string[] = [];
+let runtimeTailLines: string[] = [];
 
 /** llama.cpp WebGPU lines from the most recent model load. Used by the settings diagnostic. */
 export function lastWebGpuLoadLog(): readonly string[] {
   return lastWebGpuLines;
 }
+
+/**
+ * Warnings, errors and WebGPU lines logged after the most recent load finished (during
+ * completions): where ggml-webgpu reports `Device lost! Reason: …` or a device error before
+ * the module aborts. Read by the debug harness; capped so a long session cannot grow it.
+ */
+export function lastRuntimeLogTail(): readonly string[] {
+  return runtimeTailLines;
+}
+
+let perfLogListener: ((line: string) => void) | null = null;
+
+/**
+ * Debug harness only: receives every llama.cpp log line printed after a load finished, so the
+ * perf breakdown can read ggml-webgpu's SAKUTTO_GPUSTAT / SAKUTTO_GPUOPS lines (patch 0021).
+ */
+export function setRuntimeLogListener(listener: ((line: string) => void) | null): void {
+  perfLogListener = listener;
+}
+
+const RUNTIME_TAIL_LINES = 200;
+const RUNTIME_TAIL_PATTERN = /ggml_webgpu|webgpu|device|lost|abort|error|warn|fail/iu;
 
 /**
  * Reads llama.cpp's own load log to tell whether the model really landed on the GPU.
@@ -143,8 +193,16 @@ function loadLog(): { lines: string[]; logger: Required<WllamaConfig>['logger'];
   const lines: string[] = [];
   let open = true;
   const note = (...data: unknown[]): void => {
-    if (!open || lines.length >= LOAD_LOG_LINES) return;
-    lines.push(data.map((value) => String(value)).join(' '));
+    const line = data.map((value) => String(value)).join(' ');
+    if (!open) {
+      perfLogListener?.(line);
+      if (runtimeTailLines.length < RUNTIME_TAIL_LINES && RUNTIME_TAIL_PATTERN.test(line)) {
+        runtimeTailLines.push(line);
+      }
+      return;
+    }
+    if (lines.length >= LOAD_LOG_LINES) return;
+    lines.push(line);
   };
   return {
     lines,
@@ -156,10 +214,17 @@ function loadLog(): { lines: string[]; logger: Required<WllamaConfig>['logger'];
 }
 
 export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
+  // Adreno WebGPU profile (see `applyAdrenoProfile`): the tokens reach ggml-webgpu through the
+  // worker's run options, so they have to be in place before the worker starts.
+  if (selection.webgpuTuning !== undefined) {
+    setWebGpuDebugTuning(selection.backend === 'webgpu' ? selection.webgpuTuning : []);
+  }
   const log = loadLog();
   const wllama = await createWllama({ suppressNativeLog: false, logger: log.logger });
 
   lastWebGpuLines = [];
+  runtimeTailLines = [];
+  const debugLoad = selection.debugLoad;
   try {
     await wllama.loadModel([file], {
       n_ctx: selection.nCtx,
@@ -197,6 +262,12 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
       ...(selection.nParallel > 1 ? { cont_batching: true } : {}),
       ctx_shift: false,
       log_level: LOG_LEVEL_INFO,
+      ...(debugLoad?.flashAttn === undefined ? {} : { flash_attn: debugLoad.flashAttn }),
+      ...(debugLoad?.noKvOffload === true ? { no_kv_offload: true } : {}),
+      ...(debugLoad?.nUbatch === undefined ? {} : { n_ubatch: debugLoad.nUbatch }),
+      ...(debugLoad?.tensorOverrides
+        ? { kv_overrides: { 'sakutto.tensor_buft_overrides': debugLoad.tensorOverrides } }
+        : {}),
     });
   } catch (error) {
     log.stop();
@@ -246,17 +317,27 @@ export const createWllamaRuntime: RuntimeFactory = async (file, selection) => {
               temperature: 0,
               // A finished request that asks for no reuse gives back its cells (patch 0005); cells
               // left by idle slots would widen every attention step of the requests still running.
-              cache_prompt: selection.nParallel === 1,
-              stop: [...TRANSLATION_STOP_TOKENS],
+              cache_prompt: request.cachePrompt ?? selection.nParallel === 1,
+              stop: [...(request.stop ?? TRANSLATION_STOP_TOKENS)],
               stream: true,
               onData: (chunk) => {
                 forwardCompletionToken(request.signal, chunk.choices?.[0]?.text, request.onToken);
+                if (chunk.timings && request.onTimings) request.onTimings(chunk.timings);
               },
             }),
           ]);
           if (request.signal.aborted) throw abortError();
         } catch (error) {
           if (isAbortError(error) || request.signal.aborted) throw abortError();
+          if (selection.backend === 'webgpu' && isGarbledOutputFailure(error)) {
+            const garbled = new EngineError('gpu-lost', 'The GPU returned garbled output.', {
+              cause: error,
+              detail: GARBLED_OUTPUT_DETAIL,
+            });
+            // A worker that died on it takes the other slots' requests with it.
+            if (isRuntimeDead(error)) reportLoss(garbled);
+            throw garbled;
+          }
           if (selection.backend === 'webgpu' && isRuntimeDead(error)) {
             reportLoss(error);
             throw new EngineError('gpu-lost', 'The GPU stopped working.', { cause: error });

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sakutto GPU harness (debug)</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f4f6f8;
+        color: #18202d;
+        font-family: 'Segoe UI', 'Yu Gothic UI', 'Hiragino Sans', sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      main {
+        max-width: 52rem;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+
+      .warn {
+        color: #9a3412;
+        font-weight: 600;
+      }
+
+      button {
+        min-height: 44px;
+        padding: 8px 20px;
+        font-size: 16px;
+        margin: 12px 0;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #e8ecf1;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 12.5px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 12px 0;
+      }
+
+      th,
+      td {
+        border: 1px solid #c3ccd6;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+
+      button.small {
+        min-height: 36px;
+        padding: 4px 12px;
+        font-size: 14px;
+        margin: 4px 0;
+      }
+
+      select {
+        min-height: 36px;
+        font-size: 15px;
+      }
+
+      tr.bad td {
+        background: rgba(220, 38, 38, 0.15);
+      }
+
+      #configs div {
+        font-size: 13px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #0e1218;
+          color: #edf1f6;
+        }
+
+        pre {
+          background: #1a212c;
+        }
+
+        th,
+        td {
+          border-color: #39424f;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>GPU harness <span class="warn">(debug tool)</span></h1>
+      <p>
+        Runs one fixed English paragraph through the CPU backend and several WebGPU configurations
+        of the on-device model, then compares the outputs. Used to diagnose garbled WebGPU output on
+        Android. This page is not part of the translation product.
+      </p>
+      <p id="status">Probing…</p>
+      <h2>Adapter</h2>
+      <pre id="adapter">…</pre>
+      <h2>Model</h2>
+      <p>
+        Harness only: the translation product keeps its own model. Each model is downloaded from a
+        pinned Hugging Face commit (size and sha256 checked), stored separately, and runs with its
+        own prompt format; decoding is greedy with the same token limit for every model. The PLaMo 3
+        0.8B file is the one the options page manages.
+      </p>
+      <label
+        >Model
+        <select id="model"></select
+      ></label>
+      <p id="model-info"></p>
+      <p id="model-status">…</p>
+      <button id="model-download" type="button" disabled>Download</button>
+      <button id="model-delete" type="button" disabled>Delete</button>
+      <button id="model-cancel" type="button" hidden>Cancel download</button>
+      <h2>Translation runs</h2>
+      <p>
+        "Run harness" runs every config on this page, one after another. "Run all isolated" reloads
+        the page for each config (fresh page, wllama worker and WebGPU device), so a config cannot
+        affect the next one; results are kept in this tab until cleared. "Run alone" does the same
+        for one config (plus the CPU reference if none is saved).
+      </p>
+      <button id="run" type="button" disabled>Run harness</button>
+      <button id="run-isolated" type="button" disabled>Run all isolated</button>
+      <button id="clear-saved" type="button" disabled>Clear saved results</button>
+      <div id="configs"></div>
+      <h2>Results</h2>
+      <div id="results"></div>
+      <h2>GPU performance</h2>
+      <p>
+        Each config runs in a fresh page (fresh worker and WebGPU device): model load, then the
+        prompt twice with the prompt cache off (run 1 includes shader compilation, run 2 is warm),
+        with llama.cpp's prompt/decode timings and ggml-webgpu's per-token counters. "GPU perf
+        breakdown" runs the chosen config (plus a per-op timing run when the box below is ticked;
+        that run submits after every op and crashed the page on Adreno). "Run GPU perf sweep" runs
+        every config below except the hybrid ones, CPU baseline first, with no per-op runs. Each
+        config is cut off after 5 minutes; a crash or device loss only ends that config. Copy the
+        report text and paste it back.
+      </p>
+      <p>
+        "Titles vs paragraph" runs the production translation pipeline (planner, PLaMo line packing,
+        scheduler waves on the slots, prompt cache as in the extension) for 12 short titles packed
+        as page blocks, the same 12 titles one request each (as headings), and one long paragraph,
+        on cpu, cpu-2-slot, gpu-r6-r4 (1 slot, the Adreno default since 1.3.0), gpu-r6-r4-2-slot and
+        gpu-r6-r4-4-slot, one config per page load. It reports the wall time, the first finished
+        block and every request (start, ttft, prompt and decode timings).
+      </p>
+      <label
+        >Config
+        <select id="perf-config"></select>
+      </label>
+      <label
+        ><input id="perf-ops" type="checkbox" /> Breakdown: add a per-op timing run (slow; may crash
+        the page)</label
+      >
+      <button id="run-perf" type="button" disabled>GPU perf breakdown</button>
+      <button id="run-perf-sweep" type="button" disabled>Run GPU perf sweep</button>
+      <button id="run-workload" type="button" disabled>Titles vs paragraph (CPU vs GPU)</button>
+      <button id="perf-copy" type="button" disabled>Copy report</button>
+      <button id="perf-clear" type="button" disabled>Clear perf results</button>
+      <pre id="perf-report"></pre>
+      <h2>Op diagnostics (WebGPU vs CPU, per op)</h2>
+      <p>
+        Runs llama.cpp test-backend-ops with the shapes and types PLaMo 3 Translate 0.8B, Qwen3 0.6B
+        and Gemma 3 1B use, on WebGPU and on the CPU reference, and reports NMSE, max abs error and
+        NaN/Inf counts per case. Each op group runs in its own worker and WebGPU device. Does not
+        need the model.
+      </p>
+      <label
+        >Device profile
+        <select id="ops-profile">
+          <option value="default">default (Adreno: subgroups off, mat-vec on)</option>
+          <option value="adreno-subgroups">adreno-subgroups (upstream; reproduces the bug)</option>
+          <option value="adreno-matvec">adreno-matvec (= Adreno default)</option>
+          <option value="adreno-sg-tiled">adreno-sg-tiled (subgroups on, mat-vec → tiled)</option>
+          <option value="no-subgroups">no-subgroups</option>
+          <option value="no-matvec">no-matvec (Adreno: previous default, mat-vec → tiled)</option>
+          <option value="adreno-submit-64">
+            adreno-submit-64 (Adreno default, 64 kernels/submit)
+          </option>
+        </select>
+      </label>
+      <label
+        >Backend
+        <select id="ops-backend">
+          <option value="webgpu">WebGPU vs CPU</option>
+          <option value="CPU">CPU vs CPU reference (suite self-check)</option>
+        </select>
+      </label>
+      <button id="run-ops" type="button" disabled>Run op diagnostics</button>
+      <button id="run-ops-matrix" type="button" disabled>Run MUL_MAT × Adreno profiles</button>
+      <button class="run-ops-all" data-profile="adreno-matvec" type="button" disabled>
+        Run all ops × adreno-matvec
+      </button>
+      <button class="run-ops-all" data-profile="adreno-sg-tiled" type="button" disabled>
+        Run all ops × adreno-sg-tiled
+      </button>
+      <div id="ops"></div>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -19,6 +19,8 @@
     type ShortcutQueryResult,
   } from '@/shared/messages';
   import { ensureContentScript } from '@/shared/page-bridge';
+  import { hasAllSitesAccess, requestAllSitesAccess } from '@/shared/all-sites';
+  import { isAndroidEdgeRuntime } from '@/shared/mobile';
   import type { QualitySample } from '@/shared/quality';
   import type { Settings } from '@/shared/settings';
   import { loadSettings, saveSettings, subscribeSettings } from '@/shared/storage';
@@ -68,6 +70,10 @@
   let pageMessage = $state<'ready' | 'unsupported' | 'unread'>('unsupported');
   let commandBusy = $state(false);
   let permissionError = $state(false);
+  const androidEdge = isAndroidEdgeRuntime();
+  /** Android: whether the floating button can reach every site; null until checked. */
+  let allSites = $state<boolean | null>(null);
+  let allSitesFailed = $state(false);
   let engine = $state<EngineStatus | null>(null);
   let modelMark = $state<ModelStatus | null>(null);
   let quality = $state<QualitySample | null>(null);
@@ -145,6 +151,12 @@
         usingHighQuality: engine?.model.id === HIGH_QUALITY_MODEL_ID && engine.plamoReady,
       }),
   );
+
+  async function grantAllSites() {
+    allSitesFailed = false;
+    allSites = await requestAllSitesAccess();
+    allSitesFailed = !allSites;
+  }
 
   async function refreshSettings() {
     try {
@@ -314,6 +326,11 @@
     void refreshSettings();
     void refreshPage();
     void refreshEngine();
+    if (androidEdge) {
+      void hasAllSitesAccess().then((granted) => {
+        allSites = granted;
+      });
+    }
     void requestEngineWarm();
     void requestQualitySample().then((sample) => {
       quality = sample;
@@ -472,6 +489,15 @@
   </button>
   {#if shortcutError}
     <p class="error" role="alert">{t('errorAction')}</p>
+  {/if}
+
+  {#if androidEdge && settings?.fabEverywhere === true && allSites === false}
+    <button class="button secondary block" type="button" onclick={grantAllSites}>
+      {t('fabEverywhereGrant')}
+    </button>
+    {#if allSitesFailed}
+      <p class="error" role="alert">{t('fabEverywhereGrantFailed')}</p>
+    {/if}
   {/if}
 
   <button class="button secondary block" type="button" onclick={openTyped}>

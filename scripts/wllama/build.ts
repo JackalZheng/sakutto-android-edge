@@ -52,6 +52,47 @@ const PATCH_MARKERS: ReadonlyArray<readonly [string, string]> = [
     'llama.cpp/tools/server/server-context.cpp',
     'task->is_stateless() || !task->params.cache_prompt',
   ],
+  ['cpp/wllama-context.h', 'sakutto.tensor_buft_overrides'],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-plamo3'],
+  ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'bool disable_mat_vec = false;'],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'command_submit_batch_size = WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE;',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec_acc.tmpl',
+    'let d = load_f16_as_f32_at_src0(block_byte_base + 208u);',
+  ],
+  ['cpp/wllama-context.h', 'data_json.dump_safe()'],
+  ['llama.cpp/tests/test-backend-ops.cpp', 'struct test_mul_mat_small_weights'],
+  ['llama.cpp/tests/test-backend-ops.cpp', 'Sakutto (patch 0020): the other harness models'],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'static bool ggml_webgpu_debug_has_token(const char * token) {',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp',
+    'inline uint32_t ggml_webgpu_sakutto_mv_wg_size',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp',
+    'ggml_webgpu_sakutto_softmax_nocache',
+  ],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/soft_max.wgsl', '#ifdef NO_CACHE'],
+  ['llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp', 'ggml_webgpu_append_mv_columns(ctx, src0'],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl', 'fn shmem_slot(idx: u32)'],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-mulmat'],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec_q4k_v2.wgsl', 'fn chunk_dot('],
+  ['llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/rms_norm_mul_add.wgsl', '#ifdef SECOND_NORM'],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'ggml_webgpu_sakutto_can_fuse_norm_add(cgraph, node_idx)',
+  ],
+  [
+    'llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp',
+    'ggml_webgpu_sakutto_mul_mat_swiglu(ctx, src0',
+  ],
+  ['llama.cpp/tests/test-backend-ops.cpp', '--sakutto-r6'],
 ];
 
 function git(args: readonly string[], cwd = CHECKOUT_DIR): Promise<string> {
@@ -110,9 +151,10 @@ async function ensureCheckout(): Promise<void> {
 
   const linked = await git(['rev-parse', 'HEAD:llama.cpp']);
   if (linked !== LLAMA_CPP_COMMIT) {
-    throw new Error(
-      `wllama @${WLLAMA_COMMIT} expects llama.cpp ${LLAMA_CPP_COMMIT}, found ${linked}`,
-    );
+    // pins.ts deliberately moves llama.cpp ahead of the gitlink recorded in
+    // the wllama tree (Stage 0 of the Android WebGPU fix); the submodule is
+    // fetched and checked out at the pin below instead of failing here.
+    log(`llama.cpp pin ${LLAMA_CPP_COMMIT} overrides wllama gitlink ${linked}`);
   }
 
   if (!(await exists(join(CHECKOUT_DIR, 'llama.cpp', '.git')))) {
@@ -124,7 +166,24 @@ async function ensureCheckout(): Promise<void> {
     }
   }
 
-  const llamaCpp = await git(['rev-parse', 'HEAD'], join(CHECKOUT_DIR, 'llama.cpp'));
+  const llamaDir = join(CHECKOUT_DIR, 'llama.cpp');
+  let llamaCpp = await git(['rev-parse', 'HEAD'], llamaDir);
+  if (llamaCpp !== LLAMA_CPP_COMMIT) {
+    log(`checking out llama.cpp ${LLAMA_CPP_COMMIT}`);
+    const known = await git(['cat-file', '-e', `${LLAMA_CPP_COMMIT}^{commit}`], llamaDir).then(
+      () => true,
+      () => false,
+    );
+    if (!known) {
+      try {
+        await git(['fetch', '--depth', '1', 'origin', LLAMA_CPP_COMMIT], llamaDir);
+      } catch {
+        await git(['fetch', 'origin'], llamaDir);
+      }
+    }
+    await git(['checkout', '--detach', LLAMA_CPP_COMMIT], llamaDir);
+    llamaCpp = await git(['rev-parse', 'HEAD'], llamaDir);
+  }
   if (llamaCpp !== LLAMA_CPP_COMMIT) {
     throw new Error(`llama.cpp checkout is at ${llamaCpp}, expected ${LLAMA_CPP_COMMIT}`);
   }
@@ -132,7 +191,9 @@ async function ensureCheckout(): Promise<void> {
 
 async function resetCheckout(): Promise<void> {
   // A superproject reset leaves the submodule's files alone, and a patch applies into llama.cpp.
+  // Files a patch adds there (patch 0025's shaders) are untracked: clean them too.
   await git(['checkout', '--', '.'], join(CHECKOUT_DIR, 'llama.cpp'));
+  await git(['clean', '-fd'], join(CHECKOUT_DIR, 'llama.cpp'));
   await git(['reset', '--hard', WLLAMA_COMMIT]);
   await git([
     'clean',
@@ -232,6 +293,14 @@ async function syncPublicAssets(): Promise<void> {
   log(`copied the assets to ${PUBLIC_DIR}`);
 }
 
+/**
+ * SAKUTTO_WLLAMA_DEBUG=1 (`pnpm build:wllama:debug`): also link test-backend-ops (the GPU
+ * harness op diagnostics). Release builds leave it out.
+ */
+function wllamaDebugBuild(): boolean {
+  return process.env.SAKUTTO_WLLAMA_DEBUG === '1';
+}
+
 async function main(): Promise<void> {
   const checkOnly = process.argv.includes('--check');
   log(`pinned wllama @${WLLAMA_COMMIT} with llama.cpp @${LLAMA_CPP_COMMIT}`);
@@ -252,12 +321,13 @@ async function main(): Promise<void> {
   const compat = process.env.SKIP_COMPAT !== '1';
   const { tsupVersion } = await buildLibrary();
   const tag = emsdkTag(process.arch);
-  await buildWasm(CHECKOUT_DIR, process.arch, compat);
+  await buildWasm(CHECKOUT_DIR, process.arch, compat, wllamaDebugBuild());
 
   const packageLockSha256 = sha256(await readFile(join(CHECKOUT_DIR, 'package-lock.json')));
   const inputs: BuildInputs = {
     emscriptenTag: tag,
     compat,
+    testBackendOps: wllamaDebugBuild(),
     tsupVersion,
     packageLockSha256,
   };

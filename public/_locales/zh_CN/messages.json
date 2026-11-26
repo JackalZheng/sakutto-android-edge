@@ -729,13 +729,13 @@
     "message": "从不"
   },
   "tierLabel": {
-    "message": "性能模式"
+    "message": "计算后端"
   },
   "tierAuto": {
-    "message": "自动"
+    "message": "自动（推荐）"
   },
   "tierGpu": {
-    "message": "WebGPU"
+    "message": "GPU (WebGPU)"
   },
   "tierCpu8": {
     "message": "CPU（8 个或更多线程）"
@@ -1055,5 +1055,131 @@
   },
   "tierCpu1": {
     "message": "CPU (1 thread)"
+  },
+  "tierGpuMobileWarning": {
+    "message": "在手机 GPU 上使用 WebGPU 可能产生错误的翻译。如果出现乱码，Sakutto 会自动切回 CPU。"
+  },
+  "fabEverywhereSetting": {
+    "message": "在所有网站显示翻译按钮"
+  },
+  "fabEverywhereSettingHelp": {
+    "message": "按钮需要所有网站的访问权限，只会询问一次。设为从不翻译的网站不会显示。"
+  },
+  "fabEverywhereGrant": {
+    "message": "允许在所有网站显示翻译按钮"
+  },
+  "fabEverywhereGrantFailed": {
+    "message": "未获得网站访问权限。按钮只会出现在你打开过 Sakutto 的页面。"
+  },
+  "openGpuHarness": {
+    "message": "打开 GPU 测试工具"
+  },
+  "gpuHarnessHelp": {
+    "message": "用一段固定文字分别跑 CPU 与 WebGPU，再比对输出。侧载安装的模型是另外存放的，请先在这里下载 0.8B 模型。"
+  },
+  "tierAdrenoAutoHelp": {
+    "message": "在 Qualcomm Adreno GPU 上，“自动”会使用 WebGPU 并应用下方的 Adreno 配置（测试手机上每段约 2.3 秒，CPU 约 2.9 秒）。如果 GPU 产生乱码，这台设备的“自动”会改用 CPU；选择“GPU (WebGPU)”可以再试一次。 标记为“GPU 实验性”的模型（Qwen3、Gemma 3）在“自动”下改用 CPU。"
+  },
+  "gpuProfileLabel": {
+    "message": "Adreno GPU 配置"
+  },
+  "gpuProfileOptimized": {
+    "message": "优化（推荐・r6-r4）"
+  },
+  "gpuProfileCompat": {
+    "message": "兼容（第 5 轮・r5）"
+  },
+  "gpuProfileOptimizedHelp": {
+    "message": "第 6 轮内核：q4_K 矩阵向量乘法新算法（16 字节读取、每组 4 行）＋合并 gate/up 与 SwiGLU＋合并 norm 运算链，1 个槽（n_ctx 2048）。在测试手机（POCO F5 Pro）上最快，每段约 2.25 秒（CPU 约 2.9 秒）。一般情况请使用此项。"
+  },
+  "gpuProfileCompatHelp": {
+    "message": "不含第 6 轮内核：批量矩阵向量乘法＋128 宽 softmax（1.3.0 开发版的设置），测试手机上每段约 2.7 秒。新内核在你的设备上有问题时使用。"
+  },
+  "gpuProfileInactive": {
+    "message": "配置仅在使用 GPU 时生效（Adreno 上的“自动”或“GPU (WebGPU)”）。"
+  },
+  "diagGpu": {
+    "message": "检测到的 GPU"
+  },
+  "diagGpuNone": {
+    "message": "没有 WebGPU 适配器"
+  },
+  "diagGpuAdreno": {
+    "message": "Adreno"
+  },
+  "gpuProfileQ4v2": {
+    "message": "仅 q4_K 新算法（q4v2-r4）"
+  },
+  "gpuProfileQ4v2Help": {
+    "message": "只使用 q4_K 矩阵向量乘法新算法（每组 4 行），不做运算合并。测试手机上每段约 2.29 秒，几乎与推荐设置一样快。如果“优化”出现错误译文或停止响应，请先试这个。"
+  },
+  "gpuProfileR6": {
+    "message": "第 6 轮（每组 2 行・r6）"
+  },
+  "gpuProfileR6Help": {
+    "message": "q4_K 新算法改为每组 2 行，并加上两项运算合并。寄存器压力较低，适合较旧或较小的 Adreno；测试手机上每段约 2.5 秒。"
+  },
+  "gpuProfileLowMemory": {
+    "message": "低内存（n_ctx 1024）"
+  },
+  "gpuProfileLowMemoryHelp": {
+    "message": "与“优化”相同的内核，但 n_ctx 用 1024 而非 2048，KV 缓存减半。适合内存较少的手机；较长的段落会分成较短的片段翻译。（自 1.3.0 起所有配置都只用 1 个槽：在测试手机上多个槽反而更慢。）"
+  },
+  "gpuProfileR4": {
+    "message": "第 4 轮兼容（r4）"
+  },
+  "gpuProfileR4Help": {
+    "message": "最保守的 GPU 设置：不使用第 5、6 轮的矩阵向量乘法改动，提示词走分块矩阵乘法、256 宽 softmax。速度最慢（测试手机每段约 3.8 秒），只在其他配置都出错时使用。"
+  },
+  "gpuProfileExperimentalAuto": {
+    "message": "当前模型标记为“GPU 实验性”，在 Adreno 上“自动”会用 CPU 运行；配置只在手动选择“GPU (WebGPU)”时生效。"
+  },
+  "modelGpuExperimental": {
+    "message": "GPU 实验性"
+  },
+  "modelGpuExperimentalHelp": {
+    "message": "在 Adreno GPU 上的结果可能与 CPU 不同；“自动”会用 CPU 运行，想测试 GPU 请手动选择“GPU (WebGPU)”。"
+  },
+  "modelDefaultBadge": {
+    "message": "默认"
+  },
+  "modelDownloaded": {
+    "message": "已下载"
+  },
+  "modelLicenseLabel": {
+    "message": "许可"
+  },
+  "modelLargeMobileWarning": {
+    "message": "超过 1 GB：手机上以 CPU 运行，选择 WebGPU 也一样（WebGPU 的内存与页面共用同一块 RAM，这些模型用 GPU 加载时页面会被关闭）。以 1 个槽、n_ctx 1024、批次 128 加载，下载和加载较慢。若用 CPU 加载时引擎仍被关闭，会自动改回 PLaMo 3 0.8B。"
+  },
+  "modelGemmaTerms": {
+    "message": "下载并使用 Gemma 即表示你同意 Gemma 使用条款与禁止用途政策。"
+  },
+  "modelDescQwen3Small": {
+    "message": "最小最快的通用模型，翻译质量一般，适合速度优先或低端手机。"
+  },
+  "modelDescPlamoSmall": {
+    "message": "翻译专用模型（默认），日英中翻译自然，支持术语表与日语敬体/简体。"
+  },
+  "modelDescGemma": {
+    "message": "Google 的通用指令模型，多语言能力均衡。"
+  },
+  "modelDescQwen3Large": {
+    "message": "较大的 Qwen3，中英翻译明显优于 0.6B，速度约慢一倍。"
+  },
+  "modelDescHyMt": {
+    "message": "腾讯混元翻译专用模型，支持 33 种语言互译，质量佳。"
+  },
+  "modelDescPlamoLarge": {
+    "message": "PLaMo 翻译的高质量版，文件最大、手机内存压力最高。"
+  },
+  "modelLoadCrashed": {
+    "message": "上次在这部手机以 CPU 加载此模型时，翻译引擎被 Edge 关闭了（内存不足），因此已改回 PLaMo 3 0.8B。可以再试一次“使用”，若再次被关闭会自动改回。"
+  },
+  "modelLoadCrashedGpu": {
+    "message": "上次在这部手机以 WebGPU 加载此模型时，翻译引擎被 Edge 关闭了（内存不足），现在改以 CPU 运行。要再试 GPU，请在引擎设置中重新选择 WebGPU。"
+  },
+  "tierLargeModelCpuMobile": {
+    "message": "当前模型超过 1 GB：手机上即使选择 WebGPU 也会以 CPU 运行。GPU 内存与页面共用，这些模型用 WebGPU 加载时页面会被关闭。PLaMo 3 0.8B 等较小的模型仍会使用 WebGPU。"
   }
 }

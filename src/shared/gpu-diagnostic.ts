@@ -1,6 +1,29 @@
 import { isRecord } from './object';
 
-export type WebGpuDebugProfile = 'off' | 'amd-rdna3' | 'intel-arc' | 'no-f16' | 'reject-max-limits';
+/**
+ * ggml-webgpu debug profiles (wllama patches 0007, 0008, 0013, 0017). The Adreno ones only
+ * change anything on a Qualcomm adapter, where patch 0017 by default turns subgroups off,
+ * keeps the mat-vec shader (workgroup reduction) and submits 16 kernels per command buffer:
+ * - 'adreno-subgroups': upstream behaviour (subgroups and mat-vec on), reproduces the bug;
+ * - 'adreno-matvec': subgroups off, mat-vec on (the same as the Adreno default);
+ * - 'adreno-sg-tiled': subgroups on, mat-vec routed to the tiled matmul;
+ * - 'adreno-submit-64': the Adreno default with upstream's 64 kernels per submit.
+ * 'no-matvec' routes mat-vec to the tiled matmul (on Adreno: the previous default) and
+ * 'as-adreno' applies the Adreno defaults on any adapter.
+ */
+export type WebGpuDebugProfile =
+  | 'off'
+  | 'amd-rdna3'
+  | 'intel-arc'
+  | 'no-f16'
+  | 'reject-max-limits'
+  | 'no-subgroups'
+  | 'adreno-subgroups'
+  | 'adreno-matvec'
+  | 'adreno-sg-tiled'
+  | 'adreno-submit-64'
+  | 'no-matvec'
+  | 'as-adreno';
 
 export type CorrectnessProbeStatus = 'ok' | 'failed' | 'subgroups-disabled';
 
@@ -14,6 +37,13 @@ const DEBUG_PROFILES: ReadonlySet<string> = new Set<WebGpuDebugProfile>([
   'intel-arc',
   'no-f16',
   'reject-max-limits',
+  'no-subgroups',
+  'adreno-subgroups',
+  'adreno-matvec',
+  'adreno-sg-tiled',
+  'adreno-submit-64',
+  'no-matvec',
+  'as-adreno',
 ]);
 
 const REJECT_MAX_NOTE = 'debug: reject adapter-max requestDevice';
@@ -142,21 +172,58 @@ export const INTEGRATED_GPU_HINT =
   'Windows Chrome ignores powerPreference (crbug 369219127). If this adapter looks integrated, try chrome://flags/#force-high-performance-gpu.';
 
 let profileOverride: WebGpuDebugProfile | null = null;
+let tuningTokens: string[] = [];
 let storageTask: Promise<WebGpuDebugProfile> | null = null;
 
 function debugGlobal(): { __SAKUTTO_WEBGPU_DEBUG__?: unknown } {
   return globalThis as { __SAKUTTO_WEBGPU_DEBUG__?: unknown };
 }
 
+/**
+ * Tokens ggml-webgpu (patch 0021) reads after the profile name, joined with `+`:
+ * `sub8|sub16|sub32|sub64` kernels per submit, `mvwg64|mvwg128|mvwg256` and `mvo1|mvo2|mvo4|mvo8`
+ * mat-vec workgroup size / outputs per workgroup, `rwg64..1024` SOFT_MAX / fused RMS_NORM workgroup
+ * size, `smnc` / `smup` new / upstream SOFT_MAX shader, `perf` per-graph stats, `perfops` per-op timing.
+ * Patch 0023: `bmv0..256` batched mat-vec crossover (MUL_MAT with 4 < n <= N; bmv0 off), `bmvc2|4|8`
+ * columns per batch, `mmt<M>x<N>` / `mmwg<M>x<N>` tiled-matmul outputs per thread / threads, `mmpad`
+ * padded tiled-matmul shared memory.
+ * Patch 0025: `q4v2` q4_K one-column mat-vec v2 (`q4v2r1|2|4` rows per thread group, `q4v2t8..64`
+ * threads per row), `mvglu` fused gate+up mat-vec + SWIGLU, `fna` fused RMS_NORM+MUL+ADD[+RMS_NORM+MUL].
+ */
+export const WEBGPU_TUNING_TOKEN_PATTERN =
+  /^(sub(8|16|32|64)|mvwg(64|128|256)|mvo[1248]|rwg(64|128|256|512|1024)|smnc|smup|bmv(0|8|16|32|48|64|96|128|256)|bmvc[248]|mmt(4x4|8x4|4x8|8x8)|mmwg(8x8|16x8|8x16|16x16|8x4|16x4)|mmpad|q4v2|q4v2r[124]|q4v2t(8|16|32|64)|mvglu|fna|perf|perfops)$/u;
+
+/** The string the worker hands ggml-webgpu: the profile, then any tuning tokens. */
+export function composeWebGpuDebugString(
+  profile: WebGpuDebugProfile | null,
+  tokens: readonly string[],
+): string | null {
+  const valid = tokens.filter((token) => WEBGPU_TUNING_TOKEN_PATTERN.test(token));
+  if (valid.length === 0) return profile && profile !== 'off' ? profile : null;
+  return [profile ?? 'off', ...valid].join('+');
+}
+
+function applyDebugGlobal(): void {
+  const target = debugGlobal();
+  const value = composeWebGpuDebugString(profileOverride, tuningTokens);
+  if (value) target.__SAKUTTO_WEBGPU_DEBUG__ = value;
+  else delete target.__SAKUTTO_WEBGPU_DEBUG__;
+}
+
 export function setWebGpuDebugProfile(profile: WebGpuDebugProfile | null): void {
   profileOverride = profile;
-  const target = debugGlobal();
-  if (profile && profile !== 'off') target.__SAKUTTO_WEBGPU_DEBUG__ = profile;
-  else delete target.__SAKUTTO_WEBGPU_DEBUG__;
+  applyDebugGlobal();
+}
+
+/** Debug harness only: tuning tokens for the next WebGPU device (see composeWebGpuDebugString). */
+export function setWebGpuDebugTuning(tokens: readonly string[]): void {
+  tuningTokens = tokens.filter((token) => WEBGPU_TUNING_TOKEN_PATTERN.test(token));
+  applyDebugGlobal();
 }
 
 export function resetWebGpuDebugProfile(): void {
   profileOverride = null;
+  tuningTokens = [];
   delete debugGlobal().__SAKUTTO_WEBGPU_DEBUG__;
   storageTask = null;
 }
@@ -164,7 +231,8 @@ export function resetWebGpuDebugProfile(): void {
 export function webGpuDebugProfile(): WebGpuDebugProfile {
   if (profileOverride) return profileOverride;
   const fromGlobal = debugGlobal().__SAKUTTO_WEBGPU_DEBUG__;
-  return isWebGpuDebugProfile(fromGlobal) ? fromGlobal : 'off';
+  const base = typeof fromGlobal === 'string' ? fromGlobal.split('+')[0] : fromGlobal;
+  return isWebGpuDebugProfile(base) ? base : 'off';
 }
 
 export function webGpuDebugProfileFromUrl(href: string): WebGpuDebugProfile | null {
@@ -522,6 +590,9 @@ export function applyDebugOverlay(diagnostic: GpuDiagnostic): GpuDiagnostic {
   } else if (profile === 'no-f16') {
     next.shaderF16 = false;
     next.features = next.features.filter((name) => name !== 'shader-f16');
+  } else if (profile === 'no-subgroups') {
+    next.subgroups = false;
+    next.features = next.features.filter((name) => name !== 'subgroups');
   } else if (profile === 'reject-max-limits') {
     if (!next.description?.includes(REJECT_MAX_NOTE)) {
       next.description = next.description

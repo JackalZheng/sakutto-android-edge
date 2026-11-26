@@ -11,8 +11,8 @@ import type { EngineKind } from '@/engine/types';
 import { isSiteHost, type SiteAuto } from '@/dom/sites';
 import type { QualitySample } from './quality';
 import { isQualitySample } from './quality';
-import type { DisplayMode, TierPreference } from './settings';
-import { isTierPreference } from './settings';
+import type { AdrenoGpuProfile, DisplayMode, TierPreference } from './settings';
+import { isAdrenoGpuProfile, isTierPreference } from './settings';
 import { WEBGPU_DEBUG_MESSAGE_TYPE } from './gpu-diagnostic';
 import { isRecord } from './object';
 
@@ -27,9 +27,18 @@ export interface PageInfoRequest {
 
 export type PageCommandName = 'toggle' | 'restore' | 'bilingual' | 'selection' | 'compose';
 
+/**
+ * Where a page command came from. Only a browser keyboard command (`shortcut`) is subject to
+ * the shortcut on/off and "cleared in the browser" gate; the popup button, the context menu
+ * and the in-page UI (`action`) always run.
+ */
+export type PageCommandSource = 'shortcut' | 'action';
+
 export interface PageCommandRequest {
   type: 'page:command';
   command: PageCommandName;
+  /** Missing on messages from older builds: treated as `action`. */
+  source?: PageCommandSource;
 }
 
 export interface PageStateRequest {
@@ -164,6 +173,61 @@ export interface ModelInspectRequest {
 
 export interface CacheClearRequest {
   type: 'cache:clear';
+}
+
+/**
+ * The offscreen document only has `chrome.runtime`, so the engine host asks the background
+ * for the stored engine settings (tier, Adreno profile, broken-GPU flag) when it starts.
+ */
+export interface EngineSettingsQuery {
+  type: 'engine:settings';
+}
+
+export interface EngineSettingsSnapshot {
+  tier: TierPreference;
+  gpuProfile: AdrenoGpuProfile;
+  gpuOutputBroken: boolean;
+  /** The stored translation model (1.3.0); absent from older snapshots. */
+  modelId?: ModelId;
+}
+
+/** Offscreen → background: persist (or clear) the broken-GPU-output flag. */
+export interface GpuOutputBrokenUpdate {
+  type: 'engine:gpu-output-broken';
+  broken: boolean;
+}
+
+export function isEngineSettingsQuery(value: unknown): value is EngineSettingsQuery {
+  return isRecord(value) && value.type === 'engine:settings';
+}
+
+export function isEngineSettingsSnapshot(value: unknown): value is EngineSettingsSnapshot {
+  return (
+    isRecord(value) &&
+    isTierPreference(value.tier) &&
+    isAdrenoGpuProfile(value.gpuProfile) &&
+    typeof value.gpuOutputBroken === 'boolean' &&
+    (value.modelId === undefined || isModelId(value.modelId))
+  );
+}
+
+export function isGpuOutputBrokenUpdate(value: unknown): value is GpuOutputBrokenUpdate {
+  return (
+    isRecord(value) &&
+    value.type === 'engine:gpu-output-broken' &&
+    typeof value.broken === 'boolean'
+  );
+}
+
+export async function requestEngineSettings(): Promise<EngineSettingsSnapshot | null> {
+  try {
+    const response: unknown = await browser.runtime.sendMessage({
+      type: 'engine:settings',
+    } satisfies EngineSettingsQuery);
+    return isEngineSettingsSnapshot(response) ? response : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface EngineTierRequest {
@@ -344,6 +408,7 @@ export async function requestPageCommand(
   tabId: number,
   command: PageCommandName,
   frameId?: number,
+  source: PageCommandSource = 'action',
 ): Promise<PageViewState | null> {
   try {
     const response: unknown = await browser.tabs.sendMessage(
@@ -351,6 +416,7 @@ export async function requestPageCommand(
       {
         type: 'page:command',
         command,
+        source,
       } satisfies PageCommandRequest,
       frameId === undefined ? {} : { frameId },
     );

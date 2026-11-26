@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { abortError, EngineError } from '@/engine/errors';
+import {
+  abortError,
+  EngineError,
+  GARBLED_OUTPUT_DETAIL,
+  isGarbledOutputError,
+} from '@/engine/errors';
 import type { BackendSelection } from '@/engine/in-browser/backend';
 import { LazyInBrowserEngine } from '@/engine/in-browser/lazy-engine';
 import type { TranslateOptions } from '@/engine/types';
@@ -206,5 +211,56 @@ describe('LazyInBrowserEngine after the GPU is lost', () => {
       code: 'model-load-failed',
     });
     expect(onGpuLost).not.toHaveBeenCalled();
+  });
+});
+
+describe('LazyInBrowserEngine on garbled GPU output', () => {
+  const GPU: BackendSelection = { ...SELECTION, tier: 'g', backend: 'webgpu', nGpuLayers: 99 };
+  const a = { id: 'a', text: 'Hello.' };
+  const garbled = () =>
+    new EngineError('gpu-lost', 'The GPU returned garbled output.', {
+      detail: GARBLED_OUTPUT_DETAIL,
+    });
+
+  function garbling(): FakeRuntime {
+    const runtime = new FakeRuntime(() => '');
+    runtime.complete = async () => {
+      throw garbled();
+    };
+    return runtime;
+  }
+
+  it('takes the broken-output recovery, not the lost-GPU one, when a guard is set', async () => {
+    const runtimes = [garbling(), new FakeRuntime(() => 'は')];
+    const loadRuntime = vi.fn(async () => ({ runtime: runtimes.shift()!, selection: GPU }));
+    const onGpuLost = vi.fn(async () => undefined);
+    const onBroken = vi.fn(async () => undefined);
+    const engine = new LazyInBrowserEngine({
+      loadRuntime,
+      onGpuLost,
+      outputGuard: { isBroken: () => false, onBroken },
+    });
+
+    const chunks = await collectChunks(engine.translate([a], options()));
+
+    expect(chunks.at(-1)).toEqual({ id: 'a', final: 'は', engine: 'plamo' });
+    expect(onBroken).toHaveBeenCalledOnce();
+    expect(onGpuLost).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the lost-GPU recovery without a guard', async () => {
+    const runtimes = [garbling(), new FakeRuntime(() => 'は')];
+    const loadRuntime = vi.fn(async () => ({ runtime: runtimes.shift()!, selection: GPU }));
+    const onGpuLost = vi.fn(async () => undefined);
+    const engine = new LazyInBrowserEngine({ loadRuntime, onGpuLost });
+
+    await collectChunks(engine.translate([a], options()));
+
+    expect(onGpuLost).toHaveBeenCalledOnce();
+  });
+
+  it('marks the error as garbled output', () => {
+    expect(isGarbledOutputError(garbled())).toBe(true);
+    expect(isGarbledOutputError(new EngineError('gpu-lost', 'gone'))).toBe(false);
   });
 });

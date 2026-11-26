@@ -7,7 +7,11 @@ import type { EngineStatus, ModelStatus } from '@/shared/engine-status';
 import { advanceModelStatus } from '@/shared/model-progress';
 import { loadSettings } from '@/shared/storage';
 import type { TierPreference } from '@/shared/settings';
-import { isAndroidEdgeRuntime } from '@/shared/mobile';
+import { isAndroidEdgeRuntime, isMobileModelAllowed } from '@/shared/mobile';
+import { markModelLoad, requestCrashedModelLoad } from '@/shared/model-load-guard';
+import { loadGpuOutputBroken, saveGpuOutputBroken } from '@/shared/gpu-output';
+import { requestEngineSettings, type EngineSettingsSnapshot } from '@/shared/messages';
+import { looksLikeBrokenTranslation } from '../text/garbage';
 import { MemoryTranslationCacheStore, IndexedDbTranslationCacheStore } from '../cache/store';
 import { CachingEngine } from '../cache/caching-engine';
 import { TranslationCache } from '../cache/cache';
@@ -15,22 +19,30 @@ import { prewarmRequest } from '../cache/prewarm';
 import { ChromeTranslatorEngine } from '../chrome/translator';
 import { isAbortError, isEngineError } from '../errors';
 import {
-  applyMobileLimits,
+  cpuAfterBrokenOutput,
   cpuFallback,
+  fitSelectionToModel,
   isGpuLoadFallback,
   lighterSelection,
+  resolveSelection,
+  type RuntimeContext,
   selectionAfterGpuLoss,
-  selectionForTier,
   type BackendSelection,
 } from '../in-browser/backend';
 import { LazyInBrowserEngine } from '../in-browser/lazy-engine';
 import { createWllamaRuntime, lastWebGpuLoadLog, type LlamaRuntime } from '../in-browser/runtime';
-import { DEFAULT_MODEL_ID, getModel, type ModelId } from '../model/catalog';
+import {
+  DEFAULT_MODEL_ID,
+  getModel,
+  isGpuExperimentalModel,
+  modelPromptFormat,
+  type ModelId,
+} from '../model/catalog';
 import { OpfsModelFileStore } from '../model/file-store';
 import { ModelManager, type LoadedModel } from '../model/manager';
 import type { DownloadProgress } from '../model/download';
 import { QUALITY_PARAGRAPH } from '../model/suggestion';
-import { buildTranslationPrompt } from '../prompt/pfml3';
+import { buildModelPrompt } from '../prompt/model-prompt';
 import { RoutingEngine, type PairSupport } from '../router';
 import {
   ENGINE_HOST_PORT,
@@ -60,6 +72,8 @@ export interface EngineServices {
   readonly selection: BackendSelection;
   clearCache: () => Promise<void>;
   setTier: (tier: TierPreference) => Promise<void>;
+  /** The active model changed: re-resolve the selection (GPU-experimental models, 1.3.0). */
+  modelChanged?: (modelId: ModelId) => Promise<void>;
 }
 
 export interface EngineHostOptions {
@@ -89,19 +103,21 @@ async function openCache(): Promise<TranslationCache> {
   }
 }
 
-async function warmup(runtime: LlamaRuntime, tgt: string): Promise<void> {
+async function warmup(runtime: LlamaRuntime, tgt: string, modelId: string): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
 
   try {
     const language = canonicalLanguage(tgt) ?? 'ja';
+    const { prompt, stop } = buildModelPrompt(modelPromptFormat(modelId), {
+      text: 'Hello.',
+      src: language === 'ja' ? 'en' : 'ja',
+      tgt: language,
+      ...(language === 'ja' ? { form: 'polite' } : {}),
+    });
     await runtime.complete({
-      prompt: buildTranslationPrompt({
-        text: 'Hello.',
-        src: language === 'ja' ? 'en' : 'ja',
-        tgt: language,
-        ...(language === 'ja' ? { form: 'polite' } : {}),
-      }),
+      prompt,
+      stop,
       maxTokens: 16,
       signal: controller.signal,
       onToken: () => undefined,
@@ -227,30 +243,77 @@ export class EngineHost {
       hardwareConcurrency: capabilities.hardwareConcurrency,
       fastBatches: capabilities.gpuFastBatches === true,
       sharedMemory: capabilities.crossOriginIsolated,
+      adreno: capabilities.gpuAdreno === true,
     };
-    const stored = browser.storage?.local ? await loadSettings().catch(() => null) : null;
-    const initial = selectionForTier(stored?.tier ?? 'auto', probe);
-    // A phone's small cores and shared memory budget cannot use the desktop thread
-    // and batch sizes; the parallel width is untouched.
-    const selection = isAndroidEdgeRuntime() ? applyMobileLimits(initial) : initial;
-    const selectionState = { current: selection };
+    const stored = await loadEngineSettings();
+    // A phone's small cores and shared memory budget cannot use the desktop thread and
+    // batch sizes, and "auto" stays off WebGPU there unless the GPU is an Adreno; see
+    // `resolveSelection`.
+    const android = isAndroidEdgeRuntime();
+    // Adreno (phone or Windows on Snapdragon): "auto" and an explicit WebGPU choice run the
+    // settings' Adreno profile; see `resolveSelection` / `applyAdrenoProfile`.
     const store = await OpfsModelFileStore.open();
     const manager = new ModelManager({ store, createRuntime: createWllamaRuntime });
+    // Edge for Android: a load mark left by the previous engine page means it was closed
+    // inside a model load. Died on WebGPU: the model stays and runs on the CPU (`gpuCrashed`).
+    // Died on the CPU: it is not loaded again on its own, and the background has already moved
+    // the settings back to the default.
+    const crashReport = android ? await requestCrashedModelLoad() : null;
+    const gpuCrashed = new Set<ModelId>(crashReport?.gpuCrashed ?? []);
+    const cpuCrashedModel =
+      crashReport?.crashed?.backend === 'cpu-wasm' ? crashReport.crashed.modelId : null;
+    // 1.3.0: come back on the model chosen in the settings, if its file is still here.
+    if (
+      stored?.modelId &&
+      stored.modelId !== this.activeModelId &&
+      stored.modelId !== cpuCrashedModel &&
+      (!android || isMobileModelAllowed(stored.modelId))
+    ) {
+      const chosen = await manager.status(stored.modelId).catch(() => null);
+      if (chosen && (chosen.state === 'ready' || chosen.state === 'loaded')) {
+        this.activeModelId = stored.modelId;
+      }
+    }
+    const runtime: RuntimeContext = {
+      android,
+      gpuOutputBroken: (android || probe.adreno) && stored?.gpuOutputBroken === true,
+      adreno: probe.adreno,
+      gpuProfile: stored?.gpuProfile ?? 'optimized',
+      gpuExperimental: isGpuExperimentalModel(this.activeModelId),
+      modelBytes: getModel(this.activeModelId).size,
+      gpuCrashed: gpuCrashed.has(this.activeModelId),
+    };
+    let tierPreference: TierPreference = stored?.tier ?? 'auto';
+    const selection = resolveSelection(tierPreference, probe, runtime);
+    const selectionState = { current: selection };
     const cache = await openCache();
     const chrome = new ChromeTranslatorEngine();
     const load = async (signal: AbortSignal): Promise<LoadedModel> => {
-      const result = await loadWithFallback(
-        async (selection) => {
-          try {
-            return await manager.ensureLoaded(this.activeModelId, selection, { signal });
-          } catch (error) {
-            this.noteGpuError(error);
-            throw error;
-          }
-        },
-        selectionState.current,
-        signal,
-      );
+      const modelId = this.activeModelId;
+      let result: Awaited<ReturnType<typeof loadWithFallback>>;
+      try {
+        result = await loadWithFallback(
+          async (selection) => {
+            try {
+              // Every attempt, the lighter and CPU fallbacks too, gets the phone and
+              // large-model limits (`fitSelectionToModel`).
+              const fitted = fitSelectionToModel(selection, runtime);
+              // Android: each attempt is marked with its backend for the load-crash guard,
+              // so a crash on WebGPU falls back to the CPU and only a CPU crash to PLaMo 0.8B.
+              // Cleared when the load ends either way.
+              if (android) await markModelLoad(modelId, fitted.backend);
+              return await manager.ensureLoaded(modelId, fitted, { signal });
+            } catch (error) {
+              this.noteGpuError(error);
+              throw error;
+            }
+          },
+          selectionState.current,
+          signal,
+        );
+      } finally {
+        if (android) await markModelLoad(null);
+      }
       if (isGpuLoadFallback(selectionState.current, result.selection)) {
         this.gpuFallback = true;
       }
@@ -278,7 +341,28 @@ export class EngineHost {
       this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), this.gpuDiagnostic?.error);
       await manager.unload();
     };
-    const lazy = new LazyInBrowserEngine({ loadRuntime: load, onGpuLost });
+    // Only on the phone: a desktop GPU has not been seen to return garbage, and the check
+    // must never send a working desktop GPU to the CPU over an unusual translation.
+    const onBrokenOutput = async (): Promise<void> => {
+      selectionState.current = cpuAfterBrokenOutput(selectionState.current, runtime);
+      this.gpuFallback = true;
+      // A GPU-experimental model (Qwen3, Gemma 3) breaking on WebGPU says nothing about PLaMo or
+      // Hy-MT2 there: move this load to the CPU without the stored per-version flag.
+      if (!runtime.gpuExperimental) {
+        runtime.gpuOutputBroken = true;
+        await saveGpuOutputBroken(true);
+      }
+      // Short labels the check lets through may already be cached from the same GPU.
+      await cache.clear().catch(() => undefined);
+      await manager.unload();
+    };
+    const lazy = new LazyInBrowserEngine({
+      loadRuntime: load,
+      onGpuLost,
+      ...(android || probe.adreno
+        ? { outputGuard: { isBroken: looksLikeBrokenTranslation, onBroken: onBrokenOutput } }
+        : {}),
+    });
 
     const chromeForCache = chrome.available ? new CachingEngine(chrome, cache, 'chrome') : null;
 
@@ -305,12 +389,37 @@ export class EngineHost {
       },
       clearCache: () => cache.clear(),
       setTier: async (tier: TierPreference) => {
-        const next = selectionForTier(tier, probe);
-        selectionState.current = isAndroidEdgeRuntime() ? applyMobileLimits(next) : next;
+        // Choosing WebGPU again is the way to retry it after broken output, or after a model
+        // crashed in a WebGPU load (the background clears the stored records).
+        if (tier === 'g' && runtime.gpuOutputBroken) {
+          runtime.gpuOutputBroken = false;
+          await saveGpuOutputBroken(false);
+        }
+        if (tier === 'g') {
+          gpuCrashed.clear();
+          runtime.gpuCrashed = false;
+        }
+        // The Adreno profile is saved before the options page asks for the tier again.
+        const latest = await loadEngineSettings();
+        if (latest) runtime.gpuProfile = latest.gpuProfile;
+        tierPreference = tier;
+        selectionState.current = resolveSelection(tier, probe, runtime);
         this.gpuFallback = false;
         this.gpuDiagnostic = mergeGpuDiagnostic(lastGpuDiagnostic(), null);
         lazy.reset();
         await manager.unload();
+      },
+      modelChanged: async (modelId: ModelId) => {
+        runtime.gpuExperimental = isGpuExperimentalModel(modelId);
+        runtime.modelBytes = getModel(modelId).size;
+        runtime.gpuCrashed = gpuCrashed.has(modelId);
+        const latest = await loadEngineSettings();
+        if (latest) {
+          runtime.gpuProfile = latest.gpuProfile;
+          tierPreference = latest.tier;
+        }
+        selectionState.current = resolveSelection(tierPreference, probe, runtime);
+        this.gpuFallback = false;
       },
     };
   }
@@ -441,7 +550,7 @@ export class EngineHost {
         loaded = await services.load(controller.signal);
       }
       try {
-        await warmup(loaded.runtime, 'ja');
+        await warmup(loaded.runtime, 'ja', loaded.id);
       } catch {
         // The short warm-up is optional; translation still runs.
       }
@@ -568,6 +677,7 @@ export class EngineHost {
       if (request.modelId === this.activeModelId) {
         services.lazy.reset();
         this.activeModelId = DEFAULT_MODEL_ID;
+        await services.modelChanged?.(DEFAULT_MODEL_ID);
         const fallback = await services.manager.status(DEFAULT_MODEL_ID);
         this.plamoReady = fallback.state === 'ready' || fallback.state === 'loaded';
       }
@@ -595,6 +705,7 @@ export class EngineHost {
       services.lazy.reset();
       await services.manager.unload();
       this.activeModelId = modelId;
+      await services.modelChanged?.(modelId);
 
       const status = await services.manager.status(modelId);
       this.plamoReady = status.state === 'ready' || status.state === 'loaded';
@@ -724,8 +835,14 @@ export class EngineHost {
       }
 
       const started = performance.now();
+      const quality = buildModelPrompt(modelPromptFormat(loaded.id), {
+        text: QUALITY_PARAGRAPH,
+        tgt: 'ja',
+        form: 'polite',
+      });
       await loaded.runtime.complete({
-        prompt: buildTranslationPrompt({ text: QUALITY_PARAGRAPH, tgt: 'ja', form: 'polite' }),
+        prompt: quality.prompt,
+        stop: quality.stop,
         maxTokens: 512,
         signal: controller.signal,
         onToken: () => undefined,
@@ -851,5 +968,24 @@ export class EngineHost {
     } catch {
       // The other end is gone; pending requests are settled by the disconnect handler.
     }
+  }
+}
+
+/**
+ * Stored engine settings. Chrome's offscreen document has no `chrome.storage`, so there the
+ * background answers instead; an extension page host (Firefox frame, tests) reads storage.
+ */
+async function loadEngineSettings(): Promise<EngineSettingsSnapshot | null> {
+  if (!browser.storage?.local) return requestEngineSettings();
+  try {
+    const settings = await loadSettings();
+    return {
+      tier: settings.tier,
+      gpuProfile: settings.gpuProfile,
+      gpuOutputBroken: await loadGpuOutputBroken(),
+      modelId: settings.modelId,
+    };
+  } catch {
+    return null;
   }
 }

@@ -15,20 +15,21 @@ The backend's synchronize waited for the queue just before every tensor read, an
 waits for the same work. The extra round trip took most of a decode step, so it is gone.
 
 diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
-index 6efff9b..a158519 100644
+index cc7f660..63cde87 100644
 --- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
 +++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
-@@ -1191,7 +1191,7 @@ inline bool ggml_webgpu_can_use_mmvq(const ggml_tensor * src0,
-                                      const ggml_tensor * src1,
+@@ -1226,7 +1226,8 @@ inline bool ggml_webgpu_can_use_mmvq(const ggml_tensor * src0,
+                                      int64_t             n_rows,
                                       bool                supports_dot_product,
                                       const std::string & vendor) {
--    if (src1->ne[1] <= 4) {
-+    if (src1->ne[1] <= 4 || (src0->ne[2] == 1 && src0->ne[3] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1)) {
+-    if (n_rows <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS) {
++    if (n_rows <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS ||
++        (src0->ne[2] == 1 && src0->ne[3] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1)) {
          bool supports_dp4a = vendor == "amd" || vendor == "intel" || vendor == "nvidia";
          if (supports_dp4a && supports_dot_product) {
              switch (src1->type) {
 diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index 15e6c78..6f57a95 100644
+index 75527b1..b658d4b 100644
 --- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 @@ -16,6 +16,7 @@
@@ -86,7 +87,7 @@ index 15e6c78..6f57a95 100644
      void reset() { next_slot = 0; }
  
      void cleanup() {
-@@ -203,6 +224,11 @@ struct webgpu_global_context_struct {
+@@ -202,6 +223,11 @@ struct webgpu_global_context_struct {
      wgpu::Buffer    memset_params_buf;
      webgpu_pipeline memset_pipeline;
  
@@ -95,10 +96,10 @@ index 15e6c78..6f57a95 100644
 +    // a buffer is freed, since a later buffer can reuse the freed handle's address.
 +    std::unordered_map<std::string, wgpu::BindGroup> bind_group_cache;
 +
-     std::string vendor;
- 
-     // TODO: We should rework the CPU profiling time handling to make it more useful. ref: https://github.com/ggml-org/llama.cpp/pull/22050
-@@ -561,6 +587,7 @@ static void ggml_backend_webgpu_submit_commands(webgpu_context &          ctx,
+     // Packed source data and write descriptors for set_tensor_n
+     wgpu::Buffer    set_tensor_n_src_buf;
+     wgpu::Buffer    set_tensor_n_descs_buf;
+@@ -571,6 +597,7 @@ static void ggml_backend_webgpu_submit_commands(webgpu_context &          ctx,
          num_inflight_batches = 0;
      }
  
@@ -106,7 +107,7 @@ index 15e6c78..6f57a95 100644
      ctx->global_ctx->queue.Submit(1, &commands);
      num_inflight_batches++;
  }
-@@ -585,7 +612,6 @@ static webgpu_encoded_op ggml_backend_webgpu_build_multi(webgpu_context &
+@@ -595,7 +622,6 @@ static webgpu_encoded_op ggml_backend_webgpu_build_multi(webgpu_context &
                                                           const std::vector<webgpu_dispatch_desc> & dispatches) {
      webgpu_encoded_op            result = {};
      std::vector<wgpu::BindGroup> bind_groups;
@@ -114,7 +115,7 @@ index 15e6c78..6f57a95 100644
      result.num_kernels = dispatches.size();
  
      for (size_t i = 0; i < dispatches.size(); i++) {
-@@ -598,18 +624,35 @@ static webgpu_encoded_op ggml_backend_webgpu_build_multi(webgpu_context &
+@@ -608,18 +634,35 @@ static webgpu_encoded_op ggml_backend_webgpu_build_multi(webgpu_context &
          entries.push_back(ggml_webgpu_make_bind_group_entry(params_binding_num, ctx->param_arena.buffer, param_offset,
                                                              ctx->param_arena.slot_size));
  
@@ -161,7 +162,7 @@ index 15e6c78..6f57a95 100644
      }
  
  #ifdef GGML_WEBGPU_GPU_PROFILE
-@@ -757,6 +800,7 @@ static void ggml_backend_webgpu_free(ggml_backend_t backend) {
+@@ -785,6 +828,7 @@ static void ggml_backend_webgpu_free(ggml_backend_t backend) {
      std::cout << "ggml_webgpu: gpu/cpu ratio: " << (total_cpu > 0.0 ? total_gpu / total_cpu : 0.0) << "\n";
  #endif
  
@@ -169,7 +170,7 @@ index 15e6c78..6f57a95 100644
      delete ctx;
      delete backend;
  }
-@@ -1627,10 +1671,97 @@ static void ggml_webgpu_quantize_q8_dispatch(webgpu_context &
+@@ -1747,10 +1791,98 @@ static void ggml_webgpu_quantize_q8_dispatch(webgpu_context &
      });
  }
  
@@ -251,8 +252,9 @@ index 15e6c78..6f57a95 100644
 +    // The vector shader takes up to four columns and also loops over batches. A wider output
 +    // runs through it as batches of four columns and one batch for the rest, not through the
 +    // much slower tiled matrix shader. The columns of a batch share one read of the weights.
-+    if (dst->ne[1] > 4 && ggml_webgpu_can_use_mmvq(src0, src1, ctx->global_ctx->capabilities.supports_dot_product,
-+                                                   ctx->global_ctx->vendor)) {
++    if (dst->ne[1] > GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS &&
++        ggml_webgpu_can_use_mmvq(src0, src1, src1->ne[1], ctx->global_ctx->capabilities.supports_dot_product,
++                                 ctx->global_ctx->vendor)) {
 +        std::vector<webgpu_dispatch_desc> dispatches;
 +        ggml_webgpu_quantize_q8_dispatch(ctx, src0, src1, dst, dispatches);
 +        const uint32_t batches = (uint32_t) dst->ne[1] / 4;
@@ -265,9 +267,9 @@ index 15e6c78..6f57a95 100644
 +    }
 +
      // Determine if this is a mat-vec operation
-     bool use_mat_vec = (dst->ne[1] <= 4);
+     bool use_mat_vec = (dst->ne[1] <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS);
  
-@@ -1669,7 +1800,7 @@ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+@@ -1789,7 +1921,7 @@ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
      }
  
      uint32_t offset_src0   = (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src0) / ggml_type_size(src0->type));
@@ -276,7 +278,7 @@ index 15e6c78..6f57a95 100644
      size_t   merged_offset = 0;
      size_t   merged_size   = 0;
      if (src_overlap) {
-@@ -3731,8 +3862,9 @@ static void ggml_backend_webgpu_set_tensor_async(ggml_backend_t backend,
+@@ -4004,8 +4136,9 @@ static void ggml_backend_webgpu_set_tensor_async(ggml_backend_t backend,
  }
  
  static void ggml_backend_webgpu_synchronize(ggml_backend_t backend) {
@@ -288,7 +290,7 @@ index 15e6c78..6f57a95 100644
  }
  
  static ggml_backend_i ggml_backend_webgpu_i = {
-@@ -3761,6 +3893,7 @@ static ggml_backend_i ggml_backend_webgpu_i = {
+@@ -4034,6 +4167,7 @@ static ggml_backend_i ggml_backend_webgpu_i = {
  static void ggml_backend_webgpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_webgpu_buffer_context * ctx = static_cast<ggml_backend_webgpu_buffer_context *>(buffer->context);
      if (ctx != nullptr && ctx->buffer != nullptr) {

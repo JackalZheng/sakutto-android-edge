@@ -1,0 +1,22 @@
+Fix a wasm32 build break in llama.cpp's DeepSeek model code.
+
+std::max over an initializer list mixes int64_t (long long on wasm32) with
+INT64_C(1) (long on wasm32), so libc++ rejects the call: deduced conflicting
+types for the list element type. It compiles on Linux, where both are long.
+Give the template argument explicitly so every element converts to int64_t.
+Needed since the Stage 0 bump to llama.cpp d7d1b632d; upstream code, not one
+of the WebGPU patches.
+
+diff --git a/llama.cpp/src/models/deepseek41.cpp b/llama.cpp/src/models/deepseek41.cpp
+index 96de904..ae4ba29 100644
+--- a/llama.cpp/src/models/deepseek41.cpp
++++ b/llama.cpp/src/models/deepseek41.cpp
+@@ -551,7 +551,7 @@ ggml_tensor * llama_model_deepseek41::graph::build_attention41(
+             const int64_t n_tok = nt/n_stream;
+             GGML_ASSERT(ci.kq_mask->ne[1] == n_tok);
+             const int64_t chunk = fused_idx ? n_tok :
+-                std::max({ (n_tok + 63)/64, (INT64_C(1) << 26)/(n_idx_head*n_comp*n_stream), INT64_C(1) });
++                std::max<int64_t>({ (n_tok + 63)/64, (INT64_C(1) << 26)/(n_idx_head*n_comp*n_stream), INT64_C(1) });
+ 
+             const int32_t cand_src = hparams.dsv41_cand_src;
+             const bool    pick_blk = cand_src == il && cand_pin;              // level one: pick the candidate blocks

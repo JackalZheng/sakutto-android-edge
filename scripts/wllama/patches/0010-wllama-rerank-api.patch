@@ -1,0 +1,20 @@
+Adapt wllama's rerank call to llama.cpp's new format_prompt_rerank signature.
+
+llama.cpp d7d1b632d added query_files/doc_files parameters (multimodal
+rerank inputs) between the document and the mtmd init options. wllama's
+rerank endpoint is text-only, so pass empty file lists. Needed since the
+Stage 0 llama.cpp bump; the return type (server_tokens) is unchanged.
+
+diff --git a/cpp/wllama-context.h b/cpp/wllama-context.h
+index 51682a6..3e9e1c0 100644
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -762,7 +762,7 @@ struct wllama_context
+ 
+     auto rd = std::make_unique<server_response_reader>(ctx_server.get_response_reader());
+ 
+-    auto tokens = format_prompt_rerank(model, vocab, nullptr, query, document, mtmd_helper_init_opt_default());
++    auto tokens = format_prompt_rerank(model, vocab, nullptr, query, document, {}, {}, mtmd_helper_init_opt_default());
+     server_task task = server_task(SERVER_TASK_TYPE_RERANK);
+     task.id = rd->get_new_id();
+     task.index = 0;

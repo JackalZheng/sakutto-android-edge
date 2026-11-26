@@ -9,6 +9,7 @@ import {
   PLAMO_NOTICE_VERSION,
   SETTINGS_SCHEMA_VERSION,
   createDefaultSettings,
+  isAdrenoGpuProfile,
   isTierPreference,
   needsLicenseReconsent,
   normalizeSettings,
@@ -26,12 +27,15 @@ function stored(overrides: Partial<Settings> = {}): Settings {
     glossary: [],
     idleMinutes: 5,
     tier: 'auto',
+    modelId: 'plamo-3-translate-0.8b-q4_k_m',
     pace: 'quality',
     composeIcon: true,
     shortcutsEnabled: defaultShortcutEnabled(),
     composeTargetLanguage: null,
     composeInstantReplace: false,
     composePlacement: 'above',
+    fabEverywhere: true,
+    gpuProfile: 'optimized',
     ...overrides,
   };
 }
@@ -398,5 +402,39 @@ describe('license notice re-consent', () => {
     expect(settings.consent?.acceptedAt).toBe(acceptedAt);
     expect(settings.consent?.ageNoticeShown).toBe(true);
     expect(settings.consent).not.toHaveProperty('guardian');
+  });
+});
+
+describe('Adreno GPU profile', () => {
+  it('defaults to the optimized profile and keeps a valid choice', () => {
+    expect(DEFAULT_SETTINGS.gpuProfile).toBe('optimized');
+    expect(isAdrenoGpuProfile('compat')).toBe(true);
+    expect(isAdrenoGpuProfile('hybrid')).toBe(false);
+    expect(isAdrenoGpuProfile('turbo')).toBe(false);
+  });
+
+  it('accepts the 1.3.0 profiles and remembers a valid model id', () => {
+    for (const profile of ['q4v2', 'r6', 'low-memory', 'r4']) {
+      expect(isAdrenoGpuProfile(profile)).toBe(true);
+      expect(normalizeSettings({ ...DEFAULT_SETTINGS, gpuProfile: profile }, 'en').gpuProfile).toBe(
+        profile,
+      );
+    }
+    expect(DEFAULT_SETTINGS.modelId).toBe('plamo-3-translate-0.8b-q4_k_m');
+    expect(
+      normalizeSettings({ ...DEFAULT_SETTINGS, modelId: 'qwen3-1.7b-q4_k_m' }, 'en').modelId,
+    ).toBe('qwen3-1.7b-q4_k_m');
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, modelId: 'nope' }, 'en').modelId).toBe(
+      'plamo-3-translate-0.8b-q4_k_m',
+    );
+  });
+
+  it('migrates the removed hybrid profile to optimized and keeps compat', () => {
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, gpuProfile: 'hybrid' }, 'en').gpuProfile).toBe(
+      'optimized',
+    );
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, gpuProfile: 'compat' }, 'en').gpuProfile).toBe(
+      'compat',
+    );
   });
 });

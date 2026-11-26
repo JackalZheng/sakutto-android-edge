@@ -16,7 +16,13 @@ export async function ensureSettings(): Promise<Settings> {
   const stored = await browser.storage.local.get(SETTINGS_STORAGE_KEY);
   const value = stored[SETTINGS_STORAGE_KEY];
   const settings = normalizeSettings(value, currentUiLanguage());
-  if (value === undefined) {
+  // 1.3.1 removed the 'hybrid' Adreno profile: rewrite a stored one as the normalized default.
+  const staleGpuProfile =
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { gpuProfile?: unknown }).gpuProfile === 'hybrid' &&
+    settings.gpuProfile === 'optimized';
+  if (value === undefined || staleGpuProfile) {
     await browser.storage.local.set({ [SETTINGS_STORAGE_KEY]: settings });
   }
   return settings;

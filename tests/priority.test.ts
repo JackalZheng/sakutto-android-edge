@@ -118,12 +118,9 @@ describe('translation priority', () => {
   it('prefetches more of the page for PLaMo when the look-ahead is widened', () => {
     // The look-ahead is how much of the page is handed to PLaMo before it is on screen.
     // It used to decide how much Chrome drafted; now it is pure model prefetch.
-    expect(lookaheadScreens('g', 'quality')).toBe(2);
-    expect(lookaheadScreens('c8', 'quality')).toBe(1);
-    expect(lookaheadScreens('c4', 'quality')).toBe(0.5);
-    expect(lookaheadScreens('c1', 'quality')).toBe(0.5);
-    expect(lookaheadScreens('g', 'fast')).toBeGreaterThan(lookaheadScreens('g', 'quality'));
-    expect(lookaheadScreens('c8', 'fast')).toBeGreaterThan(lookaheadScreens('c8', 'quality'));
-    expect(lookaheadScreens(null, 'fast')).toBeGreaterThan(lookaheadScreens(null, 'quality'));
+    // 1.3.0: the same 2 screens on every backend (the GPU tier only had it before).
+    expect(lookaheadScreens('quality')).toBe(2);
+    expect(lookaheadScreens()).toBe(2);
+    expect(lookaheadScreens('fast')).toBe(3);
   });
 });

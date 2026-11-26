@@ -9,19 +9,44 @@ import {
   firefoxGeckoSettings,
 } from './src/shared/manifest';
 
+// Every entrypoint except the debug-only GPU harness.
+const RELEASE_ENTRYPOINTS = [
+  'background',
+  'content',
+  'grant',
+  'offscreen',
+  'onboarding',
+  'options',
+  'popup',
+  'sample',
+  'typed',
+];
+
 const fixtureHostPermissions =
   process.env.SAKUTTO_FAKE_ENGINE === '1' || process.env.SAKUTTO_E2E_REAL === '1'
     ? ['http://127.0.0.1/*', 'http://localhost/*']
     : null;
 
+/**
+ * SAKUTTO_DEBUG_BUILD=1 (`pnpm build:debug`, `pnpm zip:debug`): include the GPU harness page
+ * (op diagnostics, perf sweep, model switcher, debug profiles). Release builds leave it out;
+ * the e2e builds keep it for the harness tests.
+ */
+const debugBuild =
+  process.env.SAKUTTO_DEBUG_BUILD === '1' ||
+  process.env.SAKUTTO_FAKE_ENGINE === '1' ||
+  process.env.SAKUTTO_E2E_REAL === '1';
+
 export default defineConfig({
   srcDir: 'src',
+  ...(debugBuild ? {} : { filterEntrypoints: RELEASE_ENTRYPOINTS }),
   modules: ['@wxt-dev/module-svelte'],
   imports: false,
   manifestVersion: 3,
   vite: () => ({
     define: {
       __SAKUTTO_FAKE_ENGINE__: JSON.stringify(process.env.SAKUTTO_FAKE_ENGINE === '1'),
+      __SAKUTTO_DEBUG_BUILD__: JSON.stringify(debugBuild),
     },
   }),
   manifest: ({ browser }) => {

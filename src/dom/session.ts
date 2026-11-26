@@ -40,8 +40,8 @@ import {
   bandForRect,
   contentKind,
   lookaheadScreens,
-  GPU_TRANSLATION_CONCURRENCY,
-  TRANSLATION_CONCURRENCY,
+  pageRequestsInFlight,
+  PREEMPT_PRIORITY_GAP,
   translationPriority,
   type ContentKind,
   type VisibilityBand,
@@ -228,6 +228,8 @@ export class PageSession {
   private readonly keyWindows = new Set<Window>();
   private grantPending = false;
   private eagerOnce = true;
+  /** The engine's parallel slots (`EngineStatus.parallel`); sizes the requests kept in flight. */
+  private engineSlots: number | null = null;
   private lastRateAt = 0;
   private tokenCountAt = 0;
   private throughputSamples: ThroughputSample[] = [];
@@ -470,9 +472,7 @@ export class PageSession {
     const previous = this.prefs;
     const tier = next.tier ?? previous.tier;
     this.prefs = { ...next, tier };
-    if (
-      lookaheadScreens(previous.tier, previous.pace) !== lookaheadScreens(tier, this.prefs.pace)
-    ) {
+    if (lookaheadScreens(previous.pace) !== lookaheadScreens(this.prefs.pace)) {
       this.bindVisibility();
     }
     if (next.display !== previous.display) this.repaintAll();
@@ -491,6 +491,18 @@ export class PageSession {
 
   setTier(tier: 'g' | 'c8' | 'c4' | 'c1' | null): void {
     this.setPreferences({ ...this.prefs, tier });
+  }
+
+  /** The engine's slot count: one slot keeps 3 requests in flight, several keep 32. */
+  setEngineSlots(parallel: number | null): void {
+    if (parallel === this.engineSlots) return;
+    this.engineSlots = parallel;
+    if (this.active) this.pump();
+  }
+
+  /** Requests kept in flight now (`pageRequestsInFlight`); exposed for tests. */
+  get requestsInFlightLimit(): number {
+    return pageRequestsInFlight(this.engineSlots);
   }
 
   state(): PageViewState {
@@ -1104,8 +1116,11 @@ export class PageSession {
 
     this.startQueuedSelection();
 
-    const concurrency =
-      this.prefs.tier === 'g' ? GPU_TRANSLATION_CONCURRENCY : TRANSLATION_CONCURRENCY;
+    // 1.3.0: sized by the engine's slots, not the tier. A one-slot engine (every phone backend,
+    // the CPU) keeps 3 in flight; the GPU tier used to keep 32 there, which only queued
+    // prefetched blocks ahead of the ones scrolling into view.
+    const concurrency = pageRequestsInFlight(this.engineSlots);
+    if (this.running >= concurrency) this.preemptForVisible();
     while (this.running < concurrency && this.queue.size > 0) {
       const next = this.queue.peek();
       if (!next) break;
@@ -1148,6 +1163,32 @@ export class PageSession {
       this.releaseBatch(entry);
       this.pump();
     });
+  }
+
+  /**
+   * Every request in flight is taken and a visible block is next in the queue: hand back the
+   * prefetched request furthest behind it (a band or more) that has not streamed anything yet,
+   * so the visible block does not wait for prefetched text. Only when at least two requests are
+   * still waiting: with one slot, one of them may be prefilling, and the lowest-priority one is
+   * the most likely to be still queued in the engine (it runs requests by priority). The
+   * request goes back into the page queue with its own priority.
+   */
+  private preemptForVisible(): void {
+    const head = this.queue.peek();
+    if (!head || head.value.role !== 'page' || head.value.band !== 'visible') return;
+    const waiting = [...this.inflightBatches].filter(
+      (batch) =>
+        !batch.settled && !batch.streaming && batch.items.every((item) => item.role === 'page'),
+    );
+    if (waiting.length < 2) return;
+    let victim: InflightBatch | null = null;
+    for (const batch of waiting) {
+      if (batch.priority < head.priority + PREEMPT_PRIORITY_GAP) continue;
+      if (!victim || batch.priority > victim.priority) victim = batch;
+    }
+    if (!victim) return;
+    const chosen = victim;
+    this.abortBatches((batch) => batch === chosen, true);
   }
 
   private takeBatch(): Live[] {
@@ -1381,6 +1422,13 @@ export class PageSession {
     }
     const verdict = assessTranslation(output, placeholderIds(item.model));
     if (verdict.ok) return verdict.text;
+    // A model that dropped every inline tag (the chat models never keep them) already gave
+    // the plain translation a flattened retry would ask for: paint it as plain text instead
+    // of translating the block again. Only a mangled tag is worth the retry.
+    if (!/<\/?i\d/.test(output) && verdict.plain.length > 0) {
+      item.flatten = true;
+      return verdict.plain;
+    }
     if (item.attempts < 1) {
       item.attempts += 1;
       item.flatten = true;
@@ -2110,7 +2158,7 @@ export class PageSession {
 
     const view = this.doc.defaultView;
     const height = this.doc.documentElement.clientHeight || view?.innerHeight || 800;
-    const screens = lookaheadScreens(this.prefs.tier, this.prefs.pace);
+    const screens = lookaheadScreens(this.prefs.pace);
     const ahead = Math.round(height * screens);
     const behind = Math.round(ahead * 0.25);
     const top = this.direction === 'down' ? behind : ahead;

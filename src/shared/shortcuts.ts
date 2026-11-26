@@ -1,5 +1,10 @@
 import { extensionBrowser, type ExtensionBrowser } from './browser.ts';
-import type { PageCommandName, ShortcutAssigned, ShortcutSnapshot } from './messages';
+import type {
+  PageCommandName,
+  PageCommandSource,
+  ShortcutAssigned,
+  ShortcutSnapshot,
+} from './messages';
 import { isRecord } from './object.ts';
 
 export type { ShortcutAssigned, ShortcutSnapshot };
@@ -440,4 +445,19 @@ export function displayShortcut(shortcut: string): string {
   flush();
 
   return parts.join('+');
+}
+
+/**
+ * Whether a page command message may run. The shortcut gate (Sakutto's shortcut switch, or a
+ * key the user cleared in the browser) only applies to a browser keyboard command. The popup's
+ * "Translate this page" button, the context menu and the in-page UI always run: the Edge
+ * package once shipped without `suggested_key`, the stored "assigned" flag then turned the
+ * empty binding into a user clear, and the popup button silently did nothing.
+ */
+export function pageCommandAllowed(
+  source: PageCommandSource | undefined,
+  shortcutEnabled: () => boolean,
+): boolean {
+  if (source !== 'shortcut') return true;
+  return shortcutEnabled();
 }

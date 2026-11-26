@@ -23,6 +23,35 @@ export interface EngineCapabilities {
   hardwareConcurrency: number;
   /** The GPU can run a wide batch through ggml's fast integer shaders. */
   gpuFastBatches?: boolean;
+  /** The WebGPU adapter is a Qualcomm Adreno. */
+  gpuAdreno?: boolean;
+  /** Adapter vendor / architecture / description, for the settings page. */
+  gpuName?: string | null;
+}
+
+/** Qualcomm vendor or an `adreno-*` architecture (Edge for Android, Windows on Snapdragon). */
+export function isAdrenoAdapter(
+  vendor: string | null | undefined,
+  architecture: string | null | undefined,
+): boolean {
+  const v = (vendor ?? '').toLowerCase();
+  const a = (architecture ?? '').toLowerCase();
+  return v === 'qualcomm' || v.includes('qualcomm') || a.startsWith('adreno');
+}
+
+/** "qualcomm adreno-7xx (Adreno (TM) 740)" from the adapter info; null without an adapter. */
+export function adapterDisplayName(diagnostic: {
+  vendor: string | null;
+  architecture: string | null;
+  device?: string | null;
+  description: string | null;
+}): string | null {
+  const head = [diagnostic.vendor, diagnostic.architecture]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join(' ');
+  const detail = diagnostic.description || diagnostic.device || '';
+  const name = detail && detail !== head ? (head ? `${head} (${detail})` : detail) : head;
+  return name.length > 0 ? name : null;
 }
 
 const WEBGPU_STATUSES: ReadonlySet<string> = new Set<WebGpuStatus>([
@@ -47,7 +76,9 @@ export function isEngineCapabilities(value: unknown): value is EngineCapabilitie
     typeof value.webgpu === 'string' &&
     WEBGPU_STATUSES.has(value.webgpu) &&
     typeof value.hardwareConcurrency === 'number' &&
-    (value.gpuFastBatches === undefined || typeof value.gpuFastBatches === 'boolean')
+    (value.gpuFastBatches === undefined || typeof value.gpuFastBatches === 'boolean') &&
+    (value.gpuAdreno === undefined || typeof value.gpuAdreno === 'boolean') &&
+    (value.gpuName === undefined || value.gpuName === null || typeof value.gpuName === 'string')
   );
 }
 
@@ -270,6 +301,15 @@ export function probeCapabilities(): Promise<EngineCapabilities> {
         gpuFastBatches: await probeWebGpuAdapter().then(
           (info) => info.fastBatches,
           () => false,
+        ),
+        gpuAdreno: await probeWebGpuAdapter().then(
+          (info) =>
+            info.present && isAdrenoAdapter(info.diagnostic.vendor, info.diagnostic.architecture),
+          () => false,
+        ),
+        gpuName: await probeWebGpuAdapter().then(
+          (info) => (info.present ? adapterDisplayName(info.diagnostic) : null),
+          () => null,
         ),
       }))
       .catch((error: unknown) => {

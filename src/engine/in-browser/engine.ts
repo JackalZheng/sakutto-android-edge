@@ -1,10 +1,7 @@
 import { isAbortError, isEngineError, EngineError, toEngineError } from '../errors';
-import {
-  buildTranslationPrompt,
-  cleanModelOutput,
-  sanitizeGlossary,
-  type PromptInput,
-} from '../prompt/pfml3';
+import type { PromptFormat } from '../model/catalog';
+import { sanitizeGlossary } from '../prompt/pfml3';
+import { buildModelPrompt, cleanOutputFor, type ModelPromptInput } from '../prompt/model-prompt';
 import { ChunkStream } from '../queue/chunk-stream';
 import { JobScheduler, type ScheduledHandle } from '../queue/scheduler';
 import { DEFAULT_PLAN_CONFIG, planWork, type PlanConfig, type WorkItem } from '../text/plan';
@@ -29,6 +26,8 @@ export interface InBrowserEngineOptions {
   config?: Partial<PlanConfig>;
   contextTokens?: number;
   scheduler?: JobScheduler;
+  /** The loaded model's prompt format (default PLaMo 3's PFML3). */
+  format?: PromptFormat;
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -81,10 +80,19 @@ export class InBrowserEngine implements IdentifiedEngine {
   private readonly config: PlanConfig;
   private readonly contextTokens: number;
   private readonly scheduler: JobScheduler;
+  private readonly format: PromptFormat;
 
   constructor(runtime: LlamaRuntime, options: InBrowserEngineOptions = {}) {
     this.runtime = runtime;
-    this.config = { ...DEFAULT_PLAN_CONFIG, ...options.config };
+    this.format = options.format ?? 'plamo3';
+    this.config = {
+      ...DEFAULT_PLAN_CONFIG,
+      ...options.config,
+      // Only PLaMo keeps the line count of a packed request. Qwen3 / Gemma 3 / Hy-MT2 merge,
+      // drop or answer the lines (Qwen3 0.6B even switched language), and every miss is
+      // translated again line by line: each short block was translated two or three times.
+      ...(packsLines(this.format) ? {} : { maxBatchTokens: 0 }),
+    };
     this.contextTokens = options.contextTokens ?? CONTEXT_TOKENS;
     this.scheduler = options.scheduler ?? new JobScheduler(runtime.parallel, runtime.parallel > 1);
   }
@@ -177,7 +185,7 @@ export class InBrowserEngine implements IdentifiedEngine {
       const output = await this.completeRecover(piece, options, signal, (delta) =>
         assembler.delta(index, delta),
       );
-      const cleaned = cleanModelOutput(output);
+      const cleaned = this.clean(output);
       assembler.finish(index, cleaned.length > 0 ? cleaned : piece);
     });
   }
@@ -209,7 +217,7 @@ export class InBrowserEngine implements IdentifiedEngine {
         signal,
         (delta) => stream.push({ id: segment.id, textDelta: delta, engine: this.kind }),
       );
-      stream.push({ id: segment.id, final: cleanModelOutput(output), engine: this.kind });
+      stream.push({ id: segment.id, final: this.clean(output), engine: this.kind });
       return;
     }
 
@@ -239,7 +247,7 @@ export class InBrowserEngine implements IdentifiedEngine {
       const output = await this.completeRecover(piece, options, signal, (delta) =>
         stream.push({ id: segment.id, textDelta: delta, engine: this.kind }),
       );
-      const cleaned = cleanModelOutput(output);
+      const cleaned = this.clean(output);
       translated.push(cleaned.length > 0 ? cleaned : piece);
     }
 
@@ -262,7 +270,7 @@ export class InBrowserEngine implements IdentifiedEngine {
     let opened = false;
 
     const takeLine = (): void => {
-      const line = cleanModelOutput(pending);
+      const line = this.clean(pending);
       pending = '';
       opened = false;
       if (line.length === 0 || shown >= segments.length) return;
@@ -293,9 +301,8 @@ export class InBrowserEngine implements IdentifiedEngine {
       return;
     }
 
-    const cleaned = cleanModelOutput(output);
-    const lines =
-      cleaned.length === 0 ? [] : cleaned.split('\n').map((line) => cleanModelOutput(line));
+    const cleaned = this.clean(output);
+    const lines = cleaned.length === 0 ? [] : cleaned.split('\n').map((line) => this.clean(line));
 
     if (lines.length !== segments.length || lines.some((line) => line.length === 0)) {
       // A short count does not say which line went missing. When the model merges two
@@ -340,7 +347,7 @@ export class InBrowserEngine implements IdentifiedEngine {
         });
         restart = false;
       });
-      const cleaned = cleanModelOutput(output);
+      const cleaned = this.clean(output);
       // An empty retry sends no delta to restart with, and an empty final paints nothing, so
       // a line that was shown would keep the misaligned text. The source replaces it instead.
       const final = cleaned.length === 0 && index < alreadyShown ? segment.text : cleaned;
@@ -378,7 +385,7 @@ export class InBrowserEngine implements IdentifiedEngine {
         }
         try {
           const output = await this.complete(piece, options, signal, onDelta);
-          const cleaned = cleanModelOutput(output);
+          const cleaned = this.clean(output);
           parts.push(cleaned.length > 0 ? cleaned : piece);
         } catch (inner) {
           if (signal.aborted || isAbortError(inner) || !isOversized(inner)) throw inner;
@@ -388,6 +395,10 @@ export class InBrowserEngine implements IdentifiedEngine {
       }
       return parts.join(sentenceSeparator(options.tgt));
     }
+  }
+
+  private clean(value: string): string {
+    return cleanOutputFor(this.format, value);
   }
 
   private async complete(
@@ -412,18 +423,24 @@ export class InBrowserEngine implements IdentifiedEngine {
       );
     }
 
-    const glossary = sanitizeGlossary(options.glossary ?? []).filter((entry) =>
-      text.includes(entry.source),
+    // The page's inline-markup tags (<i1>…</i1>) are a PLaMo convention; a chat model drops
+    // or mangles them, and the page then translated the block again as plain text. It gets
+    // the plain text, and the page paints its plain answer (session acceptTranslation).
+    const modelText = keepsInlineTags(this.format) ? text : stripInlineTags(text);
+    const glossary = sanitizeGlossary(options.glossary ?? []).filter(
+      (entry) =>
+        modelText.includes(entry.source) &&
+        (keepsInlineTags(this.format) || !INLINE_TAG_ONLY.test(entry.source)),
     );
-    const promptInput: PromptInput = {
-      text,
+    const promptInput: ModelPromptInput = {
+      text: modelText,
       tgt,
       ...(src !== null ? { src } : {}),
       ...(tgt === 'ja' ? { form: options.form } : {}),
       ...(glossary.length > 0 ? { glossary } : {}),
       ...(options.context ? { context: options.context } : {}),
     };
-    const prompt = buildTranslationPrompt(promptInput);
+    const { prompt, stop } = buildModelPrompt(this.format, promptInput);
     const available = this.contextTokens - estimateTokens(prompt) - 8;
 
     if (available < 16) {
@@ -433,6 +450,7 @@ export class InBrowserEngine implements IdentifiedEngine {
     let output = '';
     await this.runtime.complete({
       prompt,
+      stop,
       maxTokens: Math.min(completionTokenBudget(text), available),
       signal,
       onToken: (delta) => {
@@ -443,6 +461,26 @@ export class InBrowserEngine implements IdentifiedEngine {
 
     return output;
   }
+}
+
+const INLINE_TAG = /<\/?i\d+>/g;
+const INLINE_TAG_ONLY = /^<\/?i\d+>$/;
+
+/** Whether a prompt format is trusted with newline-packed short blocks. */
+export function packsLines(format: PromptFormat): boolean {
+  return format === 'plamo3';
+}
+
+/** Whether a prompt format keeps the page's inline-markup placeholders. */
+export function keepsInlineTags(format: PromptFormat): boolean {
+  return format === 'plamo3';
+}
+
+export function stripInlineTags(text: string): string {
+  return text
+    .replace(INLINE_TAG, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function isOversized(error: unknown): boolean {

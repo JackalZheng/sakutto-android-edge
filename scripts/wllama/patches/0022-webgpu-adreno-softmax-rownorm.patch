@@ -1,0 +1,244 @@
+ggml-webgpu: Adreno SOFT_MAX / row-reduction / mat-vec defaults from the phone perf sweep.
+
+POCO F5 Pro (Adreno 740), PLaMo 3 0.8B, round-3 per-op run: SOFT_MAX took 38% of decode and
+75% of prompt time, the fused RMS_NORM+MUL 13% of decode. Both are one workgroup per row with
+maxComputeInvocationsPerWorkgroup (1024 on Adreno) threads, for rows of 128-2048 values, and
+SOFT_MAX also keeps a dynamically indexed private array (scratch memory on Adreno).
+
+On Adreno:
+- SOFT_MAX uses a variant without the private cache (NO_CACHE): the same three passes, values
+  recomputed from src, shared-memory tree reductions in uniform control flow, no subgroups;
+- SOFT_MAX and the fused RMS_NORM+MUL use 256-wide workgroups;
+- the workgroup-reduction mat-vec uses 64-wide workgroups (phone: 2.92 -> 3.47 tok/s).
+The fused RMS_NORM+MUL squares with v * v instead of pow(v, 2.0) (pow is undefined for
+negative bases in WGSL) on every GPU. Other GPUs keep their shaders and sizes.
+
+Tokens (after the profile name): rwg64|rwg128|rwg256|rwg512|rwg1024 row-reduction width,
+smnc / smup new / upstream SOFT_MAX, and mvwg256 for the previous mat-vec width. Per-op timing
+(perfops) also reports the SOFT_MAX row length and row count.
+
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -4071,6 +4071,11 @@
+                 if (num_encoded_ops > 1) {
+                     key += "+fused";
+                 }
++                if (node->op == GGML_OP_SOFT_MAX) {
++                    // Row length (the attention KV span) and row count.
++                    key += ":kv" + std::to_string(node->ne[0]) + "x" +
++                           std::to_string(node->ne[1] * node->ne[2] * node->ne[3]);
++                }
+                 if (ctx->active_compute_pass) {
+                     ctx->active_compute_pass.End();
+                 }
+@@ -5491,6 +5496,40 @@
+     if (is_adreno && debug_profile != 11) {
+         ctx->webgpu_global_ctx->command_submit_batch_size = WEBGPU_ADRENO_COMMAND_SUBMIT_BATCH_SIZE;
+     }
++    // Sakutto patch 0022: Adreno defaults from the phone perf sweep (POCO F5 Pro, PLaMo 3):
++    // - mat-vec workgroup 64 instead of 256 (decode 2.92 -> 3.47 tok/s, output unchanged);
++    // - SOFT_MAX and fused RMS_NORM+MUL capped at 256 invocations per row workgroup instead of
++    //   maxComputeInvocationsPerWorkgroup (1024): one workgroup per row, rows of 128-2048 values,
++    //   so most of a 1024-wide workgroup idled through ten barrier steps;
++    // - SOFT_MAX without the private per-thread cache (a dynamically indexed private array).
++    // SOFT_MAX was 38% of decode and 75% of prompt time in the per-op run. Tokens mvwg256,
++    // rwg1024 and smup restore the previous behaviour.
++    ggml_webgpu_sakutto_mv_wg_size        = 0;
++    ggml_webgpu_sakutto_mv_outputs_per_wg = 0;
++    ggml_webgpu_sakutto_row_wg_size       = 0;
++    ggml_webgpu_sakutto_softmax_nocache   = false;
++    if (adreno_safe) {
++        ggml_webgpu_sakutto_mv_wg_size = 64;
++    }
++    if (is_adreno) {
++        ggml_webgpu_sakutto_row_wg_size     = 256;
++        ggml_webgpu_sakutto_softmax_nocache = true;
++    }
++    for (const uint32_t n : { 64u, 128u, 256u, 512u, 1024u }) {
++        const std::string token = "rwg" + std::to_string(n);
++        if (ggml_webgpu_debug_has_token(token.c_str())) {
++            ggml_webgpu_sakutto_row_wg_size = n;
++            GGML_LOG_INFO("ggml_webgpu: tuning: row-reduction workgroup size %u\n", n);
++        }
++    }
++    if (ggml_webgpu_debug_has_token("smnc")) {
++        ggml_webgpu_sakutto_softmax_nocache = true;
++        GGML_LOG_INFO("ggml_webgpu: tuning: soft_max without the private cache\n");
++    }
++    if (ggml_webgpu_debug_has_token("smup")) {
++        ggml_webgpu_sakutto_softmax_nocache = false;
++        GGML_LOG_INFO("ggml_webgpu: tuning: upstream soft_max shader\n");
++    }
+     // Sakutto patch 0021: tuning tokens (debug harness perf sweep), all off by default.
+     for (const uint32_t n : { 8u, 16u, 32u, 64u }) {
+         const std::string token = "sub" + std::to_string(n);
+@@ -5521,6 +5560,9 @@
+                       ctx->webgpu_global_ctx->sakutto_perf_ops ? " (per-op submit+wait timing)" : "");
+     }
+     if (is_adreno) {
++        GGML_LOG_INFO("ggml_webgpu: adreno: soft_max %s, row reductions %u wide\n",
++                      ggml_webgpu_sakutto_softmax_nocache ? "without private cache" : "upstream",
++                      ggml_webgpu_sakutto_row_wg_size);
+         GGML_LOG_INFO("ggml_webgpu: adreno: %u kernels per queue submit%s\n",
+                       ctx->webgpu_global_ctx->command_submit_batch_size,
+                       debug_profile == 11 ? " (debug profile adreno-submit-64)" : "");
+@@ -5530,7 +5572,8 @@
+                       GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS,
+                       debug_profile == 8 ? " (debug profile no-matvec)" : " (debug profile adreno-sg-tiled)");
+     } else if (adreno_safe) {
+-        GGML_LOG_INFO("ggml_webgpu: adreno: mat-vec on, workgroup reduction\n");
++        GGML_LOG_INFO("ggml_webgpu: adreno: mat-vec on, workgroup reduction (workgroup %u)\n",
++                      ggml_webgpu_sakutto_mv_wg_size != 0 ? ggml_webgpu_sakutto_mv_wg_size : WEBGPU_MUL_MAT_VEC_WG_SIZE);
+     }
+ 
+ #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -56,6 +56,15 @@
+ // defaults above. Set once per device from the debug profile tokens mvwg*/mvo*.
+ inline uint32_t ggml_webgpu_sakutto_mv_wg_size        = 0;
+ inline uint32_t ggml_webgpu_sakutto_mv_outputs_per_wg = 0;
++// Sakutto patch 0022: workgroup size of the one-workgroup-per-row reductions SOFT_MAX and the fused
++// RMS_NORM+MUL (0 = maxComputeInvocationsPerWorkgroup, as upstream; 1024 on Adreno 7xx), and
++// whether SOFT_MAX uses the variant without the private per-thread cache.
++inline uint32_t ggml_webgpu_sakutto_row_wg_size     = 0;
++inline bool     ggml_webgpu_sakutto_softmax_nocache = false;
++
++inline uint32_t ggml_webgpu_sakutto_row_reduce_wg(uint32_t max_wg_size) {
++    return ggml_webgpu_sakutto_row_wg_size != 0 ? std::min(max_wg_size, ggml_webgpu_sakutto_row_wg_size) : max_wg_size;
++}
+ 
+ #define WEBGPU_MUL_MAT_VEC_FLOAT_OUTPUTS_PER_WG    4
+ #define WEBGPU_MUL_MAT_VEC_LEGACY_Q_OUTPUTS_PER_WG 4
+@@ -2922,11 +2931,15 @@
+             variant += "_src_overlap";
+         }
+ 
+-        defines.push_back(std::string("WG_SIZE=") + std::to_string(context.max_wg_size));
++        const uint32_t wg_size = ggml_webgpu_sakutto_row_reduce_wg(context.max_wg_size);
++        defines.push_back(std::string("WG_SIZE=") + std::to_string(wg_size));
++        if (wg_size != context.max_wg_size) {
++            variant += "_wg" + std::to_string(wg_size);
++        }
+ 
+         auto processed                  = preprocessor.preprocess(wgsl_rms_norm_mul, defines);
+         auto pipeline_decisions         = std::make_shared<ggml_webgpu_rms_norm_mul_shader_decisions>();
+-        pipeline_decisions->wg_size     = context.max_wg_size;
++        pipeline_decisions->wg_size     = wg_size;
+         pipeline_decisions->inplace     = key.inplace;
+         pipeline_decisions->overlap     = key.overlap;
+         pipeline_decisions->src_overlap = key.src_overlap;
+@@ -3525,11 +3538,19 @@
+             variant += "_inplace";
+         }
+ 
+-        defines.push_back(std::string("WG_SIZE=") + std::to_string(context.max_wg_size));
++        const uint32_t wg_size = ggml_webgpu_sakutto_row_reduce_wg(context.max_wg_size);
++        defines.push_back(std::string("WG_SIZE=") + std::to_string(wg_size));
++        if (wg_size != context.max_wg_size) {
++            variant += "_wg" + std::to_string(wg_size);
++        }
++        if (ggml_webgpu_sakutto_softmax_nocache) {
++            defines.push_back("NO_CACHE");
++            variant += "_nocache";
++        }
+ 
+         auto processed           = preprocessor.preprocess(wgsl_soft_max, defines);
+         auto decisions           = std::make_shared<ggml_webgpu_generic_shader_decisions>();
+-        decisions->wg_size       = context.max_wg_size;
++        decisions->wg_size       = wg_size;
+         decisions->inplace       = key.inplace;
+         webgpu_pipeline pipeline = ggml_webgpu_create_pipeline(device, processed, variant);
+         pipeline.context         = decisions;
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/soft_max.wgsl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/soft_max.wgsl
+@@ -119,9 +119,67 @@
+ }
+ #endif
+ 
+-const CACHE_SIZE: u32 = 16;
+ var<workgroup> scratch: array<f32, WG_SIZE>;
+ 
++#ifdef NO_CACHE
++// Sakutto patch 0022: the same three passes without the per-thread private cache. That cache is a
++// dynamically indexed private array (spilled to scratch memory on Adreno) and only ever held the
++// first 16 columns. The value is recomputed from src instead; exp values go through dst.
++// Reductions are shared-memory trees in uniform control flow (no subgroup operations).
++@compute @workgroup_size(WG_SIZE)
++fn main(@builtin(workgroup_id) wid: vec3<u32>,
++        @builtin(num_workgroups) num_wg: vec3<u32>,
++        @builtin(local_invocation_id) lid: vec3<u32>) {
++
++    var i = wid.x + wid.y * num_wg.x;
++    let i3 = i / (params.ne2 * params.ne1);
++    i = i % (params.ne2 * params.ne1);
++    let i2 = i / params.ne1;
++    let i1 = i % params.ne1;
++    let i_src0_row = params.offset_src0 + i3 * params.stride_src03 + i2 * params.stride_src02 + i1 * params.stride_src01;
++    let i_src1_row = params.offset_src1 + (i3 % params.ne13) * params.stride_src13 + (i2 % params.ne12) * params.stride_src12 + i1 * params.stride_src11;
++    let i_dst_row = params.offset_dst + i3 * params.stride_dst3 + i2 * params.stride_dst2 + i1 * params.stride_dst1;
++
++    let head = f32(i2);
++    let slope = select(1, select(pow(params.m1, 2 * (head - params.n_head_log2) + 1), pow(params.m0, head + 1), head < params.n_head_log2), params.max_bias > 0);
++
++    var max_val = lower_max_bound(i2);
++    for (var col = lid.x; col < params.ne0; col += WG_SIZE) {
++        max_val = max(max_val, src[i_src0_row + col] * params.scale + slope * mask_val(i_src1_row + col));
++    }
++    scratch[lid.x] = max_val;
++    workgroupBarrier();
++    for (var offset: u32 = WG_SIZE / 2; offset > 0; offset = offset / 2) {
++        if (lid.x < offset) {
++            scratch[lid.x] = max(scratch[lid.x], scratch[lid.x + offset]);
++        }
++        workgroupBarrier();
++    }
++    let row_max = scratch[0];
++    workgroupBarrier();
++
++    var sum = 0.0f;
++    for (var col = lid.x; col < params.ne0; col += WG_SIZE) {
++        let ex = exp(src[i_src0_row + col] * params.scale + slope * mask_val(i_src1_row + col) - row_max);
++        sum += ex;
++        update(i_dst_row + col, ex);
++    }
++    scratch[lid.x] = sum;
++    workgroupBarrier();
++    for (var offset: u32 = WG_SIZE / 2; offset > 0; offset = offset / 2) {
++        if (lid.x < offset) {
++            scratch[lid.x] += scratch[lid.x + offset];
++        }
++        workgroupBarrier();
++    }
++    let sum_recip = 1.0 / add_sinks(scratch[0], i2, row_max);
++    for (var col = lid.x; col < params.ne0; col += WG_SIZE) {
++        update(i_dst_row + col, inter_value(i_dst_row + col) * sum_recip);
++    }
++}
++#else
++const CACHE_SIZE: u32 = 16;
++
+ @compute @workgroup_size(WG_SIZE)
+ fn main(@builtin(workgroup_id) wid: vec3<u32>,
+         @builtin(num_workgroups) num_wg: vec3<u32>,
+@@ -209,3 +267,4 @@
+         col += WG_SIZE;
+     }
+ }
++#endif
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/rms_norm_mul.wgsl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/rms_norm_mul.wgsl
+@@ -122,9 +122,11 @@
+             break;
+         }
+ #ifdef SRC_OVERLAP
+-        sum += pow(merged_src[i_rn_src_row + col], 2.0);
++        let v = merged_src[i_rn_src_row + col];
++        sum += v * v;
+ #else
+-        sum += pow(rn_src[i_rn_src_row + col], 2.0);
++        let v = rn_src[i_rn_src_row + col];
++        sum += v * v;
+ #endif
+         col += WG_SIZE;
+     }

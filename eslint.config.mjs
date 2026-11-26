@@ -38,6 +38,9 @@ export default tseslint.config(
       globals: {
         ...globals.browser,
         ...globals.webextensions,
+        // Build-time constants from `wxt.config.ts` (`vite.define`).
+        __SAKUTTO_DEBUG_BUILD__: 'readonly',
+        __SAKUTTO_FAKE_ENGINE__: 'readonly',
       },
     },
   },

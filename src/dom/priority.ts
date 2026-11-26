@@ -124,24 +124,45 @@ export function translationPriority(
 }
 
 /**
- * How many viewport heights ahead the page asks PLaMo to translate. This is prefetch for
+ * How many viewport heights ahead the page asks the model to translate. This is prefetch for
  * the model itself: text that is about to scroll into view is queued before it is visible,
  * so scrolling finds a finished translation instead of waiting for a cold request.
+ *
+ * 1.3.0: the same on every backend. Until then the GPU tier looked 2 screens ahead and the CPU
+ * tiers 1 (c8) or 0.5 (c4, c1); with one slot on both (phone harness, POCO F5 Pro) the GPU's
+ * faster-looking titles were mostly this prefetch, so the CPU gets it too. Visible text still
+ * runs first (`translationPriority`, and `PageSession` hands an engine slot over to it).
  */
-export function lookaheadScreens(
-  tier: 'g' | 'c8' | 'c4' | 'c1' | null,
-  pace: 'fast' | 'quality' = 'quality',
-): number {
-  const base = tier === 'g' ? 2 : tier === 'c4' || tier === 'c1' ? 0.5 : 1;
-  return pace === 'fast' ? base + 1 : base;
+export const LOOKAHEAD_SCREENS = 2;
+
+export function lookaheadScreens(pace: 'fast' | 'quality' = 'quality'): number {
+  return pace === 'fast' ? LOOKAHEAD_SCREENS + 1 : LOOKAHEAD_SCREENS;
 }
 
 /**
- * Page requests kept in flight on the CPU tiers: one for the model's single slot, plus one waiting in the
- * engine's own queue. Without the extra request the model sat idle for the whole round trip
- * between one request finishing and the page sending the next. The waiting request has not
- * reached the model, so it can still be cancelled or overtaken by a selection.
+ * Page requests kept in flight on a one-slot engine (every phone backend and the CPU since
+ * 1.3.0): one for the slot, plus two waiting in the engine's own priority queue, so the model
+ * never sits idle for the round trip between one request finishing and the page sending the
+ * next. Few enough that a block scrolling into view waits behind at most one running request:
+ * the waiting ones have not reached the model, so they can be overtaken (engine priority) or
+ * handed back (`PageSession` preempts a prefetched request for visible text).
  */
-export const TRANSLATION_CONCURRENCY = 2;
-/** Enough requests in flight on the GPU tier to fill a wave and have the next one waiting. */
-export const GPU_TRANSLATION_CONCURRENCY = 32;
+export const TRANSLATION_CONCURRENCY = 3;
+/**
+ * A multi-slot WebGPU engine (desktop GPUs: 4 or 16 slots in waves): enough requests in flight
+ * to fill a wave and have the next one waiting. Unchanged from 1.2.x.
+ */
+export const WAVE_TRANSLATION_CONCURRENCY = 32;
+
+/** Requests the page keeps in flight for an engine with `parallel` slots (null: not known yet). */
+export function pageRequestsInFlight(parallel: number | null | undefined): number {
+  return parallel !== null && parallel !== undefined && parallel > 1
+    ? WAVE_TRANSLATION_CONCURRENCY
+    : TRANSLATION_CONCURRENCY;
+}
+
+/**
+ * A prefetched request still waiting (nothing streamed yet) is handed back for a visible block
+ * when it sits at least one band (12, see `translationPriority`) behind it.
+ */
+export const PREEMPT_PRIORITY_GAP = 12;

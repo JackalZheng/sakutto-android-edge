@@ -1,0 +1,183 @@
+test-backend-ops: --sakutto-r6, cases for the patch-0025 WebGPU knobs: q4_K mat-vec (PLaMo 3 shapes,
+odd rows, batches/broadcast, padded and permuted src1), fused gate+up mat-vec + SWIGLU, and the
+RMS_NORM+MUL+ADD[+RMS_NORM+MUL] chain (operand order, full-shape weights, in-place add, reused sum).
+
+--- a/llama.cpp/tests/test-backend-ops.cpp
++++ b/llama.cpp/tests/test-backend-ops.cpp
+@@ -14868,10 +14868,166 @@
+     return test_cases;
+ }
+ 
++// Sakutto patch 0025: --sakutto-r6, the WebGPU q4_K mat-vec v2 and fused post-norm residual chain
++// (RMS_NORM, MUL, ADD [, RMS_NORM, MUL]) knobs.
++static bool g_sakutto_r6 = false;
++
++struct test_sakutto_norm_add : public test_case {
++    const std::array<int64_t, 4> ne;
++    const bool second_norm;  // RMS_NORM+MUL of the sum follows
++    const bool swap_mul;     // MUL(w, norm) instead of MUL(norm, w)
++    const bool swap_add;     // ADD(r, mul) instead of ADD(mul, r)
++    const bool full_w;       // weights of the full shape instead of one row
++    const bool inplace_add;  // ADD in place over r
++    const bool reuse_sum;    // the sum is used again after the chain (next residual)
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "SAKUTTO_NORM_ADD";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    std::string vars() override {
++        return VARS_TO_STR7(ne, second_norm, swap_mul, swap_add, full_w, inplace_add, reuse_sum);
++    }
++
++    test_sakutto_norm_add(std::array<int64_t, 4> ne, bool second_norm, bool swap_mul = false, bool swap_add = false,
++                          bool full_w = false, bool inplace_add = false, bool reuse_sum = true)
++        : ne(ne), second_norm(second_norm), swap_mul(swap_mul), swap_add(swap_add), full_w(full_w),
++          inplace_add(inplace_add), reuse_sum(reuse_sum) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * a0 = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data());
++        ggml_tensor * r0 = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data());
++        ggml_tensor * w1 = full_w ? ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data()) : ggml_new_tensor_1d(ctx, GGML_TYPE_F32, ne[0]);
++        ggml_tensor * w2 = full_w ? ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data()) : ggml_new_tensor_1d(ctx, GGML_TYPE_F32, ne[0]);
++        ggml_set_param(a0); ggml_set_name(a0, "a");
++        ggml_set_param(r0); ggml_set_name(r0, "r");
++        ggml_set_param(w1); ggml_set_name(w1, "w1");
++        ggml_set_param(w2); ggml_set_name(w2, "w2");
++        // computed inputs, so the chain does not start at a graph input
++        ggml_tensor * a = ggml_scale(ctx, a0, 0.5f);
++        ggml_tensor * r = ggml_scale(ctx, r0, 2.0f);
++
++        ggml_tensor * n1  = ggml_rms_norm(ctx, a, 1e-6f);
++        ggml_tensor * m1  = swap_mul ? ggml_mul(ctx, w1, n1) : ggml_mul(ctx, n1, w1);
++        ggml_tensor * sum = inplace_add ? ggml_add_inplace(ctx, r, m1) : (swap_add ? ggml_add(ctx, r, m1) : ggml_add(ctx, m1, r));
++        ggml_tensor * out = sum;
++        if (second_norm) {
++            ggml_tensor * n2 = ggml_rms_norm(ctx, sum, 1e-5f);
++            out = swap_mul ? ggml_mul(ctx, w2, n2) : ggml_mul(ctx, n2, w2);
++        }
++        if (reuse_sum) {
++            out = ggml_add(ctx, out, sum);
++        } else if (!second_norm) {
++            out = ggml_scale(ctx, out, 1.5f);
++        }
++        ggml_set_name(out, "out");
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            init_tensor_uniform(t, -10.f, 10.f);
++        }
++    }
++};
++
++struct test_sakutto_mv_swiglu : public test_case {
++    const ggml_type type_a;
++    const int64_t   n_ff;
++    const int64_t   k;
++    const int64_t   n;
++    const bool      swapped;
++
++    std::string op_desc(ggml_tensor * t) override {
++        GGML_UNUSED(t);
++        return "SAKUTTO_MV_SWIGLU";
++    }
++
++    bool run_whole_graph() override { return true; }
++
++    std::string vars() override { return VARS_TO_STR5(type_a, n_ff, k, n, swapped); }
++
++    double max_nmse_err() override { return 5e-4; }
++
++    test_sakutto_mv_swiglu(ggml_type type_a, int64_t n_ff, int64_t k, int64_t n = 1, bool swapped = false)
++        : type_a(type_a), n_ff(n_ff), k(k), n(n), swapped(swapped) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * w = ggml_new_tensor_2d(ctx, type_a, k, 2 * n_ff);
++        ggml_tensor * x = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, k, n);
++        ggml_set_name(w, "w");
++        ggml_set_name(x, "x");
++        ggml_tensor * mm  = ggml_mul_mat(ctx, w, x);
++        ggml_tensor * out = swapped ? ggml_swiglu_swapped(ctx, mm) : ggml_swiglu(ctx, mm);
++        ggml_set_name(out, "out");
++        return out;
++    }
++};
++
++static std::vector<std::unique_ptr<test_case>> make_test_cases_sakutto_r6() {
++    std::vector<std::unique_ptr<test_case>> test_cases;
++    // q4_K mat-vec (one column, and the n <= 4 path that stays on the old shader)
++    struct shape { int64_t m; int64_t k; };
++    const shape shapes[] = {
++        { 2304, 1536 },  // PLaMo 3 attn_qkv
++        { 1536, 2048 },  // attn_output
++        { 12288, 1536 }, // ffn gate+up
++        { 1536, 6144 },  // ffn_down
++        { 1001, 512 },   // odd rows
++        { 3, 256 },      // fewer rows than a workgroup
++        { 77, 2560 },    // K not a multiple of 2 blocks per thread group
++    };
++    for (const auto & sh : shapes) {
++        for (int64_t n : { 1, 2, 4 }) {
++            test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, sh.m, n, sh.k, {1, 1}, {1, 1}));
++        }
++        test_cases.emplace_back(new test_mul_mat_small_weights(GGML_TYPE_Q4_K, sh.m, 1, sh.k, 0.02f));
++    }
++    // batches and broadcast
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 256, 1, 512, {2, 3}, {1, 1}));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 128, 1, 256, {2, 1}, {2, 2}));
++    // src1 padded row stride (multiple of 4) and permuted
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 768, 1, 512, {1, 1}, {1, 1}, {0, 1, 2, 3}, 768));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 768, 1, 512, {1, 1}, {1, 1}, {0, 1, 2, 3}, 1024));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F32, 64, 1, 256, {3, 2}, {1, 1}, {0, 2, 1, 3}));
++    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_K, GGML_TYPE_F16, 512, 1, 512, {1, 1}, {1, 1}));
++
++    // fused gate+up mat-vec + SWIGLU
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q4_K, 6144, 1536));
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q4_K, 1001, 512));
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q4_K, 64, 2560));
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q4_K, 512, 512, 1, true));
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q4_K, 512, 512, 3));
++    test_cases.emplace_back(new test_sakutto_mv_swiglu(GGML_TYPE_Q6_K, 512, 512));
++
++    // fused post-norm chain
++    const std::array<int64_t, 4> nes[] = { { 1536, 1, 1, 1 }, { 1536, 7, 1, 1 }, { 1000, 3, 1, 1 }, { 64, 5, 4, 3 }, { 4096, 2, 1, 1 } };
++    for (const auto & ne : nes) {
++        for (bool second : { true, false }) {
++            test_cases.emplace_back(new test_sakutto_norm_add(ne, second));
++            test_cases.emplace_back(new test_sakutto_norm_add(ne, second, true, true, true));
++            test_cases.emplace_back(new test_sakutto_norm_add(ne, second, false, false, true));
++            test_cases.emplace_back(new test_sakutto_norm_add(ne, second, false, false, false, true));
++            test_cases.emplace_back(new test_sakutto_norm_add(ne, second, false, false, false, false, false));
++        }
++    }
++    // upstream fusion tests on the same path
++    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {1536, 1, 1, 1}));
++    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {64, 5, 4, 3}, 1e-6f, false, false, false, false, true));
++    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {64, 5, 4, 3}, 1e-6f, false, true));
++    test_cases.emplace_back(new test_rms_norm_mul_add(GGML_TYPE_F32, {64, 5, 4, 3}, 1e-6f, false, false, false, true));
++    return test_cases;
++}
++
+ static std::vector<std::unique_ptr<test_case>> make_test_cases(test_mode mode, const char * params_filter, const char * test_file_path) {
+     std::vector<std::unique_ptr<test_case>> test_cases;
+ 
+-    if (test_file_path == nullptr && g_sakutto_mulmat) {
++    if (test_file_path == nullptr && g_sakutto_r6) {
++        test_cases = make_test_cases_sakutto_r6();
++    } else if (test_file_path == nullptr && g_sakutto_mulmat) {
+         test_cases = make_test_cases_sakutto_mulmat();
+     } else if (test_file_path == nullptr && g_sakutto_plamo3) {
+         test_cases = make_test_cases_sakutto_plamo3();
+@@ -15208,6 +15364,8 @@
+             g_sakutto_plamo3 = true;
+         } else if (strcmp(argv[i], "--sakutto-mulmat") == 0) {
+             g_sakutto_mulmat = true;
++        } else if (strcmp(argv[i], "--sakutto-r6") == 0) {
++            g_sakutto_r6 = true;
+         } else if (strcmp(argv[i], "test") == 0) {
+             mode = MODE_TEST;
+         } else if (strcmp(argv[i], "perf") == 0) {
