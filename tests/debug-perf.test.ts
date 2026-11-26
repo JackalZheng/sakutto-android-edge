@@ -49,6 +49,7 @@ describe('perf configs', () => {
       'gpu-r5-half',
       'gpu-r6-r4-half',
       'gpu-r6-r4-repeat',
+      'gpu-r6-r4-2-slot',
       'gpu-r6-r4-4-slot',
     ]);
     for (const config of configs.filter((c) => c.selection.backend === 'webgpu')) {

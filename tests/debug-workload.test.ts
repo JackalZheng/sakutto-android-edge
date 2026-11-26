@@ -49,7 +49,7 @@ describe('title vs paragraph workload', () => {
     expect(summarizeWorkload(run).promptTokens).toBe(60);
   });
 
-  it('sends headings one request each: 2 at once on 2 GPU slots, 1 at a time on the CPU', async () => {
+  it('sends headings one request each: 2 at once on 2 GPU slots, 1 at a time on one slot', async () => {
     const gpu = await runWorkload(fakeRuntime(2, 'webgpu'), 'titles-each', 'B', OPTIONS);
     expect(gpu.requests).toHaveLength(12);
     expect(gpu.maxConcurrent).toBe(2);
@@ -82,7 +82,7 @@ describe('title vs paragraph workload', () => {
     expect(lines).toContain('ttft avg');
   });
 
-  it('has the comparison configs: CPU 1 and 2 slots, Adreno WebGPU 1, 2 (default) and 4', () => {
+  it('has the comparison configs: CPU 1 and 2 slots, Adreno WebGPU 1 (default), 2 and 4', () => {
     const probe = { webgpu: true, hardwareConcurrency: 8, sharedMemory: true, adreno: true };
     const configs = buildPerfConfigs(probe, true, 26);
     expect(workloadQueue(configs)).toEqual([...WORKLOAD_CONFIG_IDS]);
@@ -94,8 +94,8 @@ describe('title vs paragraph workload', () => {
     expect(slots).toEqual({
       cpu: ['cpu-wasm', 1, 2048],
       'cpu-2-slot': ['cpu-wasm', 2, 2048],
-      'gpu-r6-r4-1-slot': ['webgpu', 1, 1024],
-      'gpu-r6-r4': ['webgpu', 2, 2048],
+      'gpu-r6-r4': ['webgpu', 1, 2048],
+      'gpu-r6-r4-2-slot': ['webgpu', 2, 2048],
       'gpu-r6-r4-4-slot': ['webgpu', 4, 4096],
     });
     // Not in the GPU perf sweep.

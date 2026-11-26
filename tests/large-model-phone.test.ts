@@ -91,14 +91,14 @@ describe('large models on a phone', () => {
     expect(phoneKeepsOffGpu({ ...context, android: false })).toBe(false);
   });
 
-  it('keeps the measured PLaMo 0.8B setup (2 slots on the Adreno GPU)', () => {
+  it('keeps the measured PLaMo 0.8B setup (1 slot, n_ctx 2048 on the Adreno GPU)', () => {
     const selection = resolveSelection('auto', ADRENO, {
       android: true,
       adreno: true,
       modelBytes: SMALL,
     });
     expect(selection.backend).toBe('webgpu');
-    expect(selection.nParallel).toBe(2);
+    expect(selection.nParallel).toBe(1);
     expect(selection.nCtx).toBe(2048);
     expect(selection.nBatch).toBe(256);
   });

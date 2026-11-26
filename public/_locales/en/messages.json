@@ -1090,7 +1090,7 @@
     "message": "Compatible (round 5, r5)"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "Round-6 kernels: the new q4_K mat-vec (16-byte loads, 4 rows per group) + fused gate/up with SwiGLU + fused norm chain, 2 parallel slots. Fastest on the test phone (POCO F5 Pro): about 2.25 s per paragraph (CPU about 2.9 s). Use this unless something goes wrong."
+    "message": "Round-6 kernels: the new q4_K mat-vec (16-byte loads, 4 rows per group) + fused gate/up with SwiGLU + fused norm chain, one slot (n_ctx 2048). Fastest on the test phone (POCO F5 Pro): about 2.25 s per paragraph (CPU about 2.9 s). Use this unless something goes wrong."
   },
   "gpuProfileCompatHelp": {
     "message": "Without the round-6 kernels: batched mat-vec + 128-wide softmax (the 1.3.0 development setup), about 2.7 s per paragraph on the test phone. Use it if the new kernels misbehave on your device."
@@ -1120,10 +1120,10 @@
     "message": "The new q4_K kernel with 2 rows per group, plus both op fusions. Lower register pressure, for older or smaller Adreno GPUs; about 2.5 s per paragraph on the test phone."
   },
   "gpuProfileLowMemory": {
-    "message": "Low memory (1 slot, n_ctx 1024)"
+    "message": "Low memory (n_ctx 1024)"
   },
   "gpuProfileLowMemoryHelp": {
-    "message": "The same kernels as Optimized with a single parallel slot (n_ctx 1024), halving the KV cache. Recommended for models over 1 GB (Qwen3 1.7B, Hy-MT2, PLaMo 2B) or phones with less RAM; one paragraph is about as fast, several at once are a little slower."
+    "message": "The same kernels as Optimized with n_ctx 1024 instead of 2048, halving the KV cache. For phones with less RAM; long blocks are translated in shorter pieces. (Every profile uses one slot since 1.3.0: several slots were slower on the test phone.)"
   },
   "gpuProfileR4": {
     "message": "Round 4 fallback (r4)"

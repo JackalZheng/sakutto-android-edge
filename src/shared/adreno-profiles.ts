@@ -3,7 +3,7 @@
  * tokens (patches 0021-0025, see `WEBGPU_TUNING_TOKEN_PATTERN`) on top of the Adreno defaults
  * ggml-webgpu applies by itself (subgroups off, mat-vec workgroup 64, the new SOFT_MAX, 16 kernels
  * per submit, batched mat-vec for 5-64-token prompts and 128-wide row reductions: round 5), plus
- * an optional slot / context override. All of them come from the GPU harness sweeps on the POCO
+ * an optional context override. All of them come from the GPU harness sweeps on the POCO
  * F5 Pro (Adreno 730, PLaMo 3 0.8B, warm run) and translated correctly there.
  *
  * Left out on purpose: the subgroup profiles (`adreno-upstream`, `adreno-subgroups`,
@@ -30,8 +30,13 @@ export interface AdrenoProfileSpec {
   id: AdrenoGpuProfile;
   /** ggml-webgpu tuning tokens (empty: the round-5 defaults). */
   tuning: readonly string[];
-  /** Parallel slots (1024 tokens of context each); unset keeps the Adreno default of 2. */
-  slots?: number;
+  /**
+   * n_ctx override; unset keeps the Adreno default (one slot, n_ctx 2048). Since 1.3.0 every
+   * profile runs one slot: on the POCO F5 Pro two slots ran one after the other and each title
+   * lost the shared prompt-prefix cache (Gemma 3 1B titles, one per request: 14.7 s on 1 slot,
+   * 31.8 s on 2, 28.0 s on 4).
+   */
+  nCtx?: number;
   /** The GPU harness config this profile was measured as. */
   harnessConfig: string;
 }
@@ -44,8 +49,8 @@ export const ADRENO_PROFILE_SPECS: Readonly<Record<AdrenoGpuProfile, AdrenoProfi
     'low-memory': {
       id: 'low-memory',
       tuning: ADRENO_R6_TUNING,
-      slots: 1,
-      harnessConfig: 'gpu-r6-r4 + gpu-1-slot',
+      nCtx: 1024,
+      harnessConfig: 'gpu-r6-r4-1-slot (n_ctx 1024)',
     },
     compat: { id: 'compat', tuning: [], harnessConfig: 'gpu-r5' },
     // Round 4: no batched mat-vec for prompts (bmv0), 256-wide row reductions (rwg256).

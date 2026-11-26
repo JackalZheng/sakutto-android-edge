@@ -1,3 +1,4 @@
+import { pageRequestsInFlight } from '@/dom/priority';
 import type { PromptFormat } from './model/catalog';
 import { InBrowserEngine } from './in-browser/engine';
 import type { CompletionRequest, LlamaRuntime } from './in-browser/runtime';
@@ -161,9 +162,9 @@ export function instrumentRuntime(
 /**
  * One workload through the production engine. `titles-packed` sends the titles as one call, as
  * page blocks that are not headings (PLaMo packs up to 8 short lines per request).
- * `titles-each` sends one call per title at once, as headings (H1-H6) are sent by the page:
- * never packed, and up to 32 calls in flight on the GPU tier (`GPU_TRANSLATION_CONCURRENCY`)
- * but 2 on the CPU tiers (`TRANSLATION_CONCURRENCY`).
+ * `titles-each` sends one call per title, as headings (H1-H6) are sent by the page: never
+ * packed, with as many calls in flight as the page keeps for the runtime's slots
+ * (`pageRequestsInFlight`: 3 for one slot, 32 for several).
  */
 export async function runWorkload(
   runtime: LlamaRuntime,
@@ -199,8 +200,7 @@ export async function runWorkload(
   };
   try {
     if (kind === 'titles-each') {
-      // The page's CPU tiers keep 2 calls in flight, the GPU tier up to 32.
-      const inFlight = runtime.backend === 'webgpu' ? 32 : 2;
+      const inFlight = pageRequestsInFlight(runtime.parallel);
       let next = 0;
       const lane = async (): Promise<void> => {
         while (next < segments.length) {
@@ -242,8 +242,8 @@ export const WORKLOAD_KINDS: readonly WorkloadKind[] = [
 export const WORKLOAD_CONFIG_IDS: readonly string[] = [
   'cpu',
   'cpu-2-slot',
-  'gpu-r6-r4-1-slot',
   'gpu-r6-r4',
+  'gpu-r6-r4-2-slot',
   'gpu-r6-r4-4-slot',
 ];
 

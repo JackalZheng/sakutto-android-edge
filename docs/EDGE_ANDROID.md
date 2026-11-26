@@ -137,13 +137,38 @@ notes below.
 - **Title speed, CPU vs WebGPU**: see "Titles vs paragraph" in the debug
   harness (GPU performance section). It runs 12 titles packed, 12 titles one
   request each (headings), and one paragraph through the production engine
-  on cpu, cpu-2-slot, gpu-r6-r4-1-slot, gpu-r6-r4 (2 slots) and
+  on cpu, cpu-2-slot, gpu-r6-r4 (1 slot), gpu-r6-r4-2-slot and
   gpu-r6-r4-4-slot, one config per page load, and reports wall time, first
   finished block and each request's ttft / prompt / decode timings.
 
+- **One slot everywhere on a phone (1.3.0)**. The POCO F5 Pro harness:
+  multi-slot was slower on the CPU and on WebGPU. Gemma 3 1B, titles one
+  request each: cpu 15.1 s, cpu-2-slot 33.2 s, gpu 1 slot 14.7 s, 2 slots
+  31.8 s, 4 slots 28.0 s; paragraph: cpu 12.8 s, gpu 1 slot 11.6 s, 2 slots
+  13.1 s. Adreno runs the slots of a wave one after the other, and with more
+  than one slot `cache_prompt` is off (`runtime.ts`), so every title
+  prefilled the whole template again (prompt tokens per title: Gemma 11 ->
+  36, PLaMo 15 -> 27). Now:
+
+  |                                       | before                                         | after                                                                       |
+  | ------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------- |
+  | Adreno WebGPU (every profile)         | 2 slots, n_ctx 2048 (Low memory: 1 slot, 1024) | 1 slot, n_ctx 2048 (Low memory: 1 slot, 1024)                               |
+  | Explicit WebGPU on a non-Adreno phone | 4 slots, n_ctx 4096                            | 1 slot, n_ctx 2048                                                          |
+  | CPU                                   | 1 slot, n_ctx 2048                             | unchanged                                                                   |
+  | Models over 1 GB on a phone           | CPU, 1 slot, n_ctx 1024, batch 128             | unchanged                                                                   |
+  | Desktop non-Adreno WebGPU             | 4 slots (16 on measured GPUs)                  | unchanged: an RTX 4090 ran a long article in 8.1 s on 1 slot and 3.7 s on 4 |
+  | Page requests in flight               | GPU tier 32, CPU tiers 2                       | 3 for a one-slot engine (GPU or CPU), 32 for a multi-slot one               |
+  | Look-ahead                            | GPU 2 screens, CPU c8 1, c4/c1 0.5             | 2 screens on every backend (fast pace +1)                                   |
+
+  When the in-flight limit is reached and a block scrolls into view, the
+  page hands one prefetched request back if at least two have not streamed
+  yet: it aborts the lowest-priority one (at least one band, 12, behind the
+  visible block) and puts it back in its queue. With one slot the prompt cache is on, and
+  a second wllama slot id is never needed.
+
 - **Adreno GPU profiles** (`src/shared/adreno-profiles.ts`): Optimized
-  (`q4v2r4+mvglu+fna`, 2 slots), q4_K only (`q4v2r4`), Round 6 2 rows
-  (`q4v2r2+mvglu+fna`), Low memory (Optimized with 1 slot, n_ctx 1024),
+  (`q4v2r4+mvglu+fna`, 1 slot, n_ctx 2048), q4_K only (`q4v2r4`), Round 6
+  2 rows (`q4v2r2+mvglu+fna`), Low memory (Optimized with n_ctx 1024),
   Compatible (round 5, no tokens), Round 4 (`bmv0+rwg256`). The subgroup
   profiles (`adreno-upstream`, `adreno-subgroups`, `adreno-sg-tiled`) garble
   and are harness-only; `sub64` lost the device; hybrid was removed.
@@ -185,7 +210,7 @@ CPU. The diagnostics list shows the detected GPU and the active backend.
 - **GPU (WebGPU) on Adreno** runs the Adreno defaults compiled into
   ggml-webgpu (no subgroups, mat-vec WG 64, SOFT_MAX without cache,
   row-reduction WG 128, batched mat-vec for 5–64 token prompts, 16 kernels
-  per submit) with 2 parallel slots and n_ctx 2048. Flash attention is
+  per submit) with 1 slot and n_ctx 2048 (2 slots before 1.3.0). Flash attention is
   unavailable without subgroups, so it stays off.
 - **Adreno GPU profile** (shown on Adreno only):
   - Optimized (default): the above.

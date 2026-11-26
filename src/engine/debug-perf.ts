@@ -84,8 +84,9 @@ export function buildPerfConfigs(
     },
   ];
   if (!probe.webgpu) return configs;
-  // Adreno: the production slot count (2, `applyAdrenoProfile`); before 1.3.0 the harness ran
-  // the plain WebGPU width (4 slots, n_ctx 4096) here. The tuning comes from each config.
+  // Adreno: the production slot count (1 slot, n_ctx 2048 since 1.3.0, `applyAdrenoProfile`);
+  // before 1.3.0 the harness ran the plain WebGPU width (4 slots, n_ctx 4096) here. The tuning
+  // comes from each config.
   const gpuBase = selectionForTier('g', probe);
   const gpu = limit(probe.adreno === true ? withoutTuning(applyAdrenoProfile(gpuBase)) : gpuBase);
   const mv = (
@@ -113,7 +114,7 @@ export function buildPerfConfigs(
   configs.push(
     mv(
       'gpu-r6-r4',
-      `Adreno default since 1.3.0 ("Optimized", round 6: ${r6r4.join('+')})`,
+      `Adreno default since 1.3.0 ("Optimized", round 6: ${r6r4.join('+')}, 1 slot)`,
       gpu,
       r6r4,
     ),
@@ -135,7 +136,7 @@ export function buildPerfConfigs(
     // The other settings profiles (1.3.0), so each one the options page offers can be timed.
     mv(
       'gpu-r6-r4-1-slot',
-      '"Low memory" profile: 1.3.0 default with 1 slot, n_ctx 1024',
+      '"Low memory" profile: 1.3.0 default with n_ctx 1024 (1 slot)',
       { ...gpu, nParallel: 1, nCtx: 1024 },
       r6r4,
     ),
@@ -161,6 +162,15 @@ export function buildPerfConfigs(
   configs.push(mv('gpu-r6-r4-repeat', '1.3.0 default again (thermal drift check)', gpu, r6r4));
   // Title vs paragraph comparison only (`WORKLOAD_CONFIG_IDS`): the slot counts the GPU and the
   // CPU could use. Not in the sweep; nothing in the settings uses them (1.3.0).
+  configs.push({
+    ...mv(
+      'gpu-r6-r4-2-slot',
+      '1.3.0 default with 2 slots (n_ctx 2048; the Adreno default before 1.3.0), comparison only',
+      { ...gpu, nParallel: 2, nCtx: 2048 },
+      r6r4,
+    ),
+    sweep: false,
+  });
   configs.push({
     ...mv(
       'gpu-r6-r4-4-slot',

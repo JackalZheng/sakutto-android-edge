@@ -518,6 +518,7 @@ async function requestEngineTier(session: PageSession, retry = false): Promise<v
   try {
     const status = await requestEngineStatus();
     if (status?.tier) session.setTier(status.tier);
+    if (status) session.setEngineSlots(status.parallel);
     if (retry || status?.model.state === 'loaded') session.retryUntranslated();
   } catch {
     // A load broadcast still re-queues the blocks that failed while the model loaded.

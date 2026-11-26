@@ -1090,7 +1090,7 @@
     "message": "相容（第 5 輪・r5）"
   },
   "gpuProfileOptimizedHelp": {
-    "message": "第 6 輪核心：q4_K 矩陣向量乘法新算法（16 位元組讀取、每組 4 列）＋合併 gate/up 與 SwiGLU＋合併 norm 運算鏈，2 個平行槽。測試手機（POCO F5 Pro）上最快，每段約 2.25 秒（CPU 約 2.9 秒）。一般情況請用這個。"
+    "message": "第 6 輪核心：q4_K 矩陣向量乘法新算法（16 位元組讀取、每組 4 列）＋合併 gate/up 與 SwiGLU＋合併 norm 運算鏈，1 個槽（n_ctx 2048）。測試手機（POCO F5 Pro）上最快，每段約 2.25 秒（CPU 約 2.9 秒）。一般情況請用這個。"
   },
   "gpuProfileCompatHelp": {
     "message": "不含第 6 輪核心：批次矩陣向量乘法＋128 寬 softmax（1.3.0 開發版的設定），測試手機上每段約 2.7 秒。新核心在你的裝置上有問題時使用。"
@@ -1120,10 +1120,10 @@
     "message": "q4_K 新算法改為每組 2 列，加上兩項運算合併。暫存器壓力較低，適合較舊或較小的 Adreno；測試手機上每段約 2.5 秒。"
   },
   "gpuProfileLowMemory": {
-    "message": "低記憶體（1 個槽・n_ctx 1024）"
+    "message": "低記憶體（n_ctx 1024）"
   },
   "gpuProfileLowMemoryHelp": {
-    "message": "與「最佳化」相同的核心，但只用 1 個平行槽（n_ctx 1024），KV 快取減半。建議用於超過 1 GB 的模型（Qwen3 1.7B、Hy-MT2、PLaMo 2B）或記憶體較少的手機；單段速度相近，多段同時翻譯會稍慢。"
+    "message": "與「最佳化」相同的核心，但 n_ctx 用 1024 而非 2048，KV 快取減半。適合記憶體較少的手機；較長的段落會分成較短的片段翻譯。（自 1.3.0 起所有設定檔都只用 1 個槽：在測試手機上多個槽反而較慢。）"
   },
   "gpuProfileR4": {
     "message": "第 4 輪相容（r4）"

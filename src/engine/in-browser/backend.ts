@@ -56,7 +56,8 @@ export interface BackendProbe {
  *   0.8B, warm: total 2.25 s, decode 22.2 t/s vs CPU 2.91 s / 17.3 t/s;
  * - 'q4v2': only the q4_K mat-vec v2 (4 rows), no fusions (2.29 s);
  * - 'r6': round 6 with 2 rows per group (2.54 s, lighter register pressure);
- * - 'low-memory': 'optimized' with one slot (n_ctx 1024), for the > 1 GB models or low-RAM phones;
+ * - 'low-memory': 'optimized' with n_ctx 1024 (every profile has one slot since 1.3.0), for
+ *   low-RAM phones;
  * - 'compat': round 5, the 1.3.0-dev default (2.69 s);
  * - 'r4': round 4, no batched prompt mat-vec and 256-wide row reductions.
  */
@@ -64,10 +65,15 @@ export type { AdrenoGpuProfile };
 export { ADRENO_R6_TUNING };
 
 /**
- * Adreno: two slots of 1024 tokens (n_ctx 2048). The phone sweep showed no speed difference
- * between n_ctx 1024-4096 and 1-4 slots, so the smaller KV cache wins.
+ * Adreno: one slot of 2048 tokens (1.3.0; two slots of 1024 before). On the POCO F5 Pro the
+ * slots of a wave ran one after the other, and with more than one slot llama.cpp does not reuse
+ * the shared prompt prefix (`cache_prompt` is on only for a single slot, see `runtime.ts`): a
+ * title's prompt grew from 11 to 36 tokens (Gemma 3 1B) and from 15 to 27 (PLaMo 3 0.8B). Gemma
+ * titles, one request each: 1 slot 14.7 s, 2 slots 31.8 s, 4 slots 28.0 s; the paragraph
+ * 11.6 s / 13.1 s. Every Adreno profile now runs one slot; 'low-memory' keeps n_ctx 1024.
  */
-const WEBGPU_SLOTS_ADRENO = 2;
+const WEBGPU_SLOTS_ADRENO = 1;
+const WEBGPU_CONTEXT_ADRENO = CONTEXT_TOKENS;
 
 export interface DebugLoadOverrides {
   /** false turns flash attention off; unset keeps llama.cpp's auto choice. */
@@ -268,7 +274,13 @@ export function fitSelectionToModel(
   context: Pick<RuntimeContext, 'android' | 'modelBytes'>,
 ): BackendSelection {
   if (!context.android) return selection;
-  const capped = applyMobileLimits(selection);
+  const limited = applyMobileLimits(selection);
+  // A phone GPU (an explicit WebGPU choice on a non-Adreno phone too) runs one slot, like the
+  // Adreno profiles: a phone GPU has not been seen to run slots side by side.
+  const capped =
+    limited.backend === 'webgpu' && limited.nParallel > 1
+      ? { ...limited, nParallel: 1, nCtx: Math.min(limited.nCtx, CONTEXT_TOKENS) }
+      : limited;
   if ((context.modelBytes ?? 0) <= LARGE_MODEL_BYTES) return capped;
   return {
     ...capped,
@@ -320,8 +332,8 @@ export function phoneKeepsOffGpu(context: RuntimeContext): boolean {
 }
 
 /**
- * The Adreno WebGPU selection for a profile: its slot count (two by default) and its tuning
- * tokens. Other selections are returned unchanged.
+ * The Adreno WebGPU selection for a profile: one slot, n_ctx 2048 (1024 for 'low-memory'), and
+ * its tuning tokens. Other selections are returned unchanged.
  */
 export function applyAdrenoProfile(
   selection: BackendSelection,
@@ -329,11 +341,10 @@ export function applyAdrenoProfile(
 ): BackendSelection {
   if (selection.backend !== 'webgpu') return selection;
   const spec = ADRENO_PROFILE_SPECS[profile] ?? ADRENO_PROFILE_SPECS[DEFAULT_ADRENO_GPU_PROFILE];
-  const slots = Math.max(1, Math.min(selection.nParallel, spec.slots ?? WEBGPU_SLOTS_ADRENO));
   return {
     ...selection,
-    nParallel: slots,
-    nCtx: WEBGPU_CONTEXT_PER_SLOT * slots,
+    nParallel: WEBGPU_SLOTS_ADRENO,
+    nCtx: spec.nCtx ?? WEBGPU_CONTEXT_ADRENO,
     webgpuTuning: [...spec.tuning],
   };
 }
@@ -401,7 +412,7 @@ export function isGpuLoadFallback(requested: BackendSelection, loaded: BackendSe
 
 /**
  * The next lighter place to run after `selection` failed: four slots, then one
- * conservative WebGPU slot, then the CPU.
+ * conservative WebGPU slot (n_ctx 1024), then the CPU.
  */
 export function lighterSelection(selection: BackendSelection): BackendSelection | null {
   if (selection.backend === 'webgpu' && selection.nParallel > WEBGPU_SLOTS_PLAIN) {
@@ -410,6 +421,14 @@ export function lighterSelection(selection: BackendSelection): BackendSelection 
       nParallel: WEBGPU_SLOTS_PLAIN,
       nCtx: WEBGPU_CONTEXT_PER_SLOT * WEBGPU_SLOTS_PLAIN,
     };
+  }
+  // One Adreno slot (n_ctx 2048, 1.3.0): a smaller KV cache before giving up the GPU.
+  if (
+    selection.backend === 'webgpu' &&
+    selection.nParallel === WEBGPU_SLOTS_CONSERVATIVE &&
+    selection.nCtx > WEBGPU_CONTEXT_PER_SLOT
+  ) {
+    return { ...selection, nCtx: WEBGPU_CONTEXT_PER_SLOT };
   }
   if (selection.backend === 'webgpu' && selection.nParallel > WEBGPU_SLOTS_CONSERVATIVE) {
     return {

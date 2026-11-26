@@ -218,7 +218,8 @@ describe('Adreno policy (v1.3.0)', () => {
   it('runs Automatic on WebGPU with the round-6 profile on Adreno, phone or desktop', () => {
     for (const android of [true, false]) {
       const selection = resolveSelection('auto', gpu, { android, adreno: true });
-      expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 2, nCtx: 2048 });
+      // 1.3.0: one slot (two ran one after the other on the POCO F5 Pro, without prefix reuse).
+      expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 1, nCtx: 2048 });
       expect(selection.webgpuTuning).toEqual(['q4v2r4', 'mvglu', 'fna']);
       expect(selection.webgpuTuning).toEqual(ADRENO_R6_TUNING);
     }
@@ -255,13 +256,13 @@ describe('Adreno policy (v1.3.0)', () => {
     expect(selection.webgpuTuning).toBeUndefined();
   });
 
-  it('runs an explicit GPU choice with two slots, 2048 tokens of context and round 6', () => {
+  it('runs an explicit GPU choice with one slot, 2048 tokens of context and round 6', () => {
     const selection = resolveSelection('g', gpu, {
       android: true,
       adreno: true,
       gpuProfile: 'optimized',
     });
-    expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 2, nCtx: 2048 });
+    expect(selection).toMatchObject({ backend: 'webgpu', nParallel: 1, nCtx: 2048 });
     expect(selection.webgpuTuning).toEqual(['q4v2r4', 'mvglu', 'fna']);
     expect(selection.nGpuLayers).toBe(WEBGPU_ALL_LAYERS);
   });
@@ -325,28 +326,45 @@ describe('Adreno policy (v1.3.0)', () => {
     ).toBe('webgpu');
   });
 
-  it('wires every settings profile to its tokens and slots', () => {
+  it('wires every settings profile to its tokens, one slot and its context', () => {
     const expected: Record<AdrenoGpuProfile, [string[], number]> = {
-      optimized: [['q4v2r4', 'mvglu', 'fna'], 2],
-      q4v2: [['q4v2r4'], 2],
-      r6: [['q4v2r2', 'mvglu', 'fna'], 2],
-      'low-memory': [['q4v2r4', 'mvglu', 'fna'], 1],
-      compat: [[], 2],
-      r4: [['bmv0', 'rwg256'], 2],
+      optimized: [['q4v2r4', 'mvglu', 'fna'], 2048],
+      q4v2: [['q4v2r4'], 2048],
+      r6: [['q4v2r2', 'mvglu', 'fna'], 2048],
+      'low-memory': [['q4v2r4', 'mvglu', 'fna'], 1024],
+      compat: [[], 2048],
+      r4: [['bmv0', 'rwg256'], 2048],
     };
     expect(Object.keys(expected)).toEqual([...ADRENO_GPU_PROFILES]);
-    for (const profile of ADRENO_GPU_PROFILES) {
-      const selection = resolveSelection('auto', gpu, {
-        android: true,
-        adreno: true,
-        gpuProfile: profile,
-      });
-      const [tokens, slots] = expected[profile];
-      expect(selection.webgpuTuning, profile).toEqual(tokens);
-      expect(selection.nParallel, profile).toBe(slots);
-      expect(selection.nCtx, profile).toBe(slots * 1024);
-      for (const token of tokens) expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token), token).toBe(true);
+    for (const android of [true, false]) {
+      for (const profile of ADRENO_GPU_PROFILES) {
+        const selection = resolveSelection('auto', gpu, {
+          android,
+          adreno: true,
+          gpuProfile: profile,
+        });
+        const [tokens, nCtx] = expected[profile];
+        expect(selection.webgpuTuning, profile).toEqual(tokens);
+        expect(selection.nParallel, profile).toBe(1);
+        expect(selection.nCtx, profile).toBe(nCtx);
+        for (const token of tokens)
+          expect(WEBGPU_TUNING_TOKEN_PATTERN.test(token), token).toBe(true);
+      }
     }
+  });
+
+  it('runs one slot on a phone GPU without an Adreno too, and keeps desktop GPUs wide', () => {
+    const phone = resolveSelection('g', { ...gpu, adreno: false }, { android: true });
+    expect(phone).toMatchObject({ backend: 'webgpu', nParallel: 1, nCtx: 2048 });
+    const desktop = resolveSelection('g', { ...gpu, adreno: false }, { android: false });
+    expect(desktop).toMatchObject({ backend: 'webgpu', nParallel: 4, nCtx: 4096 });
+  });
+
+  it('steps one Adreno slot down to n_ctx 1024 before leaving the GPU', () => {
+    const one = resolveSelection('g', gpu, { android: true, adreno: true });
+    const lighter = lighterSelection(one)!;
+    expect(lighter).toMatchObject({ backend: 'webgpu', nParallel: 1, nCtx: 1024 });
+    expect(lighterSelection(lighter)?.backend).toBe('cpu-wasm');
   });
 
   it('offers no subgroup profile in the settings', () => {
